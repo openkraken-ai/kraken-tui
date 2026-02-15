@@ -2,15 +2,15 @@
 
 ## Table of ADRs
 
-| ADR     | Title                                                        | Status   |
-| ------- | ------------------------------------------------------------ | -------- |
-| ADR-001 | Rendering Model - Retained-Mode with Dirty-Flag Diffing      | Accepted |
-| ADR-002 | Layout Engine - Taffy (Rust-Native Flexbox)                  | Accepted |
-| ADR-003 | FFI Boundary Design - Opaque Handle API via bun:ffi          | Accepted |
-| ADR-004 | Reconciler Strategy - Imperative Core API First, Solid Later | Accepted |
-| ADR-005 | Terminal Backend - crossterm                                 | Accepted |
+| ADR     | Title                                                        | Status   | File |
+| ------- | ------------------------------------------------------------ | -------- | ---- |
+| ADR-001 | Rendering Model - Retained-Mode with Dirty-Flag Diffing    | Accepted | ADR-001-rendering-model.md |
+| ADR-002 | Layout Engine - Taffy (Rust-Native Flexbox)                 | Accepted | ADR-002-layout-engine.md |
+| ADR-003 | FFI Memory Model - Handle Allocation, Ownership, Lifetime    | Accepted | ADR-003-ffi-memory-model.md |
+| ADR-004 | Reconciler Strategy - Imperative Core API First, Solid Later | Accepted | ADR-004-reconciler-strategy.md |
+| ADR-005 | Terminal Backend - crossterm                                 | Accepted | ADR-005-terminal-backend.md |
 
-See [ADR-001-rendering-model.md](./ADR-001-rendering-model.md) for the full architecture decision records.
+See the ADR files in this directory for the full architecture decision records.
 
 | Component  | Choice                      | Rationale                                   |
 | ---------- | --------------------------- | ------------------------------------------- |
