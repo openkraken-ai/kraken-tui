@@ -1,480 +1,297 @@
 # Product Requirements Document (PRD)
 
-## Kraken TUI: A Rust + Bun Terminal User Interface Library
+## Kraken TUI
 
-**Version**: 1.0  
-**Status**: Draft  
+**Version**: 2.0
+**Status**: Approved
 **Date**: February 2026
 
 ---
 
-## Table of Contents
+## 1. EXECUTIVE SUMMARY
 
-1. [Problem Statement](#1-problem-statement)
-2. [Target Users](#2-target-users)
-3. [Goals & Non-Goals](#3-goals--non-goals)
-4. [Architecture Overview](#4-architecture-overview)
-5. [API Specification](#5-api-specification)
-6. [Widget Catalog](#6-widget-catalog)
-7. [Performance Requirements](#7-performance-requirements)
-8. [Platform Support](#8-platform-support)
-9. [Development Roadmap](#9-development-roadmap)
-10. [Open Questions](#10-open-questions)
+**The Vision:** Terminal interface development becomes as productive as web UI development — without sacrificing performance or requiring a systems programming background.
 
----
+**The Problem:** Developers building terminal dashboards and interactive CLI tools in the TypeScript ecosystem face a forced trade-off: ergonomic but resource-heavy solutions (full-framework reconciliation overhead, 50MB+ memory for simple apps) versus performant but ergonomically hostile ones (systems languages, C bindings, no TypeScript support). No solution exists that provides native performance, familiar layout semantics, and a composable widget model — all accessible from TypeScript without framework overhead.
 
-## 1. Problem Statement
+**Jobs to be Done:**
 
-### Why Another TUI Library?
+> *Primary:* "When building interactive terminal applications in TypeScript, I want pre-built composable interface elements with native performance and familiar layout semantics, so I can **ship polished terminal UIs in hours, not days**, without the overhead of full-framework reconciliation or learning a systems language."
 
-The terminal user interface (TUI) ecosystem for JavaScript/TypeScript developers has a significant gap:
+> *Secondary:* "When using Bun as my primary runtime, I want a TUI library designed for Bun's foreign-function model from day one, so I don't fight compatibility shims or WASM overhead."
 
-1. **Ink (React)** is popular but suffers from high memory overhead (~50MB for simple apps) due to React's full-tree reconciliation. Its reactivity model is designed for DOM, not terminal buffers.
-
-2. **Blessed/Neo-Blessed** are mature but use an imperative callback-based API that feels dated and lacks modern TypeScript support.
-
-3. **OpenTUI** offers excellent performance with Zig + bun:ffi but:
-   - Requires learning Zig
-   - Uses Yoga (C binding) for layout
-   - Lacks framework bindings for modern reactive libraries
-
-4. **Ratatui** is excellent for pure Rust apps but has no TypeScript integration.
-
-Developers building TUI applications with Bun/TypeScript today lack a solution that combines:
-
-- Low memory footprint (Rust core)
-- Modern reactive patterns (Solid.js)
-- First-class TypeScript support
-- Ergonomic API design
-
-### The Gap
-
-There is no TUI library that provides:
-
-- Rust-level performance with JavaScript-level ergonomics
-- Fine-grained reactivity (Solid.js) without React's overhead
-- Native Flexbox layout (Taffy) without C dependencies
-- Seamless Bun integration via bun:ffi
+**JTBD Priority Order:** Ship Faster > Bun-native DX > Escape React Overhead > Own the Full Stack
 
 ---
 
-## 2. Target Users
+## 2. UBIQUITOUS LANGUAGE (GLOSSARY)
 
-### Primary Personas
-
-#### Persona 1: CLI Tool Author
-
-- **Who**: Developers building command-line utilities
-- **Current tools**: commander, yargs, clap
-- **Need**: Rich interactive interfaces without leaving JavaScript
-- **Example**: Interactive installer wizards, configuration tools
-
-#### Persona 2: DevTool Builder
-
-- **Who**: Developers creating developer tools
-- **Current tools**: ncurses, tui-rs, Textual
-- **Need**: Real-time updates, keyboard-driven interfaces, performance
-- **Example**: Log viewers, process monitors, database clients
-
-#### Persona 3: Terminal Dashboard Creator
-
-- **Who**: Building monitoring dashboards, AI agent terminals
-- **Current tools**: Various custom solutions
-- **Need**: Flexible layout, real-time data, modern development
-- **Example**: CI/CD dashboards, system monitors, experience AI chat interfaces
-
-#### Persona 4: Bun/TypeScript Developer
-
-- **Who**: Already using Bun as runtime
-- **Current tools**: None for TUI
-- **Need**: Build TUI without learning Rust or Python
-- **Example**: Personal tools, internal utilities
-
-### User Pain Points
-
-| Pain Point     | Current Reality        | Our Solution           |
-| -------------- | ---------------------- | ---------------------- |
-| Memory usage   | Ink: 50MB+             | Target: < 20MB         |
-| Performance    | React diffing overhead | Fine-grained Solid.js  |
-| TypeScript     | Limited in Rust TUIs   | First-class from day 1 |
-| FFI complexity | Raw bun:ffi            | Ergonomic wrapper      |
-| Layout         | Yoga (C binding)       | Taffy (pure Rust)      |
+| Term | Definition | Do Not Use |
+|---|---|---|
+| **Widget** | A composable visual building block that can display content, accept input, or contain other Widgets. | Component, Element, Node, Control |
+| **Developer** | A person using Kraken TUI to build terminal applications. | Author, User, Consumer, Client |
+| **End User** | The person interacting with the terminal application a Developer built. | User, Customer, Operator |
+| **Composition Tree** | The hierarchical arrangement of Widgets that defines the interface structure. | DOM, Widget Tree, Node Tree, Scene Graph |
+| **Surface** | The terminal display area to which the Composition Tree is rendered. | Screen, Canvas, View, Buffer |
+| **Handle** | An opaque reference to a Widget in the native performance layer. Owned by the system, not the Developer. | Pointer, Reference, ID, Key |
+| **Layout Constraint** | Rules governing a Widget's position and dimensions relative to its parent and siblings (Flexbox semantics). | Style, CSS, Layout Rule |
+| **Render Pass** | A single cycle from state mutation to Surface update. Only changed regions are recomputed. | Frame, Draw, Paint, Tick |
+| **Event** | A discrete unit of End User input (keystroke, mouse action, focus change) routed to the appropriate Widget. | Callback, Signal, Message, Action |
 
 ---
 
-## 3. Goals & Non-Goals
+## 3. ACTORS & PERSONAS
 
-### Goals (v1)
+### Primary: The Rapid Dashboard Builder
 
-1. **Core Widgets**: Provide Box, Text, Input, Select, ScrollBox widgets
-2. **Layout Engine**: Implement Flexbox layout via Taffy
-3. **Rendering**: Retained-mode rendering with dirty-flag diffing
-4. **Input**: Keyboard input handling with focus management
-5. **Imperative API**: Ergonomic TypeScript API for handle manipulation
-6. **Cross-Platform**: Support macOS, Linux, Windows
-7. **Performance**: Meet memory (< 20MB) and latency (< 50ms) targets
+**Psychographics:** Values composability over configurability. Measures success by time-from-idea-to-working-dashboard. Comfortable with TypeScript and terminal tooling but unwilling to invest weeks learning a new paradigm. Frustrated by frameworks that require boilerplate ceremony before anything appears on screen. Tolerates opinionated defaults; does *not* tolerate missing defaults. Will abandon a tool if the first meaningful layout takes more than 30 minutes.
 
-### Non-Goals (v1)
+**Trigger situation:** "I need a CI/CD monitor / system dashboard / AI agent terminal interface. I need it working by end of day. I don't have time to learn Rust or fight React's render model."
 
-1. **React Renderer** — Deferred to v2
-2. **Solid.js Renderer** — Deferred to v2 (imperative API first)
-3. **Mouse Support** — Deferred to v1.x
-4. **Animations** — Deferred to v2
-5. **Tree-sitter Highlighting** — Deferred to v2
-6. **Themes** — Deferred to v1.x
-7. **Rich Text/Markdown** — Deferred to v2
-8. **Accessibility** — Future consideration
+**Current workarounds:** Cobbled-together ANSI escape sequences, Ink with growing memory concerns, or leaving the terminal entirely for a web dashboard (which breaks the workflow).
 
-### Goals (v2+)
+### Secondary: The Ship-It CLI Developer
 
-- Solid.js renderer (fine-grained reactivity)
-- React renderer (for Ink migration path)
-- Mouse support
-- Animation system
-- Tree-sitter syntax highlighting
-- Theming system
+**Psychographics:** The pragmatist. Values getting to a working interactive prompt faster than reading documentation. Will copy-paste examples before reading the API reference. Doesn't care about architecture; cares about *"How many lines of code to my first Select prompt?"* Measures quality by how impressed colleagues are when they run the tool.
+
+**Trigger situation:** "I'm building a CLI installer / config wizard / interactive prompt. I want it to look professional in 20 minutes."
+
+### Tertiary: The Bun Ecosystem Native
+
+**Psychographics:** Already committed to Bun. Seeks tools that feel native to the runtime, not ported from Node.js. Values zero-dependency solutions and tight runtime integration. Views WASM and polyfill layers as architectural smell.
 
 ---
 
-## 4. Architecture Overview
+## 4. FUNCTIONAL CAPABILITIES
 
-### Three-Layer Architecture
+### Epic 1: Widget Composition (P0 — Critical Path, v0)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    TypeScript / Bun Layer                       │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │ Imperative  │  │   Solid     │  │      (Future)           │  │
-│  │   API       │  │  Renderer   │  │      React              │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │ bun:ffi
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Rust Core (cdylib)                         │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   Widget    │  │   Layout    │  │      Terminal           │  │
-│  │   Tree      │  │   (Taffy)   │  │      (crossterm)        │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │              Cell Buffer + Dirty Flag Diffing             │  │
-│  └───────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-```
+- A Developer can create atomic visual elements: text display, text input, option selection, scrollable regions.
+- A Developer can compose Widgets into hierarchical layouts of arbitrary depth.
+- A Developer can add and remove Widgets from the Composition Tree at runtime.
+- A Developer can set and update Widget content dynamically.
 
-### Key Architecture Decisions
+### Epic 2: Spatial Layout (P0 — Critical Path, v0)
 
-#### 1. Rendering Model: Retained-Mode + Dirty Flags
+- A Developer can define spatial relationships between Widgets using Flexbox-compatible Layout Constraints (direction, alignment, justification, gap).
+- A Developer can specify dimensional bounds (fixed, percentage, min/max, flex-grow, flex-shrink).
+- Layout resolves automatically on Composition Tree mutation without Developer intervention.
+- Layout adapts to Surface dimensions (terminal resize).
 
-- Persistent widget tree with state
-- Dirty flags track changed nodes
-- Only re-render changed screen regions
-- Efficient for high-frequency updates
+### Epic 3: Visual Styling (P0 — Critical Path, v0)
 
-#### 2. Layout Engine: Taffy (Pure Rust)
+- A Developer can apply foreground and background color to any Widget (named colors, hex, 256-palette).
+- A Developer can apply text decoration (bold, italic, underline).
+- A Developer can apply border styles to container Widgets.
+- A Developer can batch multiple style mutations into a single Render Pass.
 
-- No C dependencies (vs Yoga)
-- Full Flexbox support including gaps
-- High-performance layout computation
-- Integrates cleanly with Rust core
+### Epic 4: Input & Focus (P0 — Critical Path, v0)
 
-#### 3. FFI Boundary: Opaque Handle API
+- An End User can type text into input Widgets via keyboard.
+- An End User can navigate between interactive Widgets via keyboard-driven focus traversal.
+- An End User can select from a list of options using keyboard navigation.
+- A Developer can subscribe to keyboard Events on any Widget.
+- An End User can click a Widget to focus it.
+- An End User can scroll via mouse wheel within scrollable regions.
+- A Developer can subscribe to mouse Events (click, scroll) on any Widget.
+- The system performs hit-testing to route mouse Events to the correct Widget in the Composition Tree.
 
-- Rust owns all widget nodes
-- TypeScript receives integer handles
-- Memory ownership clearly defined
-- String passing via copy (not borrowing)
+### Epic 5: Scrollable Regions (P0 — Critical Path, v0)
 
-#### 4. Reconciler: Imperative → Solid
+- A Developer can designate a container Widget as scrollable when content exceeds its bounds.
+- An End User can scroll through overflow content via keyboard or mouse.
+- Scroll position is maintained across Render Passes.
 
-- v1: Imperative API only
-- v2: Solid.js (fine-grained reactivity)
-- v3: React (if demand)
-- Solid first: better matches handle mutation model
+### Epic 6: Cross-Platform Terminal Abstraction (P0 — Critical Path, v0)
 
-#### 5. Terminal Backend: crossterm
+- The system operates on major OS families (macOS, Linux, Windows) without platform-specific Developer code.
+- The system adapts to terminal capabilities (color depth, dimensions).
+- The system manages terminal mode lifecycle (raw mode entry/exit, alternate screen) transparently.
 
-- Cross-platform (Linux, macOS, Windows)
-- Actively maintained
-- Supports all required features (raw mode, alternate screen, mouse)
+### Epic 7: Rich Text Rendering (P0 — Critical Path, v0)
+
+- A Developer can render Markdown-formatted text within a Widget.
+- A Developer can render syntax-highlighted code blocks within a Widget.
+- The system parses rich text formats into styled text spans without Developer intervention.
+- A Developer can extend the parsing pipeline with custom format handlers.
+
+### Epic 8: Animation (P1 — v1)
+
+- A Developer can define timed transitions on Widget properties (opacity, position, color).
+- The system provides built-in animation primitives (spinner, progress bar, pulsing).
+- Animations are frame-budget-aware and degrade gracefully under load.
+- A Developer can cancel or chain animations programmatically.
+
+### Epic 9: Theming (P1–P2 — v1 foundation, v2 completion)
+
+- A Developer can define a Theme as a named collection of Style defaults.
+- A Developer can apply a Theme to a subtree of the Composition Tree (v1).
+- A Developer can switch Themes at runtime without rebuilding the Composition Tree (v1).
+- The system provides a constraint-based Theme inheritance model for nested subtrees (v2).
+- The system ships with at least two built-in Themes: light and dark (v1).
 
 ---
 
-## 5. API Specification
+## 5. NON-FUNCTIONAL CONSTRAINTS
 
-### Rust C API (FFI Surface)
+| Attribute | Constraint | Rationale |
+|---|---|---|
+| **Memory** | < 20MB for a composition of 100 Widgets | Enables deployment in constrained environments (CI runners, containers, remote servers) |
+| **Input Latency** | < 50ms from keystroke to Surface update | Below human perception threshold for interactive responsiveness |
+| **Render Budget** | < 16ms per Render Pass (60fps capable) | Smooth visual updates for real-time dashboards |
+| **Foreign Function Overhead** | < 1ms per cross-boundary call | Must not be the bottleneck in the render loop |
+| **Host-Language Bundle** | < 50KB (TypeScript layer) | Minimal overhead; the value is in the native core |
+| **Time to Hello World** | < 15 minutes for a competent TypeScript developer | Core JTBD: ship faster |
+| **API Stability** | Semantic versioning from v1.0. No breaking changes without major version bump. | Community-driven OSS demands trust in API contracts |
+| **Contributor Experience** | Clear module boundaries, documented architecture decisions, reproducible build environment | Portfolio + community viability depends on contribution accessibility |
+| **Accessibility** | Not a v0/v1 hard constraint. Tracked as a v2 commitment. | Acknowledged as important; deferred to avoid scope creep in MVP |
 
-```c
-// Core
-int tui_init(void);
-int tui_shutdown(void);
+---
 
-// Node lifecycle
-u32 tui_create_node(const char* type, usize type_len);
-int tui_destroy_node(u32 handle);
+## 6. BOUNDARY ANALYSIS
 
-// Tree structure
-int tui_append_child(u32 parent, u32 child);
-int tui_remove_child(u32 parent, u32 child);
-u32 tui_get_parent(u32 handle);
+### In Scope (The Core Value)
 
-// Content
-int tui_set_content(u32 handle, const char* content, usize len);
+**v0 — MVP:**
+- Composable Widget system for constructing terminal dashboards and interactive CLI interfaces.
+- Flexbox-compatible layout resolution.
+- Keyboard-driven interaction with focus management.
+- Mouse interaction (click-to-focus, scroll, hit-testing).
+- Rich text rendering (Markdown, syntax highlighting, extensible parser pipeline).
+- Imperative composition API (the simplest possible mental model).
+- Incremental rendering (dirty-region tracking).
+- Cross-platform terminal abstraction.
+- Scrollable regions.
 
-// Styling
-int tui_set_style_i32(u32 handle, TuiStyleProperty prop, i32 value);
-int tui_set_style_color(u32 handle, TuiStyleProperty prop, u32 color);
-int tui_set_styles_json(u32 handle, const char* json, usize json_len);
+**v1 — Stable:**
+- Animation system (timed transitions, built-in primitives, frame-budget-aware).
+- Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
 
-// Layout
-int tui_compute_layout(void);
-int tui_get_layout(u32 handle, TuiLayout* out_layout);
+**v2 — Expansion:**
+- Theme inheritance model (constraint-based, nested subtrees).
+- Declarative/reactive framework bindings (reconciler layer).
 
-// Rendering
-int tui_render(void);
-int tui_mark_dirty(u32 handle);
+### Out of Scope (Anti-Scope) — Explicit Exclusions
 
-// Events
-TuiEventType tui_poll_event(TuiKeyEvent* event);
-int tui_set_key_callback(TuiKeyCallback callback);
+1. **Declarative/Reactive framework bindings.** Adding reconciler-based renderers (reactive signal-based or virtual-DOM-based) in v0/v1 would double the API surface and introduce conceptual complexity that conflicts with the "ship faster" JTBD. The imperative API is the minimal sufficient interface. Deferred to v2.
+
+---
+
+## 7. CONCEPTUAL DIAGRAMS
+
+### Diagram A: System Context (C4 Level 1)
+
+```mermaid
+C4Context
+    title Kraken TUI — System Context
+
+    Person(developer, "Developer", "TypeScript developer composing terminal interfaces")
+    Person(enduser, "End User", "Person interacting with the terminal application")
+
+    System(kraken, "Kraken TUI", "Composable terminal interface library with native performance and Flexbox layout")
+
+    System_Ext(terminal, "Terminal Emulator", "Host application rendering the Surface")
+    System_Ext(runtime, "Script Runtime", "Host runtime executing Developer code via foreign function interface")
+    System_Ext(os, "Operating System", "Provides terminal I/O primitives and process lifecycle")
+
+    Rel(developer, kraken, "Composes Widgets, defines Layout Constraints, handles Events")
+    Rel(enduser, terminal, "Provides keyboard and mouse input, reads visual output")
+    Rel(kraken, terminal, "Writes to Surface via terminal escape sequences")
+    Rel(kraken, runtime, "Exposes Widget API via foreign function interface")
+    Rel(terminal, os, "Terminal I/O")
 ```
 
-### TypeScript Wrapper API
+### Diagram B: Domain Model
 
-```typescript
-// Widget creation
-const box = new Box({
-	flexDirection: "row",
-	gap: 8,
-	border: "single",
-});
+```mermaid
+classDiagram
+    class Widget {
+        identity
+        content
+        visibility
+    }
 
-const text = new Text({
-	content: "Hello!",
-	color: "#00FF00",
-	bold: true,
-});
+    class CompositionTree {
+        root Widget
+    }
 
-const input = new Input({
-	placeholder: "Type here...",
-	onSubmit: (value) => console.log(value),
-});
+    class LayoutConstraint {
+        direction
+        alignment
+        justification
+        gap
+        dimensional bounds
+    }
 
-// Composition
-box.append(text, input);
+    class Style {
+        foreground color
+        background color
+        text decoration
+        border appearance
+    }
 
-// Rendering
-render(box);
+    class Theme {
+        name
+        style defaults
+    }
+
+    class Handle {
+        opaque reference
+    }
+
+    class Event {
+        event type
+        input source
+        payload
+    }
+
+    class Surface {
+        dimensions
+        color capability
+    }
+
+    class RenderPass {
+        dirty regions
+    }
+
+    CompositionTree "1" *-- "1..*" Widget : contains
+    Widget "1" -- "1" Handle : identified by
+    Widget "1" -- "0..1" LayoutConstraint : positioned by
+    Widget "1" -- "0..1" Style : decorated with
+    Widget "0..*" -- "0..1" Widget : nested in
+    Theme "1" -- "0..*" Style : provides defaults for
+    Theme "0..1" -- "0..*" Widget : applied to subtree
+    Surface "1" -- "0..*" RenderPass : updated via
+    RenderPass "1" ..> "1..*" Widget : renders changed
+    Event "0..*" ..> "1" Widget : targeted at
 ```
 
-### Style Properties
-
-| Category | Properties                                                                |
-| -------- | ------------------------------------------------------------------------- |
-| Layout   | `width`, `height`, `flexDirection`, `justifyContent`, `alignItems`, `gap` |
-| Spacing  | `padding`, `margin`                                                       |
-| Border   | `border`, `borderColor`, `borderWidth`                                    |
-| Color    | `color`, `backgroundColor`, `opacity`                                     |
-| Text     | `bold`, `italic`, `underline`, `textAlign`                                |
-
 ---
 
-## 6. Widget Catalog
+## Appendix A: Version Roadmap
 
-### Core Widgets (v1)
+| Version | Epics | Summary |
+|---|---|---|
+| **v0** | 1, 2, 3, 4, 5, 6, 7 | Widget composition, layout, styling, input (keyboard + mouse), scrolling, cross-platform, rich text rendering |
+| **v1** | 8, 9 (foundation) | Animation system, theming foundation (built-in themes, runtime switching) |
+| **v2** | 9 (completion), declarative bindings | Theme inheritance, reconciler layer (Solid.js, then React) |
 
-| Widget        | Description    | Key Props                                                          |
-| ------------- | -------------- | ------------------------------------------------------------------ |
-| **Box**       | Flex container | `flexDirection`, `justifyContent`, `alignItems`, `gap`, `children` |
-| **Text**      | Text display   | `content`, `color`, `bold`, `italic`                               |
-| **Input**     | Text input     | `value`, `placeholder`, `onSubmit`, `onInput`                      |
-| **Select**    | Dropdown       | `options`, `selectedIndex`, `onChange`                             |
-| **ScrollBox** | Scrollable     | `scrollX`, `scrollY`, `scrollbarWidth`                             |
+## Appendix B: Operator Preferences
 
-### Extended Widgets (v2)
+*The following are the developer's stated technology preferences. Per the Principle of Abstraction, these are documented here for downstream agents (Architect, Implementer) but are not incorporated into the functional or non-functional requirements above.*
 
-| Widget     | Description       |
-| ---------- | ----------------- |
-| Button     | Clickable button  |
-| Checkbox   | Toggle checkbox   |
-| RadioGroup | Single selection  |
-| TextArea   | Multi-line input  |
-| Progress   | Progress bar      |
-| Spinner    | Loading indicator |
-| Table      | Tabular data      |
-| List       | Scrollable list   |
+| Preference | Value |
+|---|---|
+| Core implementation language | Rust |
+| Target runtime | Bun |
+| FFI mechanism | bun:ffi |
+| Layout engine | Taffy |
+| Terminal backend | crossterm |
+| Future reconciler path | Solid.js (v2), then React (v3) |
+| Build artifact | cdylib |
+| Dev environment | devenv (Nix) |
 
----
-
-## 7. Performance Requirements
-
-### Targets
-
-| Metric              | Target       | Comparison (Ink) |
-| ------------------- | ------------ | ---------------- |
-| Memory footprint    | < 20MB       | ~50MB            |
-| Input latency       | < 50ms       | ~100ms           |
-| Render frame budget | 16ms (60fps) | ~33ms (30fps)    |
-| FFI call overhead   | < 1ms        | N/A              |
-| Bundle size (TS)    | < 50KB       | ~200KB           |
-
-### Performance Strategy
-
-1. **Rust Core**: Computation-heavy tasks in Rust
-2. **Dirty Flags**: Only re-render changed regions
-3. **Fine-grained Reactivity**: Solid.js signals map directly to handle mutations
-4. **Batch Operations**: Group multiple updates into single render pass
-5. **Memory Management**: Clear ownership semantics prevent leaks
-
----
-
-## 8. Platform Support
-
-### Operating Systems
-
-- macOS 12+ (Ventura and later)
-- Linux (Ubuntu 20.04+, Debian 11+, Fedora 36+)
-- Windows 10/11
-
-### Runtimes
-
-- Bun 1.x (primary)
-- Node.js 18+ (secondary, via Napi-RS fallback if needed)
-
-### Rust Toolchain
-
-- Rust 1.75+ (stable)
-- Target: `cdylib` for FFI
-
-### Terminal Requirements
-
-- ANSI-compatible terminal
-- Minimum 80x24 characters
-- 256 color support recommended
-- Truecolor support for `#RRGGBB` colors
-
----
-
-## 9. Development Roadmap
-
-### Phase 1: Research & Spike (Weeks 1-2)
-
-- [x] Study Ratatui, OpenTUI, Ink, Textual, Blessed
-- [x] Prototype FFI with bun:ffi + Rust cdylib
-- [x] Prototype Taffy layout engine
-- [x] Prototype crossterm rendering
-- [x] Benchmark FFI call overhead
-
-### Phase 2: Architecture (Week 3)
-
-- [x] ADR: Rendering model (retained-mode + dirty flags)
-- [x] ADR: Layout engine (Taffy)
-- [x] ADR: FFI boundary (opaque handles)
-- [x] ADR: Reconciler strategy (imperative → Solid)
-- [x] ADR: Terminal backend (crossterm)
-
-### Phase 3: API Design (Week 4)
-
-- [x] Rust C API specification
-- [x] TypeScript wrapper API
-- [x] Solid.js reconciler API (v2 plan)
-- [x] Widget catalog
-
-### Phase 4: Implementation (Weeks 5-10)
-
-#### Alpha (Weeks 5-6)
-
-- [ ] Rust cdylib with basic node lifecycle
-- [ ] bun:ffi bindings
-- [ ] Taffy integration
-- [ ] crossterm setup
-- [ ] Basic Box widget
-
-#### Beta (Weeks 7-8)
-
-- [ ] All v1 widgets (Text, Input, Select, ScrollBox)
-- [ ] Keyboard input handling
-- [ ] Focus management
-- [ ] Dirty-flag rendering
-- [ ] TypeScript types
-
-#### RC (Weeks 9-10)
-
-- [ ] Performance optimization
-- [ ] Error handling
-- [ ] Documentation
-- [ ] Cross-platform testing
-- [ ] Benchmark validation
-
-### Phase 5: Release (Week 11)
-
-- [ ] v1.0 stable release
-- [ ] npm package publication
-- [ ] Migration guide (from Ink)
-- [ ] Community feedback
-
-### Post-Release (v2 Planning)
-
-- Solid.js renderer
-- Mouse support
-- Animations
-- Syntax highlighting
-
----
-
-## 10. Open Questions
-
-### Technical Questions
-
-1. **Callbacks**: How to handle high-frequency mouse events without flooding the JS side?
-   - Option A: Throttle to 60fps max
-   - Option B: Buffer events and deliver in batches
-   - Option C: Only deliver mouse events when widget is focused
-
-2. **Layout Caching**: Should we cache layout results and invalidate on specific property changes?
-   - Current plan: Recompute full layout on `compute_layout()` call
-   - Future: Incremental invalidation based on dirty properties
-
-3. **String Interning**: For many small text nodes, should we intern strings to reduce memory?
-   - Deferred to v2 unless profiling shows need
-
-4. **Widget IDs**: How to expose widget IDs for query/lookup operations?
-   - Plan: Support `id` prop, add `tui_query_by_id()` function
-
-5. **FFI Error Handling**: How to propagate Rust errors to TypeScript?
-   - Plan: Error codes + `tui_get_error()` for messages
-
-### Product Questions
-
-1. **Naming**: "Kraken" is a working title. Confirm final name before release?
-
-2. **License**: MIT vs Apache 2.0 vs dual-license?
-   - Recommendation: MIT for simplicity
-
-3. **Organization**: Personal repo vs. company vs. foundation?
-   - Recommendation: Start as personal, transfer if needed
-
-4. **Branding**: Logo, website, documentation domain?
-   - Deferred to release planning
-
----
-
-## Appendix: Glossary
-
-| Term       | Definition                                    |
-| ---------- | --------------------------------------------- |
-| TUI        | Terminal User Interface                       |
-| FFI        | Foreign Function Interface                    |
-| cdylib     | C-compatible dynamic library                  |
-| Flexbox    | CSS Flexible Box Layout                       |
-| Dirty flag | Marker indicating a node needs re-rendering   |
-| Reconciler | System that syncs component state to UI       |
-| Handle     | Opaque identifier for a Rust-allocated object |
-
----
-
-## Appendix: References
+## Appendix C: References
 
 - [Ratatui](https://ratatui.rs/) — Rust TUI library
 - [OpenTUI](https://opentui.com/) — Zig + Bun TUI framework
@@ -483,10 +300,3 @@ render(box);
 - [Taffy](https://github.com/DioxusLabs/taffy) — Rust layout engine
 - [crossterm](https://github.com/crossterm-rs/crossterm) — Rust terminal library
 - [bun:ffi](https://bun.com/reference/bun/ffi) — Bun FFI documentation
-
----
-
-**Document Status**: Draft for internal review  
-**Spikes Status**: ✅ All validated (FFI, Taffy, crossterm)  
-**Next Step**: Begin Alpha implementation (node lifecycle, bindings)  
-**Reviewers**: TBD
