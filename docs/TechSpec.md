@@ -16,10 +16,10 @@
 | Component | Choice | Version | Rationale |
 |---|---|---|---|
 | **Language** | Rust | Stable 1.93.x | Performance engine per Architecture invariant. All CPU-intensive work executes here. |
-| **Edition** | 2021 | — | Current stable edition. Matches validated spike. |
+| **Edition** | 2021 | — | Current stable edition. |
 | **Build Target** | cdylib | — | Shared library for FFI consumption via `bun:ffi`. |
-| **Layout Engine** | Taffy | 0.9.x | Pure Rust Flexbox. Validated in spike: 0.189μs FFI overhead. ADR-002. |
-| **Terminal Backend** | crossterm | 0.29.x | Cross-platform terminal I/O. Validated in spike. ADR-005. |
+| **Layout Engine** | Taffy | 1.x | Pure Rust Flexbox. ADR-002. |
+| **Terminal Backend** | crossterm | 0.29.x | Cross-platform terminal I/O. ADR-005. |
 | **Markdown Parser** | pulldown-cmark | 0.13.x | CommonMark-compliant pull parser. Lightweight, no allocations during iteration. |
 | **Syntax Highlighter** | syntect | 5.3.x | Sublime Text grammar-based. Default feature set with `default-onig` disabled to reduce binary size (use `default-fancy` features). |
 | **Bitflags** | bitflags | 2.x | Cell attribute flag representation. |
@@ -30,7 +30,7 @@
 |---|---|---|---|
 | **Runtime** | Bun | ≥ 1.0 (dev: 1.3.8) | Target runtime per PRD Appendix B. Native FFI support. |
 | **Language** | TypeScript | 5.x (Bun built-in) | Type-safe host layer. No build step required — Bun runs TS directly. |
-| **FFI Mechanism** | bun:ffi | Built-in | Zero-dependency foreign function interface. `dlopen` + symbol binding. |
+| **FFI Mechanism** | bun:ffi | Built-in | Zero-dependency foreign function interface. `dlopen` + symbol binding. Custom struct handling (ADR-T06) — no external struct libraries. |
 
 ### Build Artifacts
 
@@ -141,6 +141,39 @@ pub trait TerminalBackend {
 - (+) Enables mock backend for automated testing of render output and event processing.
 - (+) Enables future backend replacement without modifying module logic.
 - (-) Dynamic dispatch overhead (~1ns per call) — irrelevant since terminal I/O itself costs microseconds.
+
+### ADR-T06: FFI Struct Handling — Custom Minimal Implementation
+
+**Context:** The TechStack specifies Bun as the host runtime with `bun:ffi` for FFI. The FFI boundary uses fixed-layout C structs (`TuiEvent` 24 bytes, `Cell` 12 bytes) that must be marshalled between Rust and TypeScript. A third-party library `bun-ffi-structs` (by SST) exists for this purpose.
+
+**Investigation:** Analyzed `bun-ffi-structs` (v0.1.3) which provides type-safe struct definitions for Bun FFI:
+- ✅ Supports primitives (u8, u32, f32, etc.), enums, nested structs, arrays
+- ✅ Handles C alignment and little-endian encoding
+- ✅ Used by OpenTUI (which powers OpenCode)
+- ⚠️ **Critical:** Native integration tests use **Zig only** — no Rust verification
+- ⚠️ **Critical:** Library maintained by SST for their Zig→TypeScript stack; design optimized for Zig ABI conventions
+- ⚠️ Risk: If SST pivots or abandons, we inherit unmaintained dependency with different design goals
+
+**Decision:** Do NOT use `bun-ffi-structs`. Implement a minimal custom `ffi/structs.ts` module (~50 lines) with exactly what we need:
+- Fixed-size struct pack/unpack for `TuiEvent`, `Cell`, layout results
+- Proper C alignment and little-endian encoding
+- Manual bitflag handling for `CellAttrs`
+
+**Rationale:**
+1. **We need <5 structs** — Not a general-purpose need; trivial to hand-code
+2. **Zero dependencies** — No external roadmap affects us
+3. **Full control** — We own alignment, endianness, everything
+4. **Rust-first integrity** — We're not dependent on a Zig-optimized library for our Rust core
+5. **Risk mitigation** — If `bun:ffi` becomes untenable, NAPI-RS is the migration path; a custom struct layer is trivial to adapt
+
+**Consequences:**
+- (+) Complete control over FFI struct handling
+- (+) No external dependency for this critical path
+- (+) Rust-core-first philosophy preserved
+- (-) Re-inventing ~50 lines of struct packing logic
+- (-) No compile-time struct definition validation (manual bookkeeping required)
+
+**Implementation Note:** The custom module shall be implemented in `ts/src/ffi/structs.ts` with tests verifying byte layout matches Rust `#[repr(C)]` structs exactly.
 
 ---
 
@@ -731,6 +764,8 @@ kraken-tui/
 │   └── src/
 │       ├── index.ts               # Public API exports
 │       ├── ffi.ts                 # Raw bun:ffi bindings (dlopen, symbols)
+│       ├── ffi/
+│       │   └── structs.ts         # Custom struct pack/unpack (ADR-T06)
 │       ├── app.ts                 # Application lifecycle (init, loop, shutdown)
 │       ├── widget.ts              # Base Widget class
 │       ├── widgets/
@@ -745,7 +780,6 @@ kraken-tui/
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
 └── README.md
-```
 
 ### 5.2 Module → File Mapping
 
@@ -782,8 +816,8 @@ kraken-tui/
 
 - Zero business logic. Only FFI dispatch and ergonomic wrapping.
 - `strict: true` TypeScript.
-- No runtime dependencies beyond `bun:ffi` (built-in).
-- Widget classes hold a `handle: number` and call FFI functions through the bindings in `ffi.ts`.
+- No runtime dependencies beyond `bun:ffi` (built-in). Custom struct handling in `ffi/structs.ts` (per ADR-T06).
+- Widget classes hold a `handle: number` and call FFI functions through the bindings in `ffi.ts` and `ffi/structs.ts`.
 - Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → `0x02000001`) happens in TypeScript (`style.ts`).
 - Developer-assigned IDs: `ts/src/app.ts` maintains an `id → handle` `Map<string, number>`. The Native Core never sees string IDs.
 
@@ -813,7 +847,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-taffy = "0.9"
+taffy = "1"
 crossterm = "0.29"
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
@@ -902,7 +936,8 @@ The v0 implementation structure is designed to accommodate v1 additions (Animati
 | PRD.md | v2.0 (Approved) | v0 scope (Epics 1–7). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
 | Architecture.md | v1.0 (Draft) | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules. |
 | ADR-001 | Accepted | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid. |
-| ADR-002 | Accepted | Taffy 0.9.x for Flexbox layout. |
+| ADR-002 | Accepted | Taffy 1.x for Flexbox layout. |
 | ADR-003 | Accepted | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state. |
 | ADR-004 | Accepted | Imperative command API (v0/v1). Reactive reconciler deferred to v2. |
 | ADR-005 | Accepted | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation. |
+| ADR-T06 | Accepted | Custom minimal FFI struct handling (no external libraries). |
