@@ -487,5 +487,6 @@ render(box);
 ---
 
 **Document Status**: Draft for internal review  
-**Next Step**: Technical spike implementation to validate architecture  
+**Spikes Status**: ✅ All validated (FFI, Taffy, crossterm)  
+**Next Step**: Begin Alpha implementation (node lifecycle, bindings)  
 **Reviewers**: TBD
