@@ -3,7 +3,7 @@
 import { dlopen, CString, suffix } from "bun:ffi";
 
 // Define the library path
-const LIB_PATH = "./spike-ffi/target/release/libspike_ffi.so";
+const LIB_PATH = "./target/release/libspike_ffi.so";
 
 // Define function signatures
 const lib = dlopen(LIB_PATH, {

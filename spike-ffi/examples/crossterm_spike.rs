@@ -3,7 +3,7 @@
 //! Run with: cargo run --example crossterm_spike
 
 use crossterm::{
-    cursor::Show,
+    cursor::{MoveDown, MoveToColumn, Show},
     event::{self, Event, KeyEventKind},
     style::{Color, PrintStyledContent, Stylize},
     terminal::{EnterAlternateScreen, LeaveAlternateScreen},
@@ -28,18 +28,21 @@ fn main() {
         "World!".with(Color::Blue).italic()
     )).unwrap();
     
-    // Move to next line
-    stdout.queue(crossterm::cursor::MoveDown(1)).unwrap();
+    // Move to next line (move down AND to column 0)
+    stdout.queue(MoveDown(1)).unwrap();
+    stdout.queue(MoveToColumn(0)).unwrap();
     
     // Print a box
     stdout.queue(PrintStyledContent(
         "┌─────────────────────┐".with(Color::DarkGrey)
     )).unwrap();
-    stdout.queue(crossterm::cursor::MoveDown(1)).unwrap();
+    stdout.queue(MoveDown(1)).unwrap();
+    stdout.queue(MoveToColumn(0)).unwrap();
     stdout.queue(PrintStyledContent(
         "│   TUI Demo          │".with(Color::DarkGrey)
     )).unwrap();
-    stdout.queue(crossterm::cursor::MoveDown(1)).unwrap();
+    stdout.queue(MoveDown(1)).unwrap();
+    stdout.queue(MoveToColumn(0)).unwrap();
     stdout.queue(PrintStyledContent(
         "└─────────────────────┘".with(Color::DarkGrey)
     )).unwrap();
