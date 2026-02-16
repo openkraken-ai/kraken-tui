@@ -16,9 +16,9 @@
 
 **Jobs to be Done:**
 
-> *Primary:* "When building interactive terminal applications in TypeScript, I want pre-built composable interface elements with native performance and familiar layout semantics, so I can **ship polished terminal UIs in hours, not days**, without the overhead of full-framework reconciliation or learning a systems language."
+> _Primary:_ "When building interactive terminal applications in TypeScript, I want pre-built composable interface elements with native performance and familiar layout semantics, so I can **ship polished terminal UIs in hours, not days**, without the overhead of full-framework reconciliation or learning a systems language."
 
-> *Secondary:* "When using Bun as my primary runtime, I want a TUI library designed for Bun's foreign-function model from day one, so I don't fight compatibility shims or WASM overhead."
+> _Secondary:_ "When using Bun as my primary runtime, I want a TUI library designed for Bun's foreign-function model from day one, so I don't fight compatibility shims or WASM overhead."
 
 **JTBD Priority Order:** Ship Faster > Bun-native DX > Escape React Overhead > Own the Full Stack
 
@@ -26,17 +26,17 @@
 
 ## 2. UBIQUITOUS LANGUAGE (GLOSSARY)
 
-| Term | Definition | Do Not Use |
-|---|---|---|
-| **Widget** | A composable visual building block that can display content, accept input, or contain other Widgets. | Component, Element, Node, Control |
-| **Developer** | A person using Kraken TUI to build terminal applications. | Author, User, Consumer, Client |
-| **End User** | The person interacting with the terminal application a Developer built. | User, Customer, Operator |
-| **Composition Tree** | The hierarchical arrangement of Widgets that defines the interface structure. | DOM, Widget Tree, Node Tree, Scene Graph |
-| **Surface** | The terminal display area to which the Composition Tree is rendered. | Screen, Canvas, View, Buffer |
-| **Handle** | An opaque reference to a Widget in the native performance layer. Owned by the system, not the Developer. | Pointer, Reference, ID, Key |
-| **Layout Constraint** | Rules governing a Widget's position and dimensions relative to its parent and siblings (Flexbox semantics). | Style, CSS, Layout Rule |
-| **Render Pass** | A single cycle from state mutation to Surface update. Only changed regions are recomputed. | Frame, Draw, Paint, Tick |
-| **Event** | A discrete unit of End User input (keystroke, mouse action, focus change) routed to the appropriate Widget. | Callback, Signal, Message, Action |
+| Term                  | Definition                                                                                                  | Do Not Use                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| **Widget**            | A composable visual building block that can display content, accept input, or contain other Widgets.        | Component, Element, Node, Control        |
+| **Developer**         | A person using Kraken TUI to build terminal applications.                                                   | Author, User, Consumer, Client           |
+| **End User**          | The person interacting with the terminal application a Developer built.                                     | User, Customer, Operator                 |
+| **Composition Tree**  | The hierarchical arrangement of Widgets that defines the interface structure.                               | DOM, Widget Tree, Node Tree, Scene Graph |
+| **Surface**           | The terminal display area to which the Composition Tree is rendered.                                        | Screen, Canvas, View, Buffer             |
+| **Handle**            | An opaque reference to a Widget in the native performance layer. Owned by the system, not the Developer.    | Pointer, Reference, ID, Key              |
+| **Layout Constraint** | Rules governing a Widget's position and dimensions relative to its parent and siblings (Flexbox semantics). | Style, CSS, Layout Rule                  |
+| **Render Pass**       | A single cycle from state mutation to Surface update. Only changed regions are recomputed.                  | Frame, Draw, Paint, Tick                 |
+| **Event**             | A discrete unit of End User input (keystroke, mouse action, focus change) routed to the appropriate Widget. | Callback, Signal, Message, Action        |
 
 ---
 
@@ -44,7 +44,7 @@
 
 ### Primary: The Rapid Dashboard Builder
 
-**Psychographics:** Values composability over configurability. Measures success by time-from-idea-to-working-dashboard. Comfortable with TypeScript and terminal tooling but unwilling to invest weeks learning a new paradigm. Frustrated by frameworks that require boilerplate ceremony before anything appears on screen. Tolerates opinionated defaults; does *not* tolerate missing defaults. Will abandon a tool if the first meaningful layout takes more than 30 minutes.
+**Psychographics:** Values composability over configurability. Measures success by time-from-idea-to-working-dashboard. Comfortable with TypeScript and terminal tooling but unwilling to invest weeks learning a new paradigm. Frustrated by frameworks that require boilerplate ceremony before anything appears on screen. Tolerates opinionated defaults; does _not_ tolerate missing defaults. Will abandon a tool if the first meaningful layout takes more than 30 minutes.
 
 **Trigger situation:** "I need a CI/CD monitor / system dashboard / AI agent terminal interface. I need it working by end of day. I don't have time to learn Rust or fight React's render model."
 
@@ -52,7 +52,7 @@
 
 ### Secondary: The Ship-It CLI Developer
 
-**Psychographics:** The pragmatist. Values getting to a working interactive prompt faster than reading documentation. Will copy-paste examples before reading the API reference. Doesn't care about architecture; cares about *"How many lines of code to my first Select prompt?"* Measures quality by how impressed colleagues are when they run the tool.
+**Psychographics:** The pragmatist. Values getting to a working interactive prompt faster than reading documentation. Will copy-paste examples before reading the API reference. Doesn't care about architecture; cares about _"How many lines of code to my first Select prompt?"_ Measures quality by how impressed colleagues are when they run the tool.
 
 **Trigger situation:** "I'm building a CLI installer / config wizard / interactive prompt. I want it to look professional in 20 minutes."
 
@@ -88,8 +88,8 @@
 ### Epic 4: Input & Focus (P0 — Critical Path, v0)
 
 - An End User can type text into input Widgets via keyboard.
-- An End User can navigate between interactive Widgets via keyboard-driven focus traversal.
-- An End User can select from a list of options using keyboard navigation.
+- An End User can navigate between interactive Widgets via keyboard-driven focus traversal (depth-first, DOM order).
+- An End User can select from a list of options (Select widget) using arrow keys + Enter. Search/filter capability is out of scope for v0.
 - A Developer can subscribe to keyboard Events on any Widget.
 - An End User can click a Widget to focus it.
 - An End User can scroll via mouse wheel within scrollable regions.
@@ -134,17 +134,17 @@
 
 ## 5. NON-FUNCTIONAL CONSTRAINTS
 
-| Attribute | Constraint | Rationale |
-|---|---|---|
-| **Memory** | < 20MB for a composition of 100 Widgets | Enables deployment in constrained environments (CI runners, containers, remote servers) |
-| **Input Latency** | < 50ms from keystroke to Surface update | Below human perception threshold for interactive responsiveness |
-| **Render Budget** | < 16ms per Render Pass (60fps capable) | Smooth visual updates for real-time dashboards |
-| **Foreign Function Overhead** | < 1ms per cross-boundary call | Must not be the bottleneck in the render loop |
-| **Host-Language Bundle** | < 50KB (TypeScript layer) | Minimal overhead; the value is in the native core |
-| **Time to Hello World** | < 15 minutes for a competent TypeScript developer | Core JTBD: ship faster |
-| **API Stability** | Semantic versioning from v1.0. No breaking changes without major version bump. | Community-driven OSS demands trust in API contracts |
-| **Contributor Experience** | Clear module boundaries, documented architecture decisions, reproducible build environment | Portfolio + community viability depends on contribution accessibility |
-| **Accessibility** | Not a v0/v1 hard constraint. Tracked as a v2 commitment. | Acknowledged as important; deferred to avoid scope creep in MVP |
+| Attribute                     | Constraint                                                                                 | Rationale                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| **Memory**                    | < 20MB for a composition of 100 Widgets                                                    | Enables deployment in constrained environments (CI runners, containers, remote servers) |
+| **Input Latency**             | < 50ms from keystroke to Surface update                                                    | Below human perception threshold for interactive responsiveness                         |
+| **Render Budget**             | < 16ms per Render Pass (60fps capable)                                                     | Smooth visual updates for real-time dashboards                                          |
+| **Foreign Function Overhead** | < 1ms per cross-boundary call                                                              | Must not be the bottleneck in the render loop                                           |
+| **Host-Language Bundle**      | < 50KB (TypeScript layer)                                                                  | Minimal overhead; the value is in the native core                                       |
+| **Time to Hello World**       | < 15 minutes for a competent TypeScript developer                                          | Core JTBD: ship faster                                                                  |
+| **API Stability**             | Semantic versioning from v1.0. No breaking changes without major version bump.             | Community-driven OSS demands trust in API contracts                                     |
+| **Contributor Experience**    | Clear module boundaries, documented architecture decisions, reproducible build environment | Portfolio + community viability depends on contribution accessibility                   |
+| **Accessibility**             | Not a v0/v1 hard constraint. Tracked as a v2 commitment.                                   | Acknowledged as important; deferred to avoid scope creep in MVP                         |
 
 ---
 
@@ -153,6 +153,7 @@
 ### In Scope (The Core Value)
 
 **v0 — MVP:**
+
 - Composable Widget system for constructing terminal dashboards and interactive CLI interfaces.
 - Flexbox-compatible layout resolution.
 - Keyboard-driven interaction with focus management.
@@ -164,16 +165,26 @@
 - Scrollable regions.
 
 **v1 — Stable:**
+
 - Animation system (timed transitions, built-in primitives, frame-budget-aware).
 - Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
 
 **v2 — Expansion:**
+
 - Theme inheritance model (constraint-based, nested subtrees).
 - Declarative/reactive framework bindings (reconciler layer).
 
 ### Out of Scope (Anti-Scope) — Explicit Exclusions
 
 1. **Declarative/Reactive framework bindings.** Adding reconciler-based renderers (reactive signal-based or virtual-DOM-based) in v0/v1 would double the API surface and introduce conceptual complexity that conflicts with the "ship faster" JTBD. The imperative API is the minimal sufficient interface. Deferred to v2.
+
+2. **Select widget search/filter.** Implementing search/filter within Select dropdowns adds significant complexity to the widget. Plain selection via arrow keys is sufficient for v0.
+
+3. **Accessibility (a11y) features.** Screen reader support, ARIA-like labels, and focus indicators are deferred to v2. Basic keyboard navigation is supported in v0.
+
+4. **Internationalization (i18n).** RTL layout support, Unicode beyond UTF-8, and localization hooks are out of scope for v0/v1.
+
+5. **Widget state persistence.** Serialization/deserialization of the Composition Tree is deferred to future versions.
 
 ---
 
@@ -270,26 +281,26 @@ classDiagram
 
 ## Appendix A: Version Roadmap
 
-| Version | Epics | Summary |
-|---|---|---|
-| **v0** | 1, 2, 3, 4, 5, 6, 7 | Widget composition, layout, styling, input (keyboard + mouse), scrolling, cross-platform, rich text rendering |
-| **v1** | 8, 9 (foundation) | Animation system, theming foundation (built-in themes, runtime switching) |
-| **v2** | 9 (completion), declarative bindings | Theme inheritance, reconciler layer (Solid.js, then React) |
+| Version | Epics                                | Summary                                                                                                       |
+| ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| **v0**  | 1, 2, 3, 4, 5, 6, 7                  | Widget composition, layout, styling, input (keyboard + mouse), scrolling, cross-platform, rich text rendering |
+| **v1**  | 8, 9 (foundation)                    | Animation system, theming foundation (built-in themes, runtime switching)                                     |
+| **v2**  | 9 (completion), declarative bindings | Theme inheritance, reconciler layer (Solid.js, then React)                                                    |
 
 ## Appendix B: Operator Preferences
 
-*The following are the developer's stated technology preferences. Per the Principle of Abstraction, these are documented here for downstream agents (Architect, Implementer) but are not incorporated into the functional or non-functional requirements above.*
+_The following are the developer's stated technology preferences. Per the Principle of Abstraction, these are documented here for downstream agents (Architect, Implementer) but are not incorporated into the functional or non-functional requirements above._
 
-| Preference | Value |
-|---|---|
-| Core implementation language | Rust |
-| Target runtime | Bun |
-| FFI mechanism | bun:ffi |
-| Layout engine | Taffy |
-| Terminal backend | crossterm |
-| Future reconciler path | Solid.js (v2), then React (v3) |
-| Build artifact | cdylib |
-| Dev environment | devenv (Nix) |
+| Preference                   | Value                          |
+| ---------------------------- | ------------------------------ |
+| Core implementation language | Rust                           |
+| Target runtime               | Bun                            |
+| FFI mechanism                | bun:ffi                        |
+| Layout engine                | Taffy                          |
+| Terminal backend             | crossterm                      |
+| Future reconciler path       | Solid.js (v2), then React (v3) |
+| Build artifact               | cdylib                         |
+| Dev environment              | devenv (Nix)                   |
 
 ## Appendix C: References
 

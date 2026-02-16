@@ -2,10 +2,10 @@
 
 ## Kraken TUI
 
-**Version**: 1.0
+**Version**: 2.0
 **Status**: Draft
 **Date**: February 2026
-**Source of Truth**: [Architecture.md](./Architecture.md) v1.0, [PRD.md](./PRD.md) v2.0
+**Source of Truth**: [Architecture.md](./Architecture.md) v2.0, [PRD.md](./PRD.md) v2.0
 
 ---
 
@@ -13,39 +13,39 @@
 
 ### Native Core
 
-| Component | Choice | Version | Rationale |
-|---|---|---|---|
-| **Language** | Rust | Stable 1.93.x | Performance engine per Architecture invariant. All CPU-intensive work executes here. |
-| **Edition** | 2021 | — | Current stable edition. |
-| **Build Target** | cdylib | — | Shared library for FFI consumption via `bun:ffi`. |
-| **Layout Engine** | Taffy | 1.x | Pure Rust Flexbox. ADR-002. |
-| **Terminal Backend** | crossterm | 0.29.x | Cross-platform terminal I/O. ADR-005. |
-| **Markdown Parser** | pulldown-cmark | 0.13.x | CommonMark-compliant pull parser. Lightweight, no allocations during iteration. |
-| **Syntax Highlighter** | syntect | 5.3.x | Sublime Text grammar-based. Default feature set with `default-onig` disabled to reduce binary size (use `default-fancy` features). |
-| **Bitflags** | bitflags | 2.x | Cell attribute flag representation. |
+| Component              | Choice         | Version       | Rationale                                                                                                                          |
+| ---------------------- | -------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Language**           | Rust           | Stable 1.93.x | Performance engine per Architecture invariant. All CPU-intensive work executes here.                                               |
+| **Edition**            | 2021           | —             | Current stable edition.                                                                                                            |
+| **Build Target**       | cdylib         | —             | Shared library for FFI consumption via `bun:ffi`.                                                                                  |
+| **Layout Engine**      | Taffy          | 0.9.x         | Pure Rust Flexbox. ADR-002. Current stable release.                                                                                |
+| **Terminal Backend**   | crossterm      | 0.29.x        | Cross-platform terminal I/O. ADR-005.                                                                                              |
+| **Markdown Parser**    | pulldown-cmark | 0.13.x        | CommonMark-compliant pull parser. Lightweight, no allocations during iteration.                                                    |
+| **Syntax Highlighter** | syntect        | 5.3.x         | Sublime Text grammar-based. Default feature set with `default-onig` disabled to reduce binary size (use `default-fancy` features). |
+| **Bitflags**           | bitflags       | 2.x           | Cell attribute flag representation.                                                                                                |
 
 ### Host Language Bindings
 
-| Component | Choice | Version | Rationale |
-|---|---|---|---|
-| **Runtime** | Bun | ≥ 1.0 (dev: 1.3.8) | Target runtime per PRD Appendix B. Native FFI support. |
-| **Language** | TypeScript | 5.x (Bun built-in) | Type-safe host layer. No build step required — Bun runs TS directly. |
-| **FFI Mechanism** | bun:ffi | Built-in | Zero-dependency foreign function interface. `dlopen` + symbol binding. Custom struct handling (ADR-T06) — no external struct libraries. |
+| Component         | Choice     | Version            | Rationale                                                                                                                               |
+| ----------------- | ---------- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Runtime**       | Bun        | ≥ 1.0 (dev: 1.3.8) | Target runtime per PRD Appendix B. Native FFI support.                                                                                  |
+| **Language**      | TypeScript | 5.x (Bun built-in) | Type-safe host layer. No build step required — Bun runs TS directly.                                                                    |
+| **FFI Mechanism** | bun:ffi    | Built-in           | Zero-dependency foreign function interface. `dlopen` + symbol binding. Custom struct handling (ADR-T06) — no external struct libraries. |
 
 ### Build Artifacts
 
-| Artifact | Format | Output |
-|---|---|---|
-| Native Core | `libkraken_tui.{so,dylib,dll}` | `native/target/release/` |
-| Host Package | TypeScript source | `ts/src/` |
+| Artifact     | Format                         | Output                   |
+| ------------ | ------------------------------ | ------------------------ |
+| Native Core  | `libkraken_tui.{so,dylib,dll}` | `native/target/release/` |
+| Host Package | TypeScript source              | `ts/src/`                |
 
 ### Dev Environment
 
-| Tool | Configuration | Purpose |
-|---|---|---|
-| devenv (Nix) | `devenv.nix` | Reproducible environment with Rust stable + Bun |
-| rustfmt | Default | Code formatting |
-| clippy | Default | Linting |
+| Tool         | Configuration | Purpose                                         |
+| ------------ | ------------- | ----------------------------------------------- |
+| devenv (Nix) | `devenv.nix`  | Reproducible environment with Rust stable + Bun |
+| rustfmt      | Default       | Code formatting                                 |
+| clippy       | Default       | Linting                                         |
 
 ---
 
@@ -58,6 +58,7 @@
 **Decision:** Repeated single-call pattern. `tui_read_input(timeout_ms)` captures terminal input and classifies events into an internal buffer. `tui_next_event(out)` returns one event at a time via a fixed-layout `#[repr(C)]` struct (24 bytes). The Host Layer drains in a `while` loop until the function returns 0.
 
 **Consequences:**
+
 - (+) Simple — no packed buffer serialization or shared memory protocol.
 - (+) Fixed-size event struct — no dynamic allocation at the FFI boundary.
 - (+) Natural backpressure — host controls drain rate.
@@ -69,12 +70,14 @@
 **Context:** The spike conflates Taffy layout properties (`width`, `flex_direction`) with visual properties (`foreground`, `bold`) in a single enum and function set. This violates the Architecture's bounded context separation between Layout Module and Style Module.
 
 **Decision:** Two distinct FFI surface families:
+
 - `tui_set_layout_*()` — routes to Taffy via Layout Module. Properties: width, height, min/max, flex-direction, flex-wrap, justify-content, align-items, align-self, align-content, gap, padding, margin, position.
 - `tui_set_style_*()` — routes to per-node `VisualStyle` storage via Style Module. Properties: foreground, background, border-style, border-color, bold, italic, underline, opacity.
 
 Per **Robert C. Martin** (Single Responsibility Principle): layout concerns and visual concerns change for different reasons and should not be coupled through the same interface.
 
 **Consequences:**
+
 - (+) Clean bounded context alignment with Architecture.
 - (+) Layout Module touches only Taffy; Style Module never touches Taffy.
 - (+) Better error diagnostics (invalid layout prop vs invalid style prop).
@@ -105,6 +108,7 @@ pub extern "C" fn tui_example(handle: u32) -> i32 {
 ```
 
 **Consequences:**
+
 - (+) No undefined behavior from panics crossing FFI.
 - (+) Consistent error reporting.
 - (-) ~2ns overhead per call in the non-panic path (negligible).
@@ -116,6 +120,7 @@ pub extern "C" fn tui_example(handle: u32) -> i32 {
 **Decision:** Layout property setters read the node's current Taffy `Style`, modify the targeted property, then write the full style back. Visual properties accumulate in a separate `VisualStyle` struct on the node. Neither operation overwrites unrelated properties.
 
 **Consequences:**
+
 - (+) Correct Flexbox behavior — setting width doesn't reset flex-direction.
 - (+) Required for incremental property mutation.
 - (-) One read per mutation (in-memory HashMap lookup — negligible).
@@ -138,6 +143,7 @@ pub trait TerminalBackend {
 ```
 
 **Consequences:**
+
 - (+) Enables mock backend for automated testing of render output and event processing.
 - (+) Enables future backend replacement without modifying module logic.
 - (-) Dynamic dispatch overhead (~1ns per call) — irrelevant since terminal I/O itself costs microseconds.
@@ -147,6 +153,7 @@ pub trait TerminalBackend {
 **Context:** The TechStack specifies Bun as the host runtime with `bun:ffi` for FFI. The FFI boundary uses fixed-layout C structs (`TuiEvent` 24 bytes, `Cell` 12 bytes) that must be marshalled between Rust and TypeScript. A third-party library `bun-ffi-structs` (by SST) exists for this purpose.
 
 **Investigation:** Analyzed `bun-ffi-structs` (v0.1.3) which provides type-safe struct definitions for Bun FFI:
+
 - ✅ Supports primitives (u8, u32, f32, etc.), enums, nested structs, arrays
 - ✅ Handles C alignment and little-endian encoding
 - ✅ Used by OpenTUI (which powers OpenCode)
@@ -155,11 +162,13 @@ pub trait TerminalBackend {
 - ⚠️ Risk: If SST pivots or abandons, we inherit unmaintained dependency with different design goals
 
 **Decision:** Do NOT use `bun-ffi-structs`. Implement a minimal custom `ffi/structs.ts` module (~50 lines) with exactly what we need:
+
 - Fixed-size struct pack/unpack for `TuiEvent`, `Cell`, layout results
 - Proper C alignment and little-endian encoding
 - Manual bitflag handling for `CellAttrs`
 
 **Rationale:**
+
 1. **We need <5 structs** — Not a general-purpose need; trivial to hand-code
 2. **Zero dependencies** — No external roadmap affects us
 3. **Full control** — We own alignment, endianness, everything
@@ -167,6 +176,7 @@ pub trait TerminalBackend {
 5. **Risk mitigation** — If `bun:ffi` becomes untenable, NAPI-RS is the migration path; a custom struct layer is trivial to adapt
 
 **Consequences:**
+
 - (+) Complete control over FFI struct handling
 - (+) No external dependency for this critical path
 - (+) Rust-core-first philosophy preserved
@@ -396,57 +406,57 @@ pub struct TuiEvent {
 
 **Event payload layout:**
 
-| Event Type | `target` | `data[0]` | `data[1]` | `data[2]` | `data[3]` |
-|---|---|---|---|---|---|
-| **Key** | Focused handle | key_code | modifiers | UTF-32 codepoint | — |
-| **Mouse** | Hit-tested handle | x (column) | y (row) | button | modifiers |
-| **Resize** | 0 | new_width | new_height | — | — |
-| **FocusChange** | 0 | from_handle | to_handle | — | — |
-| **Change** | Target handle | — | — | — | — |
-| **Submit** | Target handle | — | — | — | — |
+| Event Type      | `target`          | `data[0]`   | `data[1]`  | `data[2]`        | `data[3]` |
+| --------------- | ----------------- | ----------- | ---------- | ---------------- | --------- |
+| **Key**         | Focused handle    | key_code    | modifiers  | UTF-32 codepoint | —         |
+| **Mouse**       | Hit-tested handle | x (column)  | y (row)    | button           | modifiers |
+| **Resize**      | 0                 | new_width   | new_height | —                | —         |
+| **FocusChange** | 0                 | from_handle | to_handle  | —                | —         |
+| **Change**      | Target handle     | —           | —          | —                | —         |
+| **Submit**      | Target handle     | —           | —          | —                | —         |
 
 For **Change** and **Submit**: the host reads the new value via `tui_get_content(target)`. No string data in events.
 
 **Key code ranges:**
 
-| Range | Meaning |
-|---|---|
+| Range           | Meaning                |
+| --------------- | ---------------------- |
 | `0x0000–0x007F` | ASCII (direct mapping) |
-| `0x0100` | Backspace |
-| `0x0101` | Enter |
-| `0x0102` | Left |
-| `0x0103` | Right |
-| `0x0104` | Up |
-| `0x0105` | Down |
-| `0x0106` | Home |
-| `0x0107` | End |
-| `0x0108` | PageUp |
-| `0x0109` | PageDown |
-| `0x010A` | Tab |
-| `0x010B` | BackTab (Shift+Tab) |
-| `0x010C` | Delete |
-| `0x010D` | Insert |
-| `0x010E` | Escape |
-| `0x0110–0x011F` | F1–F16 |
+| `0x0100`        | Backspace              |
+| `0x0101`        | Enter                  |
+| `0x0102`        | Left                   |
+| `0x0103`        | Right                  |
+| `0x0104`        | Up                     |
+| `0x0105`        | Down                   |
+| `0x0106`        | Home                   |
+| `0x0107`        | End                    |
+| `0x0108`        | PageUp                 |
+| `0x0109`        | PageDown               |
+| `0x010A`        | Tab                    |
+| `0x010B`        | BackTab (Shift+Tab)    |
+| `0x010C`        | Delete                 |
+| `0x010D`        | Insert                 |
+| `0x010E`        | Escape                 |
+| `0x0110–0x011F` | F1–F16                 |
 
 **Modifier flags (bitfield):**
 
-| Bit | Modifier |
-|---|---|
-| `0x01` | Shift |
-| `0x02` | Ctrl |
-| `0x04` | Alt |
-| `0x08` | Super |
+| Bit    | Modifier |
+| ------ | -------- |
+| `0x01` | Shift    |
+| `0x02` | Ctrl     |
+| `0x04` | Alt      |
+| `0x08` | Super    |
 
 **Mouse button:**
 
-| Value | Button |
-|---|---|
-| 0 | Left |
-| 1 | Middle |
-| 2 | Right |
-| 3 | ScrollUp |
-| 4 | ScrollDown |
+| Value | Button     |
+| ----- | ---------- |
+| 0     | Left       |
+| 1     | Middle     |
+| 2     | Right      |
+| 3     | ScrollUp   |
+| 4     | ScrollDown |
 
 #### Cell
 
@@ -546,180 +556,180 @@ pub struct TuiContext {
 
 ### 4.2 Lifecycle
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_init` | `() -> i32` | 0 / -1 | Initialize context, enter alternate screen, enable raw mode and mouse capture. |
-| `tui_shutdown` | `() -> i32` | 0 / -1 | Restore terminal state, destroy context, free all resources. |
-| `tui_get_terminal_size` | `(*mut i32, *mut i32) -> i32` | 0 / -1 | Write current terminal width and height to provided pointers. |
+| Function                | Signature                     | Returns | Description                                                                    |
+| ----------------------- | ----------------------------- | ------- | ------------------------------------------------------------------------------ |
+| `tui_init`              | `() -> i32`                   | 0 / -1  | Initialize context, enter alternate screen, enable raw mode and mouse capture. |
+| `tui_shutdown`          | `() -> i32`                   | 0 / -1  | Restore terminal state, destroy context, free all resources.                   |
+| `tui_get_terminal_size` | `(*mut i32, *mut i32) -> i32` | 0 / -1  | Write current terminal width and height to provided pointers.                  |
 
 ### 4.3 Node Lifecycle
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_create_node` | `(u8 node_type) -> u32` | Handle / 0 | Create a node. `node_type`: see `NodeType` enum. Returns opaque handle. |
-| `tui_destroy_node` | `(u32 handle) -> i32` | 0 / -1 | Destroy node. Detaches from parent. Orphans children (does not cascade). |
-| `tui_get_node_type` | `(u32 handle) -> i32` | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value). |
+| Function            | Signature               | Returns       | Description                                                              |
+| ------------------- | ----------------------- | ------------- | ------------------------------------------------------------------------ |
+| `tui_create_node`   | `(u8 node_type) -> u32` | Handle / 0    | Create a node. `node_type`: see `NodeType` enum. Returns opaque handle.  |
+| `tui_destroy_node`  | `(u32 handle) -> i32`   | 0 / -1        | Destroy node. Detaches from parent. Orphans children (does not cascade). |
+| `tui_get_node_type` | `(u32 handle) -> i32`   | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).              |
 
 ### 4.4 Tree Structure
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_root` | `(u32 handle) -> i32` | 0 / -1 | Designate a node as the composition tree root. Required before `tui_render()`. |
-| `tui_append_child` | `(u32 parent, u32 child) -> i32` | 0 / -1 | Add child to parent. Marks subtree dirty. |
-| `tui_remove_child` | `(u32 parent, u32 child) -> i32` | 0 / -1 | Remove child from parent. Marks parent dirty. |
-| `tui_get_child_count` | `(u32 handle) -> i32` | Count / -1 | Number of children. |
-| `tui_get_child_at` | `(u32 handle, u32 index) -> u32` | Handle / 0 | Child handle at index. |
-| `tui_get_parent` | `(u32 handle) -> u32` | Handle / 0 | Parent handle. 0 if root or detached. |
+| Function              | Signature                        | Returns    | Description                                                                    |
+| --------------------- | -------------------------------- | ---------- | ------------------------------------------------------------------------------ |
+| `tui_set_root`        | `(u32 handle) -> i32`            | 0 / -1     | Designate a node as the composition tree root. Required before `tui_render()`. |
+| `tui_append_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Add child to parent. Marks subtree dirty.                                      |
+| `tui_remove_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Remove child from parent. Marks parent dirty.                                  |
+| `tui_get_child_count` | `(u32 handle) -> i32`            | Count / -1 | Number of children.                                                            |
+| `tui_get_child_at`    | `(u32 handle, u32 index) -> u32` | Handle / 0 | Child handle at index.                                                         |
+| `tui_get_parent`      | `(u32 handle) -> u32`            | Handle / 0 | Parent handle. 0 if root or detached.                                          |
 
 ### 4.5 Content
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_content` | `(u32 handle, *const u8 ptr, u32 len) -> i32` | 0 / -1 | Set text content (UTF-8 encoded). Rust copies. Marks node dirty. |
-| `tui_get_content_len` | `(u32 handle) -> i32` | Byte length / -1 | Query content byte length (for pre-allocating buffer). |
-| `tui_get_content` | `(u32 handle, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Copy content to caller-provided buffer. Null-terminated if space permits. |
-| `tui_set_content_format` | `(u32 handle, u8 format) -> i32` | 0 / -1 | Set `ContentFormat`: 0=Plain, 1=Markdown, 2=Code. Marks dirty. |
-| `tui_set_code_language` | `(u32 handle, *const u8 ptr, u32 len) -> i32` | 0 / -1 | Set syntax highlighting language (e.g., `"rust"`, `"typescript"`). Only meaningful when format=Code. |
+| Function                 | Signature                                             | Returns            | Description                                                                                          |
+| ------------------------ | ----------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `tui_set_content`        | `(u32 handle, *const u8 ptr, u32 len) -> i32`         | 0 / -1             | Set text content (UTF-8 encoded). Rust copies. Marks node dirty.                                     |
+| `tui_get_content_len`    | `(u32 handle) -> i32`                                 | Byte length / -1   | Query content byte length (for pre-allocating buffer).                                               |
+| `tui_get_content`        | `(u32 handle, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Copy content to caller-provided buffer. Null-terminated if space permits.                            |
+| `tui_set_content_format` | `(u32 handle, u8 format) -> i32`                      | 0 / -1             | Set `ContentFormat`: 0=Plain, 1=Markdown, 2=Code. Marks dirty.                                       |
+| `tui_set_code_language`  | `(u32 handle, *const u8 ptr, u32 len) -> i32`         | 0 / -1             | Set syntax highlighting language (e.g., `"rust"`, `"typescript"`). Only meaningful when format=Code. |
 
 ### 4.6 Layout Properties
 
 Layout properties are routed to Taffy via the Layout Module. They control spatial positioning and sizing.
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_layout_dimension` | `(u32 handle, u32 prop, f32 value, u8 unit) -> i32` | 0 / -1 | Set a dimension property. |
-| `tui_set_layout_flex` | `(u32 handle, u32 prop, u32 value) -> i32` | 0 / -1 | Set a flex enum property. |
-| `tui_set_layout_edges` | `(u32 handle, u32 prop, f32 top, f32 right, f32 bottom, f32 left) -> i32` | 0 / -1 | Set a 4-sided property. |
-| `tui_set_layout_gap` | `(u32 handle, f32 row_gap, f32 column_gap) -> i32` | 0 / -1 | Set row and column gap. |
-| `tui_get_layout` | `(u32 handle, *mut i32 x, *mut i32 y, *mut i32 w, *mut i32 h) -> i32` | 0 / -1 | Query computed position and size (valid after `tui_render()`). |
+| Function                   | Signature                                                                 | Returns | Description                                                    |
+| -------------------------- | ------------------------------------------------------------------------- | ------- | -------------------------------------------------------------- |
+| `tui_set_layout_dimension` | `(u32 handle, u32 prop, f32 value, u8 unit) -> i32`                       | 0 / -1  | Set a dimension property.                                      |
+| `tui_set_layout_flex`      | `(u32 handle, u32 prop, u32 value) -> i32`                                | 0 / -1  | Set a flex enum property.                                      |
+| `tui_set_layout_edges`     | `(u32 handle, u32 prop, f32 top, f32 right, f32 bottom, f32 left) -> i32` | 0 / -1  | Set a 4-sided property.                                        |
+| `tui_set_layout_gap`       | `(u32 handle, f32 row_gap, f32 column_gap) -> i32`                        | 0 / -1  | Set row and column gap.                                        |
+| `tui_get_layout`           | `(u32 handle, *mut i32 x, *mut i32 y, *mut i32 w, *mut i32 h) -> i32`     | 0 / -1  | Query computed position and size (valid after `tui_render()`). |
 
 **Dimension properties** (`prop` for `tui_set_layout_dimension`):
 
-| Value | Property |
-|---|---|
-| 0 | width |
-| 1 | height |
-| 2 | min_width |
-| 3 | min_height |
-| 4 | max_width |
-| 5 | max_height |
+| Value | Property   |
+| ----- | ---------- |
+| 0     | width      |
+| 1     | height     |
+| 2     | min_width  |
+| 3     | min_height |
+| 4     | max_width  |
+| 5     | max_height |
 
 **Dimension units** (`unit`):
 
-| Value | Unit | Notes |
-|---|---|---|
-| 0 | Auto | Taffy `auto()` |
-| 1 | Length | Terminal cells. Taffy `length(value)`. |
-| 2 | Percent | 0.0–100.0. Taffy `percent(value / 100.0)`. |
+| Value | Unit    | Notes                                      |
+| ----- | ------- | ------------------------------------------ |
+| 0     | Auto    | Taffy `auto()`                             |
+| 1     | Length  | Terminal cells. Taffy `length(value)`.     |
+| 2     | Percent | 0.0–100.0. Taffy `percent(value / 100.0)`. |
 
 **Flex enum properties** (`prop` for `tui_set_layout_flex`):
 
-| Prop | Property | Values |
-|---|---|---|
-| 0 | flex_direction | 0=Row, 1=Column, 2=RowReverse, 3=ColumnReverse |
-| 1 | flex_wrap | 0=NoWrap, 1=Wrap, 2=WrapReverse |
-| 2 | justify_content | 0=Start, 1=End, 2=Center, 3=SpaceBetween, 4=SpaceAround, 5=SpaceEvenly |
-| 3 | align_items | 0=Stretch, 1=Start, 2=End, 3=Center, 4=Baseline |
-| 4 | align_self | 0=Auto, 1=Stretch, 2=Start, 3=End, 4=Center, 5=Baseline |
-| 5 | align_content | 0=Start, 1=End, 2=Center, 3=SpaceBetween, 4=SpaceAround, 5=SpaceEvenly |
-| 6 | position | 0=Relative, 1=Absolute |
+| Prop | Property        | Values                                                                 |
+| ---- | --------------- | ---------------------------------------------------------------------- |
+| 0    | flex_direction  | 0=Row, 1=Column, 2=RowReverse, 3=ColumnReverse                         |
+| 1    | flex_wrap       | 0=NoWrap, 1=Wrap, 2=WrapReverse                                        |
+| 2    | justify_content | 0=Start, 1=End, 2=Center, 3=SpaceBetween, 4=SpaceAround, 5=SpaceEvenly |
+| 3    | align_items     | 0=Stretch, 1=Start, 2=End, 3=Center, 4=Baseline                        |
+| 4    | align_self      | 0=Auto, 1=Stretch, 2=Start, 3=End, 4=Center, 5=Baseline                |
+| 5    | align_content   | 0=Start, 1=End, 2=Center, 3=SpaceBetween, 4=SpaceAround, 5=SpaceEvenly |
+| 6    | position        | 0=Relative, 1=Absolute                                                 |
 
 **Edge properties** (`prop` for `tui_set_layout_edges`):
 
 | Value | Property |
-|---|---|
-| 0 | padding |
-| 1 | margin |
+| ----- | -------- |
+| 0     | padding  |
+| 1     | margin   |
 
 ### 4.7 Visual Style Properties
 
 Visual properties are routed to the Style Module. They control appearance without affecting layout.
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_style_color` | `(u32 handle, u32 prop, u32 color) -> i32` | 0 / -1 | Set a color property. See Color Encoding (Section 3.2). |
-| `tui_set_style_flag` | `(u32 handle, u32 prop, u8 value) -> i32` | 0 / -1 | Set a boolean text decoration. `value`: 0=off, 1=on. |
-| `tui_set_style_border` | `(u32 handle, u8 border_style) -> i32` | 0 / -1 | Set border style. See `BorderStyle` enum. |
-| `tui_set_style_opacity` | `(u32 handle, f32 opacity) -> i32` | 0 / -1 | Set opacity (0.0–1.0). |
+| Function                | Signature                                  | Returns | Description                                             |
+| ----------------------- | ------------------------------------------ | ------- | ------------------------------------------------------- |
+| `tui_set_style_color`   | `(u32 handle, u32 prop, u32 color) -> i32` | 0 / -1  | Set a color property. See Color Encoding (Section 3.2). |
+| `tui_set_style_flag`    | `(u32 handle, u32 prop, u8 value) -> i32`  | 0 / -1  | Set a boolean text decoration. `value`: 0=off, 1=on.    |
+| `tui_set_style_border`  | `(u32 handle, u8 border_style) -> i32`     | 0 / -1  | Set border style. See `BorderStyle` enum.               |
+| `tui_set_style_opacity` | `(u32 handle, f32 opacity) -> i32`         | 0 / -1  | Set opacity (0.0–1.0).                                  |
 
 **Color properties** (`prop` for `tui_set_style_color`):
 
-| Value | Property |
-|---|---|
-| 0 | foreground |
-| 1 | background |
-| 2 | border_color |
+| Value | Property     |
+| ----- | ------------ |
+| 0     | foreground   |
+| 1     | background   |
+| 2     | border_color |
 
 **Flag properties** (`prop` for `tui_set_style_flag`):
 
-| Value | Property |
-|---|---|
-| 0 | bold |
-| 1 | italic |
-| 2 | underline |
+| Value | Property  |
+| ----- | --------- |
+| 0     | bold      |
+| 1     | italic    |
+| 2     | underline |
 
 ### 4.8 Focus Management
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_focusable` | `(u32 handle, u8 focusable) -> i32` | 0 / -1 | Set whether a node participates in focus traversal. |
-| `tui_focus` | `(u32 handle) -> i32` | 0 / -1 | Set focus to a specific node. Generates FocusChange event. |
-| `tui_get_focused` | `() -> u32` | Handle / 0 | Get currently focused node handle. 0 = nothing focused. |
-| `tui_focus_next` | `() -> i32` | 0 / -1 | Advance focus to next focusable node (depth-first tree order). |
-| `tui_focus_prev` | `() -> i32` | 0 / -1 | Move focus to previous focusable node. |
+| Function            | Signature                           | Returns    | Description                                                    |
+| ------------------- | ----------------------------------- | ---------- | -------------------------------------------------------------- |
+| `tui_set_focusable` | `(u32 handle, u8 focusable) -> i32` | 0 / -1     | Set whether a node participates in focus traversal.            |
+| `tui_focus`         | `(u32 handle) -> i32`               | 0 / -1     | Set focus to a specific node. Generates FocusChange event.     |
+| `tui_get_focused`   | `() -> u32`                         | Handle / 0 | Get currently focused node handle. 0 = nothing focused.        |
+| `tui_focus_next`    | `() -> i32`                         | 0 / -1     | Advance focus to next focusable node (depth-first tree order). |
+| `tui_focus_prev`    | `() -> i32`                         | 0 / -1     | Move focus to previous focusable node.                         |
 
 ### 4.9 Scroll
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_set_scroll` | `(u32 handle, i32 x, i32 y) -> i32` | 0 / -1 | Set absolute scroll position for a ScrollBox node. |
-| `tui_get_scroll` | `(u32 handle, *mut i32 x, *mut i32 y) -> i32` | 0 / -1 | Query current scroll position. |
-| `tui_scroll_by` | `(u32 handle, i32 dx, i32 dy) -> i32` | 0 / -1 | Scroll by delta. Clamped to content bounds. |
+| Function         | Signature                                     | Returns | Description                                        |
+| ---------------- | --------------------------------------------- | ------- | -------------------------------------------------- |
+| `tui_set_scroll` | `(u32 handle, i32 x, i32 y) -> i32`           | 0 / -1  | Set absolute scroll position for a ScrollBox node. |
+| `tui_get_scroll` | `(u32 handle, *mut i32 x, *mut i32 y) -> i32` | 0 / -1  | Query current scroll position.                     |
+| `tui_scroll_by`  | `(u32 handle, i32 dx, i32 dy) -> i32`         | 0 / -1  | Scroll by delta. Clamped to content bounds.        |
 
 ### 4.10 Input & Rendering
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_read_input` | `(u32 timeout_ms) -> i32` | Event count / -1 | Read pending terminal input, classify into events, store in buffer. `timeout_ms`: 0 = non-blocking, >0 = wait up to N ms for first input. |
-| `tui_next_event` | `(*mut TuiEvent out) -> i32` | 1 / 0 / -1 | Drain one event from the buffer. Returns 1 if event written, 0 if buffer empty. |
-| `tui_render` | `() -> i32` | 0 / -1 | Full render pipeline: layout resolution → dirty-flag diffing → terminal I/O. Requires root set via `tui_set_root()`. |
-| `tui_mark_dirty` | `(u32 handle) -> i32` | 0 / -1 | Mark a node dirty. Propagates to ancestors. |
+| Function         | Signature                    | Returns          | Description                                                                                                                               |
+| ---------------- | ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `tui_read_input` | `(u32 timeout_ms) -> i32`    | Event count / -1 | Read pending terminal input, classify into events, store in buffer. `timeout_ms`: 0 = non-blocking, >0 = wait up to N ms for first input. |
+| `tui_next_event` | `(*mut TuiEvent out) -> i32` | 1 / 0 / -1       | Drain one event from the buffer. Returns 1 if event written, 0 if buffer empty.                                                           |
+| `tui_render`     | `() -> i32`                  | 0 / -1           | Full render pipeline: layout resolution → dirty-flag diffing → terminal I/O. Requires root set via `tui_set_root()`.                      |
+| `tui_mark_dirty` | `(u32 handle) -> i32`        | 0 / -1           | Mark a node dirty. Propagates to ancestors.                                                                                               |
 
 ### 4.11 Diagnostics
 
-| Function | Signature | Returns | Description |
-|---|---|---|---|
-| `tui_get_last_error` | `() -> *const c_char` | Pointer / null | Get last error message. Pointer is borrowed — valid until next error or `tui_clear_error()`. |
-| `tui_clear_error` | `()` | void | Clear the error state. |
-| `tui_set_debug` | `(u8 enabled) -> i32` | 0 / -1 | Enable (1) or disable (0) debug logging to stderr. |
-| `tui_get_perf_counter` | `(u32 counter_id) -> u64` | Counter value | Query a performance counter. |
+| Function               | Signature                 | Returns        | Description                                                                                  |
+| ---------------------- | ------------------------- | -------------- | -------------------------------------------------------------------------------------------- |
+| `tui_get_last_error`   | `() -> *const c_char`     | Pointer / null | Get last error message. Pointer is borrowed — valid until next error or `tui_clear_error()`. |
+| `tui_clear_error`      | `()`                      | void           | Clear the error state.                                                                       |
+| `tui_set_debug`        | `(u8 enabled) -> i32`     | 0 / -1         | Enable (1) or disable (0) debug logging to stderr.                                           |
+| `tui_get_perf_counter` | `(u32 counter_id) -> u64` | Counter value  | Query a performance counter.                                                                 |
 
 **Performance counter IDs:**
 
-| ID | Counter | Unit |
-|---|---|---|
-| 0 | Last layout duration | μs |
-| 1 | Last render duration | μs |
-| 2 | Last diff cell count | cells |
-| 3 | Current event buffer depth | events |
-| 4 | Total node count | nodes |
+| ID  | Counter                    | Unit   |
+| --- | -------------------------- | ------ |
+| 0   | Last layout duration       | μs     |
+| 1   | Last render duration       | μs     |
+| 2   | Last diff cell count       | cells  |
+| 3   | Current event buffer depth | events |
+| 4   | Total node count           | nodes  |
 
 ### 4.12 Memory Management Rules
 
-| Direction | Rule |
-|---|---|
-| **TS → Rust (strings)** | Caller provides `(pointer, length)`. Rust copies the data internally. Caller may free immediately after call returns. |
-| **Rust → TS (get_content)** | Caller provides `(buffer, buffer_length)`. Rust copies into caller's buffer. No Rust-side allocation for the caller. |
+| Direction                      | Rule                                                                                                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **TS → Rust (strings)**        | Caller provides `(pointer, length)`. Rust copies the data internally. Caller may free immediately after call returns.                                                           |
+| **Rust → TS (get_content)**    | Caller provides `(buffer, buffer_length)`. Rust copies into caller's buffer. No Rust-side allocation for the caller.                                                            |
 | **Rust → TS (get_last_error)** | Returns pointer to context-owned string. Valid until the next error occurs or `tui_clear_error()` is called. Caller must not free. Caller should copy if persistence is needed. |
-| **Handles** | Owned by Rust. Valid from `tui_create_node()` until `tui_destroy_node()`. Handle `0` is permanently invalid and never allocated. |
-| **Context** | Created by `tui_init()`, destroyed by `tui_shutdown()`. All handles and state are invalidated on shutdown. |
+| **Handles**                    | Owned by Rust. Valid from `tui_create_node()` until `tui_destroy_node()`. Handle `0` is permanently invalid and never allocated.                                                |
+| **Context**                    | Created by `tui_init()`, destroyed by `tui_shutdown()`. All handles and state are invalidated on shutdown.                                                                      |
 
 ### 4.13 Error Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success |
-| `-1` | Error — check `tui_get_last_error()` for message |
+| Code | Meaning                                                                      |
+| ---- | ---------------------------------------------------------------------------- |
+| `0`  | Success                                                                      |
+| `-1` | Error — check `tui_get_last_error()` for message                             |
 | `-2` | Internal panic — caught by `catch_unwind`, should not occur in correct usage |
 
 ### 4.14 Complete FFI Symbol Count
@@ -743,7 +753,7 @@ Visual properties are routed to the Style Module. They control appearance withou
 
 ### 5.1 Project Structure
 
-```
+````
 kraken-tui/
 ├── native/                         # Rust cdylib
 │   ├── Cargo.toml
@@ -833,7 +843,7 @@ cargo test --manifest-path native/Cargo.toml
 
 # Run TypeScript tests (loads cdylib, exercises FFI + host API)
 cd ts && bun test
-```
+````
 
 **Cargo.toml (native):**
 
@@ -847,7 +857,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-taffy = "1"
+taffy = "0.9"
 crossterm = "0.29"
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
@@ -856,13 +866,13 @@ bitflags = "2"
 
 ### 5.5 Testing Strategy
 
-| Layer | Tool | What It Tests |
-|---|---|---|
-| **Rust unit** | `cargo test` | Each module in isolation. Tree operations, dirty propagation, style patching, buffer diffing, event classification, key code mapping, color encoding/decoding, Markdown span generation. |
-| **Rust integration** | `cargo test` (`tests/` dir) | Full pipeline with `MockBackend`. Create nodes → set properties → render → assert buffer contents. Event injection → assert event buffer output. |
-| **FFI integration** | `bun test` | Load `libkraken_tui.so` via `dlopen`. Call every FFI function. Assert return values, handle validity, layout results, event drain. |
-| **TypeScript unit** | `bun test` | Widget API, color parsing, error class, ID map. |
-| **Visual smoke** | Manual | Run example applications. Visually verify rendering, input, focus traversal, scrolling. |
+| Layer                | Tool                        | What It Tests                                                                                                                                                                            |
+| -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rust unit**        | `cargo test`                | Each module in isolation. Tree operations, dirty propagation, style patching, buffer diffing, event classification, key code mapping, color encoding/decoding, Markdown span generation. |
+| **Rust integration** | `cargo test` (`tests/` dir) | Full pipeline with `MockBackend`. Create nodes → set properties → render → assert buffer contents. Event injection → assert event buffer output.                                         |
+| **FFI integration**  | `bun test`                  | Load `libkraken_tui.so` via `dlopen`. Call every FFI function. Assert return values, handle validity, layout results, event drain.                                                       |
+| **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map.                                                                                                                                          |
+| **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling.                                                                                                  |
 
 ### 5.6 Host Application Loop Pattern
 
@@ -873,22 +883,31 @@ import { Kraken, Box, Text } from "kraken-tui";
 
 const app = Kraken.init();
 
-const root = new Box({ width: "100%", height: "100%", flexDirection: "column" });
-const label = new Text({ content: "Hello, Kraken!", color: "#00FF00", bold: true });
+const root = new Box({
+	width: "100%",
+	height: "100%",
+	flexDirection: "column",
+});
+const label = new Text({
+	content: "Hello, Kraken!",
+	color: "#00FF00",
+	bold: true,
+});
 root.append(label);
 app.setRoot(root);
 
 let running = true;
 while (running) {
-    app.readInput(16);  // Capture terminal input (16ms timeout ≈ 60fps pacing)
+	app.readInput(16); // Capture terminal input (16ms timeout ≈ 60fps pacing)
 
-    for (const event of app.drainEvents()) {
-        if (event.type === "key" && event.keyCode === 0x010E) { // Escape
-            running = false;
-        }
-    }
+	for (const event of app.drainEvents()) {
+		if (event.type === "key" && event.keyCode === 0x010e) {
+			// Escape
+			running = false;
+		}
+	}
 
-    app.render();  // Layout → diff → terminal I/O
+	app.render(); // Layout → diff → terminal I/O
 }
 
 app.shutdown();
@@ -924,20 +943,20 @@ tui_shutdown()
 
 The v0 implementation structure is designed to accommodate v1 additions (Animation, Theming) without architectural change:
 
-| v1 Module | File | Integration Point |
-|---|---|---|
-| **Theme Module** | `native/src/theme.rs` | Style Module gains a `resolve_with_theme(node, theme_bindings) → VisualStyle` path. New FFI functions: `tui_create_theme()`, `tui_set_theme_default()`, `tui_apply_theme()`, `tui_switch_theme()`. TuiContext gains `themes: HashMap<u32, Theme>` and `theme_bindings: HashMap<u32, u32>`. |
-| **Animation Module** | `native/src/animation.rs` | Render pipeline gains animation advancement step before layout resolution. New FFI: `tui_animate()`, `tui_cancel_animation()`. TuiContext gains `animations: Vec<Animation>` and `last_render_time: Instant`. |
+| v1 Module            | File                      | Integration Point                                                                                                                                                                                                                                                                          |
+| -------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Theme Module**     | `native/src/theme.rs`     | Style Module gains a `resolve_with_theme(node, theme_bindings) → VisualStyle` path. New FFI functions: `tui_create_theme()`, `tui_set_theme_default()`, `tui_apply_theme()`, `tui_switch_theme()`. TuiContext gains `themes: HashMap<u32, Theme>` and `theme_bindings: HashMap<u32, u32>`. |
+| **Animation Module** | `native/src/animation.rs` | Render pipeline gains animation advancement step before layout resolution. New FFI: `tui_animate()`, `tui_cancel_animation()`. TuiContext gains `animations: Vec<Animation>` and `last_render_time: Instant`.                                                                              |
 
 ## Appendix B: Upstream Consistency
 
-| Document | Version | Constraints Honored |
-|---|---|---|
-| PRD.md | v2.0 (Approved) | v0 scope (Epics 1–7). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
-| Architecture.md | v1.0 (Draft) | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules. |
-| ADR-001 | Accepted | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid. |
-| ADR-002 | Accepted | Taffy 1.x for Flexbox layout. |
-| ADR-003 | Accepted | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state. |
-| ADR-004 | Accepted | Imperative command API (v0/v1). Reactive reconciler deferred to v2. |
-| ADR-005 | Accepted | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation. |
-| ADR-T06 | Accepted | Custom minimal FFI struct handling (no external libraries). |
+| Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
+| --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PRD.md          | v2.0 (Approved) | v0 scope (Epics 1–7). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead.                                                                                                                                                                        |
+| Architecture.md | v2.0 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation marked as v1). |
+| ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
+| ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
+| ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |
+| ADR-004         | Accepted        | Imperative command API (v0/v1). Reactive reconciler deferred to v2.                                                                                                                                                                                                                                   |
+| ADR-005         | Accepted        | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation.                                                                                                                                                                                                                               |
+| ADR-T06         | Accepted        | Custom minimal FFI struct handling (no external libraries).                                                                                                                                                                                                                                           |

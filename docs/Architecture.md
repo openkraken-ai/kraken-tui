@@ -2,7 +2,7 @@
 
 ## Kraken TUI
 
-**Version**: 1.0
+**Version**: 2.0
 **Status**: Draft
 **Date**: February 2026
 **Source of Truth**: [PRD.md](./PRD.md) v2.0
@@ -33,38 +33,38 @@ All CPU-intensive work — layout computation, tree traversal, buffer diffing, t
 
 ### Justification
 
-Per **Martin Fowler** (*Patterns of Enterprise Application Architecture*), the "Microservices Premium" — the operational overhead of distributed systems — is inappropriate for a single-process library. A Modular Monolith provides clean separation of concerns with zero deployment, serialization, or network overhead.
+Per **Martin Fowler** (_Patterns of Enterprise Application Architecture_), the "Microservices Premium" — the operational overhead of distributed systems — is inappropriate for a single-process library. A Modular Monolith provides clean separation of concerns with zero deployment, serialization, or network overhead.
 
-Per **Uncle Bob** (*Clean Architecture*), dependencies point inward: the Host Layer depends on the Native Core's command protocol, never the reverse. The Native Core has zero knowledge of TypeScript, Bun, or any host runtime. This satisfies the **Dependency Rule** and ensures the core is independently testable.
+Per **Uncle Bob** (_Clean Architecture_), dependencies point inward: the Host Layer depends on the Native Core's command protocol, never the reverse. The Native Core has zero knowledge of TypeScript, Bun, or any host runtime. This satisfies the **Dependency Rule** and ensures the core is independently testable.
 
-Per **Eric Evans** (*Domain-Driven Design*), the FFI boundary is the primary **Bounded Context** separator. The Native Core's domain (widget trees, layout computation, rendering) and the Host Layer's domain (Developer-facing API ergonomics) are decoupled by the command protocol. Data structures do not leak across this boundary — only opaque Handles and serialized descriptors cross it.
+Per **Eric Evans** (_Domain-Driven Design_), the FFI boundary is the primary **Bounded Context** separator. The Native Core's domain (widget trees, layout computation, rendering) and the Host Layer's domain (Developer-facing API ergonomics) are decoupled by the command protocol. Data structures do not leak across this boundary — only opaque Handles and serialized descriptors cross it.
 
 ---
 
 ## 2. SYSTEM CONTAINERS (C4 Level 2)
 
-| Container | Logical Type | Responsibility |
-|---|---|---|
-| **Native Core** | Compiled Shared Library (cdylib) | Owns all widget state, performs layout computation, renders to terminal, processes input events, parses rich text. The single performance-critical artifact. |
-| **Host Language Bindings** | Script Package | Provides an ergonomic, type-safe API for Developers. Translates method calls into FFI commands. Contains zero rendering, layout, or state logic. |
-| **Terminal Emulator** | External System | The rendering surface. Receives escape sequences from the Native Core and presents visual output to the End User. Provides raw input events. |
-| **Script Runtime** | External System | Loads the Native Core shared library, executes Developer code, and facilitates the FFI boundary. |
+| Container                  | Logical Type                     | Responsibility                                                                                                                                               |
+| -------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Native Core**            | Compiled Shared Library (cdylib) | Owns all widget state, performs layout computation, renders to terminal, processes input events, parses rich text. The single performance-critical artifact. |
+| **Host Language Bindings** | Script Package                   | Provides an ergonomic, type-safe API for Developers. Translates method calls into FFI commands. Contains zero rendering, layout, or state logic.             |
+| **Terminal Emulator**      | External System                  | The rendering surface. Receives escape sequences from the Native Core and presents visual output to the End User. Provides raw input events.                 |
+| **Script Runtime**         | External System                  | Loads the Native Core shared library, executes Developer code, and facilitates the FFI boundary.                                                             |
 
 ### Internal Modules (Native Core Decomposition)
 
 These are not independently deployable containers but are architecturally significant bounded contexts within the Native Core. Each module has a single responsibility and communicates through the shared `TuiContext` state.
 
-| Module | Responsibility | Key Dependencies |
-|---|---|---|
-| **Tree Module** | Composition Tree CRUD operations. Handle allocation (per ADR-003). Parent-child relationships. Dirty-flag propagation. | None (foundational) |
-| **Layout Module** | Flexbox constraint resolution (per ADR-002). Resize handling. Caches computed positions and dimensions. Provides hit-test geometry. | Tree Module |
-| **Theme Module** | Owns named theme definitions (collections of style defaults). Maintains theme-to-subtree bindings. Resolves applicable theme per node via ancestry traversal. Provides built-in light and dark themes. | Tree Module |
-| **Style Module** | Color resolution (named, hex, 256-palette). Text decoration (bold, italic, underline). Border computation. Merges explicit node styles with applicable Theme defaults (explicit styles win). | Tree, Theme Modules |
-| **Animation Module** | Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). | Tree, Style Modules |
-| **Text Module** | Rich text parsing: Markdown → styled spans, syntax highlighting. Built-in parsers are native. Custom formats are pre-processed in the Host Layer and arrive as styled span descriptors. | Style Module |
-| **Render Module** | Double-buffered cell grid. Dirty-flag diffing (per ADR-001). Minimal terminal I/O via escape sequences. Terminal capability detection and graceful degradation. | Tree, Layout, Style, Text Modules |
-| **Event Module** | Terminal input capture. Event classification (key, mouse, resize, focus). Event buffer for poll-drain model. Hit-testing (mouse → widget routing using Layout geometry). Focus state machine (traversal order, focus/blur lifecycle). | Tree, Layout Modules |
-| **Scroll Module** | Viewport state per scrollable widget. Overflow detection. Scroll position persistence across Render Passes. Content clipping during render. | Tree, Layout Modules |
+| Module               | Responsibility                                                                                                                                                                                                                                                                                  | Key Dependencies                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **Tree Module**      | Composition Tree CRUD operations. Handle allocation (per ADR-003). Parent-child relationships. Dirty-flag propagation.                                                                                                                                                                          | None (foundational)               |
+| **Layout Module**    | Flexbox constraint resolution (per ADR-002). Resize handling. Caches computed positions and dimensions. Provides hit-test geometry.                                                                                                                                                             | Tree Module                       |
+| **Theme Module**     | _(v1 — Not implemented in v0)_ Owns named theme definitions (collections of style defaults). Maintains theme-to-subtree bindings. Resolves applicable theme per node via ancestry traversal. Provides built-in light and dark themes.                                                           | Tree Module                       |
+| **Style Module**     | Color resolution (named, hex, 256-palette). Text decoration (bold, italic, underline). Border computation. Merges explicit node styles with applicable Theme defaults (explicit styles win).                                                                                                    | Tree, Theme Modules               |
+| **Animation Module** | _(v1 — Not implemented in v0)_ Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). | Tree, Style Modules               |
+| **Text Module**      | Rich text parsing: Markdown → styled spans, syntax highlighting. Built-in parsers are native. Custom formats are pre-processed in the Host Layer and arrive as styled span descriptors.                                                                                                         | Style Module                      |
+| **Render Module**    | Double-buffered cell grid. Dirty-flag diffing (per ADR-001). Minimal terminal I/O via escape sequences. Terminal capability detection and graceful degradation.                                                                                                                                 | Tree, Layout, Style, Text Modules |
+| **Event Module**     | Terminal input capture. Event classification (key, mouse, resize, focus). Event buffer for poll-drain model. Hit-testing (mouse → widget routing using Layout geometry). Focus state machine (depth-first, DOM order traversal order, focus/blur lifecycle).                                    | Tree, Layout Modules              |
+| **Scroll Module**    | Viewport state per scrollable widget. Overflow detection. Scroll position persistence across Render Passes. Content clipping during render.                                                                                                                                                     | Tree, Layout Modules              |
 
 ### Module Dependency Direction
 
@@ -75,31 +75,31 @@ Host Language Bindings
         │
         │ FFI Command Protocol (C ABI)
         ▼
-┌──────────────────────────────────────────────────────────────┐
+┌───────────────────────────────────────────────────────────────┐
 │                         Native Core                           │
 │                                                               │
 │  ┌────────────┐                                               │
-│  │    Tree    │◄──────────────────────────────────┐           │
-│  │   Module   │                                   │           │
-│  └─┬──┬──┬──┬─┘                                   │           │
-│    │  │  │  └───────────────────┐                 │           │
-│    │  │  │                      │                 │           │
-│  ┌─▼──┘  └──┐  ┌───────────────▼──┐  ┌───────────┴─────────┐ │
-│  │  Layout  │  │  Theme Module   │  │    Event Module      │ │
-│  │  Module  │  └────────┬────────┘  └──────────┬───────────┘ │
-│  └────┬─────┘           │                      │             │
-│       │      ┌──────────▼─────────┐            │             │
-│       │      │   Style Module     │            │             │
-│       │      └──┬──────────┬──────┘            │             │
-│       │         │          │                   │             │
-│  ┌────▼─────┐ ┌─▼────────┐ ┌▼──────────────┐   │             │
-│  │  Scroll  │ │   Text   │ │  Animation   │   │             │
-│  │  Module  │ │  Module  │ │   Module     │   │             │
-│  └────┬─────┘ └────┬─────┘ └──────┬───────┘   │             │
-│       │            │              │            │             │
-│  ┌────▼────────────▼──────────────▼────────────▼───────────┐ │
-│  │                    Render Module                         │ │
-│  └─────────────────────────┬───────────────────────────────┘ │
+│  │    Tree    │◄─────────────────────────────────┐            │
+│  │   Module   │                                  │            │
+│  └─┬──┬──┬──┬─┘                                  │            │
+│    │  │  │  └──────────────────┐                 │            │
+│    │  │  │                     │                 │            │
+│  ┌─▼──┘  └──┐  ┌───────────────▼─┐  ┌────────────┴─────────┐  │
+│  │  Layout  │  │  Theme Module   │  │    Event Module      │  │
+│  │  Module  │  └────────┬────────┘  └──────────┬───────────┘  │
+│  └────┬─────┘           │                      │              │
+│       │      ┌──────────▼─────────┐            │              │
+│       │      │   Style Module     │            │              │
+│       │      └──┬───────────┬─────┘            │              │
+│       │         │           │                  │              │
+│  ┌────▼─────┐ ┌─▼────────┐ ┌▼──────────────┐   │              │
+│  │  Scroll  │ │   Text   │ │  Animation    │   │              │
+│  │  Module  │ │  Module  │ │   Module      │   │              │
+│  └────┬─────┘ └────┬─────┘ └──────┬────────┘   │              │
+│       │            │              │            │              │
+│  ┌────▼────────────▼──────────────▼────────────▼───────────┐  │
+│  │                    Render Module                        │  │
+│  └─────────────────────────┬───────────────────────────────┘  │
 │                            │                                  │
 └────────────────────────────┼──────────────────────────────────┘
                              │ Terminal Escape Sequences
@@ -280,16 +280,16 @@ sequenceDiagram
 
 ### 5.1 Failure Handling
 
-Kraken TUI is a single-process library, not a distributed service. Classical resilience patterns (Circuit Breakers, Bulkheads, Timeouts) are reinterpreted for the library context per **Michael Nygard** (*Release It!*): "everything fails all the time" — including FFI boundaries, terminal emulators, and developer assumptions.
+Kraken TUI is a single-process library, not a distributed service. Classical resilience patterns (Circuit Breakers, Bulkheads, Timeouts) are reinterpreted for the library context per **Michael Nygard** (_Release It!_): "everything fails all the time" — including FFI boundaries, terminal emulators, and developer assumptions.
 
-| Failure Mode | Impact | Mitigation |
-|---|---|---|
-| **Panic in Native Core** | Undefined behavior if panic crosses FFI boundary. Host process crashes with no recovery. | Every `extern "C"` entry point wraps its body in `catch_unwind`. Panics are caught and converted to error codes. The Host Layer translates error codes into typed exceptions. No panic ever crosses the FFI boundary. |
-| **Invalid Handle** | Dereferencing a destroyed or never-allocated Handle could corrupt state or crash. | Every FFI function validates the Handle against the internal HashMap before any operation. Invalid Handles return error code 0 / null. Per ADR-003: Handle(0) is permanently reserved as the invalid sentinel. |
-| **Terminal capability mismatch** | Rendering artifacts if the terminal lacks truecolor or mouse support. | The Native Core queries terminal capabilities at `tui_init()`. Color rendering degrades gracefully: truecolor → 256-color → 16-color → monochrome. Mouse support is optional; the Event Module functions without it using keyboard-only input. |
-| **Render budget exceeded** | Frame drops if layout + diff + render exceeds 16ms. | The Render Module tracks per-frame timing via internal counters (exposed to the Host Layer for diagnostics). Frame drops are informational, not errors. The Animation subsystem (v1) reads this signal to skip interpolation frames and degrade gracefully. |
-| **Terminal resize mid-render** | Partial render against stale dimensions. | Resize events are captured by the Event Module and buffered. The current Render Pass completes against the previous dimensions. The next `render()` call recomputes layout with the new Surface dimensions. No torn frames. |
-| **Malformed UTF-8 across FFI** | Undefined behavior in string processing. | The Native Core validates all incoming string bytes. Invalid UTF-8 sequences are rejected with an error code before any processing occurs. |
+| Failure Mode                     | Impact                                                                                   | Mitigation                                                                                                                                                                                                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Panic in Native Core**         | Undefined behavior if panic crosses FFI boundary. Host process crashes with no recovery. | Every `extern "C"` entry point wraps its body in `catch_unwind`. Panics are caught and converted to error codes. The Host Layer translates error codes into typed exceptions. No panic ever crosses the FFI boundary.                                       |
+| **Invalid Handle**               | Dereferencing a destroyed or never-allocated Handle could corrupt state or crash.        | Every FFI function validates the Handle against the internal HashMap before any operation. Invalid Handles return error code 0 / null. Per ADR-003: Handle(0) is permanently reserved as the invalid sentinel.                                              |
+| **Terminal capability mismatch** | Rendering artifacts if the terminal lacks truecolor or mouse support.                    | The Native Core queries terminal capabilities at `tui_init()`. Color rendering degrades gracefully: truecolor → 256-color → 16-color → monochrome. Mouse support is optional; the Event Module functions without it using keyboard-only input.              |
+| **Render budget exceeded**       | Frame drops if layout + diff + render exceeds 16ms.                                      | The Render Module tracks per-frame timing via internal counters (exposed to the Host Layer for diagnostics). Frame drops are informational, not errors. The Animation subsystem (v1) reads this signal to skip interpolation frames and degrade gracefully. |
+| **Terminal resize mid-render**   | Partial render against stale dimensions.                                                 | Resize events are captured by the Event Module and buffered. The current Render Pass completes against the previous dimensions. The next `render()` call recomputes layout with the new Surface dimensions. No torn frames.                                 |
+| **Malformed UTF-8 across FFI**   | Undefined behavior in string processing.                                                 | The Native Core validates all incoming string bytes. Invalid UTF-8 sequences are rejected with an error code before any processing occurs.                                                                                                                  |
 
 ### 5.2 FFI Boundary Contract
 
@@ -307,11 +307,11 @@ The FFI boundary is the most safety-critical interface in the system. The follow
 
 ### 5.3 Observability Strategy
 
-| Concern | Mechanism |
-|---|---|
-| **Error diagnostics** | Every error code has a corresponding human-readable message retrievable via `tui_get_last_error()`. Categories: invalid handle, tree invariant violation, encoding error, render failure, terminal error. |
-| **Performance counters** | The Native Core tracks and exposes: layout duration (μs), render duration (μs), diff cell count, event buffer depth, total nodes, dirty node count. Queryable via FFI for Developer-facing diagnostics. |
-| **Debug mode** | An initialization flag enables verbose structured logging to stderr: tree mutations, layout recomputations, dirty-flag propagation paths, event buffer state, hit-test traces. Disabled by default with zero overhead when off. |
+| Concern                  | Mechanism                                                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Error diagnostics**    | Every error code has a corresponding human-readable message retrievable via `tui_get_last_error()`. Categories: invalid handle, tree invariant violation, encoding error, render failure, terminal error.                       |
+| **Performance counters** | The Native Core tracks and exposes: layout duration (μs), render duration (μs), diff cell count, event buffer depth, total nodes, dirty node count. Queryable via FFI for Developer-facing diagnostics.                         |
+| **Debug mode**           | An initialization flag enables verbose structured logging to stderr: tree mutations, layout recomputations, dirty-flag propagation paths, event buffer state, hit-test traces. Disabled by default with zero overhead when off. |
 
 ### 5.4 Identity & Authentication
 
@@ -351,43 +351,51 @@ Not applicable. Kraken TUI is a local, in-process library with no network commun
 **Impact:** For typical dashboards (10–100 widgets), sub-millisecond. For stress cases (1,000+ deeply nested widgets), layout may approach the 16ms frame budget.
 **Mitigation:** The Layout Module caches computed results and only recomputes dirty subtrees. Dirty flags propagate up (invalidation), recomputation propagates down (resolution). Cost is bounded to the changed subtree, not the full tree. The layout library's built-in caching further reduces redundant computation.
 
+### Risk 6: Unproven cdylib + Bun FFI Architecture
+
+**Description:** The architecture of a Rust cdylib consumed via Bun FFI from TypeScript is novel and unproven at scale. Most Rust TUI applications link ratatui directly; most Bun FFI usage involves simpler bindings. This architecture may face unknown runtime or maintenance challenges.
+
+**Impact:** Potential hidden complexities in FFI boundary performance, memory management across the language boundary, or ecosystem maturity. No large-scale production precedent exists for this specific stack.
+
+**Mitigation:** Implement thorough FFI integration tests. Monitor FFI call overhead in profiling. Maintain clean abstraction boundaries so alternative backends (e.g., NAPI-RS) could be swapped if needed. Engage with Bun and Rust FFI communities for edge case discovery.
+
 ---
 
 ## Appendix A: Upstream ADR Consistency
 
 This Architecture Document is consistent with and builds upon the following accepted ADRs:
 
-| ADR | Decision | Architectural Impact |
-|---|---|---|
-| ADR-001 | Retained-mode with dirty-flag diffing | Render Module: double-buffered cell grid, dirty propagation, minimal diff output |
-| ADR-002 | Layout via Rust-native Flexbox library | Layout Module: Flexbox constraint resolution, cached computed layout, resize recomputation |
-| ADR-003 | Opaque handle model, Rust-owned allocations | Tree Module: HashMap<u32, Node>, sequential allocation, explicit destroy, copy semantics at boundary |
+| ADR     | Decision                                     | Architectural Impact                                                                                           |
+| ------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| ADR-001 | Retained-mode with dirty-flag diffing        | Render Module: double-buffered cell grid, dirty propagation, minimal diff output                               |
+| ADR-002 | Layout via Rust-native Flexbox library       | Layout Module: Flexbox constraint resolution, cached computed layout, resize recomputation                     |
+| ADR-003 | Opaque handle model, Rust-owned allocations  | Tree Module: HashMap<u32, Node>, sequential allocation, explicit destroy, copy semantics at boundary           |
 | ADR-004 | Imperative API first, reactive reconciler v2 | Host Layer: command-issuing thin client. v2 reconciler wraps the same command protocol (Strangler Fig pattern) |
-| ADR-005 | Terminal backend (crossterm) | Render + Event Modules: terminal I/O via crossterm, behind internal trait for future substitution |
+| ADR-005 | Terminal backend (crossterm)                 | Render + Event Modules: terminal I/O via crossterm, behind internal trait for future substitution              |
 
 ## Appendix B: New Architectural Decisions
 
 The following decisions were made during this Architecture phase. They extend (not contradict) the existing ADRs.
 
-| Decision | Choice | Rationale |
-|---|---|---|
-| **Event Delivery Model** | Hybrid buffer-poll. Native Core captures and buffers events; Host Layer drains the buffer each tick. | Eliminates callback-based FFI complexity. Enforces unidirectional control flow. At 60fps polling (~16ms interval), latency is well within the PRD's 50ms constraint. |
-| **State Ownership** | Native Core owns all widget state. Host Layer is a command-issuing thin client. | Minimizes FFI surface area. Single source of truth eliminates synchronization. Aligns with the core invariant: Rust is the engine. The v2 reconciler generates the same commands — no architectural migration required (Strangler Fig per Fowler). |
-| **Render Pipeline Topology** | Batched-synchronous. Mutations accumulate; explicit `render()` call triggers the full pipeline in one native execution: animation advancement → layout resolution → dirty-flag diffing → terminal I/O. | Explicit over implicit (Uncle Bob). Developer controls timing. All compute-heavy work (animation interpolation, layout resolution, buffer diffing, terminal output) executes in a single native call, minimizing FFI crossings. |
-| **Rich Text Parser Location** | Native Core for built-in formats (Markdown, syntax highlighting). Extensibility via pre-processing hook at the FFI boundary. | Parsing is CPU-intensive — it belongs in the performance engine. Custom formats pre-process in the Host Layer, producing styled span descriptors that the Native Core renders directly. No FFI callbacks during parsing. |
-| **Hit-Testing Strategy** | Event Module requests hit-test from Layout Module using computed rectangles. Traversal is back-to-front to match visual stacking order. | Hit-testing requires resolved layout geometry. Back-to-front traversal ensures the visually topmost widget receives the event. O(n) cost per click is acceptable for discrete, infrequent mouse events. |
-| **Animation Tick Model** | Host-driven. The Host Layer controls the render loop cadence. The `render()` call queries the system clock internally. The Animation Module advances all active transitions based on elapsed time since the previous render. | Animation is the first time-driven mutation source in the architecture — a new concern axis. The host-driven model keeps the Native Core reactive (never owns a timer or thread), consistent with the single-threaded invariant (Risk 1) and the batched-synchronous pipeline. The Developer controls frame rate by controlling `render()` cadence. Per Uncle Bob: explicit over implicit. |
-| **Theme Architecture** | Separate Theme Module as a bounded context within the Native Core. Theme Module owns definitions and subtree bindings. Style Module queries Theme Module during style resolution, merging theme defaults with explicit styles (explicit wins). | Per Eric Evans (DDD), theming operates on the aggregate of styles across subtrees — a distinct concern from applying a single style to a single node. The v2 theme inheritance model (constraint-based, nested subtrees) will add resolution complexity; isolating it now prevents the Style Module from accumulating unrelated responsibilities. |
-| **Developer-Assigned IDs** | Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core is unaware of developer-assigned identifiers. No FFI surface change. | Developer IDs are an ergonomic convenience for the Host Layer API. The Native Core operates on Handles for layout, rendering, and event processing. Adding string-based lookups to the Native Core would introduce state that serves no computational purpose — violating the core invariant (Rust is the performance engine). |
-| **String Interning** | Implementation-time optimization, not an architectural decision. May be applied within the Tree or Text Module for high-frequency identical strings. No FFI surface change. | Interning is an internal memory optimization invisible to the Host Layer. Premature specification at the architecture level would over-constrain implementation. Deferred to profiling data. |
+| Decision                      | Choice                                                                                                                                                                                                                                         | Rationale                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Event Delivery Model**      | Hybrid buffer-poll. Native Core captures and buffers events; Host Layer drains the buffer each tick.                                                                                                                                           | Eliminates callback-based FFI complexity. Enforces unidirectional control flow. At 60fps polling (~16ms interval), latency is well within the PRD's 50ms constraint.                                                                                                                                                                                                                       |
+| **State Ownership**           | Native Core owns all widget state. Host Layer is a command-issuing thin client.                                                                                                                                                                | Minimizes FFI surface area. Single source of truth eliminates synchronization. Aligns with the core invariant: Rust is the engine. The v2 reconciler generates the same commands — no architectural migration required (Strangler Fig per Fowler).                                                                                                                                         |
+| **Render Pipeline Topology**  | Batched-synchronous. Mutations accumulate; explicit `render()` call triggers the full pipeline in one native execution: animation advancement → layout resolution → dirty-flag diffing → terminal I/O.                                         | Explicit over implicit (Uncle Bob). Developer controls timing. All compute-heavy work (animation interpolation, layout resolution, buffer diffing, terminal output) executes in a single native call, minimizing FFI crossings.                                                                                                                                                            |
+| **Rich Text Parser Location** | Native Core for built-in formats (Markdown, syntax highlighting). Extensibility via pre-processing hook at the FFI boundary.                                                                                                                   | Parsing is CPU-intensive — it belongs in the performance engine. Custom formats pre-process in the Host Layer, producing styled span descriptors that the Native Core renders directly. No FFI callbacks during parsing.                                                                                                                                                                   |
+| **Hit-Testing Strategy**      | Event Module requests hit-test from Layout Module using computed rectangles. Traversal is back-to-front to match visual stacking order.                                                                                                        | Hit-testing requires resolved layout geometry. Back-to-front traversal ensures the visually topmost widget receives the event. O(n) cost per click is acceptable for discrete, infrequent mouse events.                                                                                                                                                                                    |
+| **Animation Tick Model**      | Host-driven. The Host Layer controls the render loop cadence. The `render()` call queries the system clock internally. The Animation Module advances all active transitions based on elapsed time since the previous render.                   | Animation is the first time-driven mutation source in the architecture — a new concern axis. The host-driven model keeps the Native Core reactive (never owns a timer or thread), consistent with the single-threaded invariant (Risk 1) and the batched-synchronous pipeline. The Developer controls frame rate by controlling `render()` cadence. Per Uncle Bob: explicit over implicit. |
+| **Theme Architecture**        | Separate Theme Module as a bounded context within the Native Core. Theme Module owns definitions and subtree bindings. Style Module queries Theme Module during style resolution, merging theme defaults with explicit styles (explicit wins). | Per Eric Evans (DDD), theming operates on the aggregate of styles across subtrees — a distinct concern from applying a single style to a single node. The v2 theme inheritance model (constraint-based, nested subtrees) will add resolution complexity; isolating it now prevents the Style Module from accumulating unrelated responsibilities.                                          |
+| **Developer-Assigned IDs**    | Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core is unaware of developer-assigned identifiers. No FFI surface change.                                                                             | Developer IDs are an ergonomic convenience for the Host Layer API. The Native Core operates on Handles for layout, rendering, and event processing. Adding string-based lookups to the Native Core would introduce state that serves no computational purpose — violating the core invariant (Rust is the performance engine).                                                             |
+| **String Interning**          | Implementation-time optimization, not an architectural decision. May be applied within the Tree or Text Module for high-frequency identical strings. No FFI surface change.                                                                    | Interning is an internal memory optimization invisible to the Host Layer. Premature specification at the architecture level would over-constrain implementation. Deferred to profiling data.                                                                                                                                                                                               |
 
 ## Appendix C: Resolved Open Questions
 
 The ADR phase identified four open questions. This Architecture phase resolves them.
 
-| Question | Resolution | Reference |
-|---|---|---|
+| Question                                                        | Resolution                                                                                                                                                                                                                                                                                                                              | Reference                                                   |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | **High-frequency events (mouse movement) flooding the JS side** | Resolved. The hybrid buffer-poll model (Appendix B) means the Native Core buffers all events — including high-frequency mouse movement — internally. The Host Layer drains the buffer once per tick. No individual event crosses the FFI boundary in isolation; they are delivered in batches. The Host Layer controls drain frequency. | Event Delivery Model (Appendix B), Event Module (Section 2) |
-| **Layout caching and invalidation** | Resolved. The Layout Module caches computed positions and dimensions. Dirty-flag propagation (Tree Module) invalidates only the affected subtree on mutation. Recomputation propagates downward from the invalidated root, not across the full tree. The layout library's built-in caching further reduces redundant computation. | Layout Module (Section 2), Risk 5 (Section 6) |
-| **String interning for small text nodes** | Deferred to implementation. Not an architectural decision — it is an internal memory optimization within the Tree or Text Module, invisible to the Host Layer and FFI surface. Will be evaluated against profiling data during implementation. | String Interning (Appendix B) |
-| **Widget IDs for TS query/lookup** | Resolved. Developer-assigned IDs are a Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core operates exclusively on opaque Handles and has no concept of developer-assigned identifiers. This preserves the core invariant: Rust is the performance engine, TypeScript is the steering wheel. | Developer-Assigned IDs (Appendix B) |
+| **Layout caching and invalidation**                             | Resolved. The Layout Module caches computed positions and dimensions. Dirty-flag propagation (Tree Module) invalidates only the affected subtree on mutation. Recomputation propagates downward from the invalidated root, not across the full tree. The layout library's built-in caching further reduces redundant computation.       | Layout Module (Section 2), Risk 5 (Section 6)               |
+| **String interning for small text nodes**                       | Deferred to implementation. Not an architectural decision — it is an internal memory optimization within the Tree or Text Module, invisible to the Host Layer and FFI surface. Will be evaluated against profiling data during implementation.                                                                                          | String Interning (Appendix B)                               |
+| **Widget IDs for TS query/lookup**                              | Resolved. Developer-assigned IDs are a Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core operates exclusively on opaque Handles and has no concept of developer-assigned identifiers. This preserves the core invariant: Rust is the performance engine, TypeScript is the steering wheel.  | Developer-Assigned IDs (Appendix B)                         |
