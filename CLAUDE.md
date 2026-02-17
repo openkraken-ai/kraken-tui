@@ -1,219 +1,134 @@
-# CLAUDE.md — Kraken TUI Developer Guide for AI Assistants
+CLAUDE.md
 
-**Last Updated**: February 17, 2026
-**Project Status**: PRD Complete - Ready for v0 Implementation
-**Architecture Version**: 2.0
-
-This document is the authoritative guide for AI assistants working on Kraken TUI. It explains the current codebase state, development workflows, and key conventions to follow.
+This file provides guidance to AI Agents when working with code in this repository.
+These instructions guide you to focus on project-specific architecture and commands rather than generic development advice, and to base the content on actual analysis of the codebase rather than assumptions.
 
 ---
 
-## Quick Summary
+## Project Status
 
-**What is this?** A high-performance TUI (Terminal User Interface) library combining Rust native core + TypeScript/Bun bindings.
+**Kraken TUI** is a terminal UI library with a complete product specification and architecture, but early-stage implementation. The gap between spec and code is intentional: the specification (TechSpec v2.1) defines the full v0 scope, but implementation is just beginning.
 
-**What's the status?** Product requirements documented (PRD 2.0). Architecture finalized (ADRs 1-5). Implementation just starting (pre-v0).
+**Authority documents** (read in this order):
+1. [PRD.md](./docs/PRD.md) (v2.0) — What we're building and why
+2. [TechSpec.md](./docs/TechSpec.md) (v2.1) — **The authoritative specification for v0 implementation**
+3. [Architecture.md](./docs/Architecture.md) (v2.0) — System design and module boundaries
 
-**What's implemented?** FFI scaffold, Tree management, Layout via Taffy, basic Style setters. No rendering or events yet.
-
-**What are we building?** Epic 1-7 for v0: widget composition, layout, styling, keyboard+mouse input, scrolling, cross-platform terminal, rich text.
-
-**Key invariant:** Rust = performance engine (layout, render, events, text parsing). TypeScript = steering wheel (thin command client).
-
----
-
-## Table of Contents
-
-1. [Codebase Structure](#codebase-structure)
-2. [Current Implementation Status](#current-implementation-status)
-3. [Core Concepts](#core-concepts)
-4. [Development Setup](#development-setup)
-5. [Building & Testing](#building--testing)
-6. [Module Breakdown](#module-breakdown)
-7. [FFI Boundary Contract](#ffi-boundary-contract)
-8. [Code Conventions](#code-conventions)
-9. [Common Tasks](#common-tasks)
-10. [Performance Budgets](#performance-budgets)
-11. [v0 Implementation Roadmap](#v0-implementation-roadmap)
+**Current implementation**: `spike-ffi/src/lib.rs` contains Tree module scaffolding + partial Layout/Style. This is a prototype foundation for the 62-function FFI specification in TechSpec v2.1.
 
 ---
 
-## Codebase Structure
+## Implementation Scope
+
+### The Specification (TechSpec v2.1)
+
+TechSpec v2.1 defines the complete v0 FFI contract:
+
+- **62 FFI functions** organized into 10 categories (lifecycle, tree, content, widgets, layout, style, focus, scroll, input/render, diagnostics)
+- **5 widget types**: Box, Text, Input, Select, ScrollBox
+- **9 internal Rust modules**: Tree, Layout, Style, Render, Event, Scroll, Text, Terminal, Context
+- **TypeScript bindings**: Custom struct handling (ADR-T06), no external FFI libraries
+- **Key ADRs** (T01–T11): Event drain protocol, property routing, FFI safety, style patching, terminal backend abstraction, struct handling, text measurement, single-line input, password masking, Select CRUD, Select events
+
+### Current Implementation Gap
+
+`spike-ffi/src/lib.rs` (~650 lines) implements:
+
+| Module | Coverage |
+|--------|----------|
+| Tree | ✅ Mostly done (create, destroy, append, remove, query) |
+| Layout | ⚠️ Partial (Taffy integration exists, property setters incomplete) |
+| Style | ⚠️ Partial (flex direction/wrap setters; color/decoration stubs) |
+| Content | ✅ Basic (set/get text) |
+| Render | ⏳ Not started (stubs only) |
+| Event | ⏳ Not started |
+| Scroll | ⏳ Not started |
+| Text | ⏳ Not started |
+| Terminal | ⏳ Not started |
+
+**To implement v0**: Complete the remaining ~50 functions across these modules, following TechSpec's detailed specifications and ADR decisions.
+
+---
+
+## Architecture Overview
+
+### FFI Boundary Pattern (Core Invariant)
+
+The library uses a **Modular Monolith** with a strict FFI boundary between Rust (performance) and TypeScript (ergonomics):
 
 ```
-kraken-tui/
-├── CLAUDE.md                    # THIS FILE — AI assistant guide
-├── README.md                    # User-facing overview
-├── devenv.*                     # Development environment (Nix)
-│
-├── spike-ffi/                   # ACTIVE IMPLEMENTATION AREA
-│   ├── Cargo.toml              # Rust dependencies
-│   ├── src/lib.rs              # Main FFI implementation (~650 lines)
-│   ├── examples/               # Standalone Rust examples
-│   │   └── crossterm_spike.rs
-│   └── test-ffi.ts             # TypeScript integration tests
-│
-└── docs/                        # Architecture & decisions (READ THESE)
-    ├── PRD.md                   # Product Requirements (v2.0)
-    ├── Architecture.md          # System design, flows, risks
-    ├── TechSpec.md              # Technical specification
-    ├── architecture/            # Architectural Decision Records
-    │   ├── ADR-001-rendering-model.md      # Retained-mode + dirty flags
-    │   ├── ADR-002-layout-engine.md        # Taffy + Flexbox choice
-    │   ├── ADR-003-ffi-memory-model.md     # Opaque handle semantics
-    │   ├── ADR-004-reconciler-strategy.md  # Imperative → reactive path
-    │   └── ADR-005-terminal-backend.md     # crossterm selection
-    ├── api/                     # API specifications (read before implementing)
-    │   ├── rust-c-api.md        # All FFI function signatures
-    │   ├── typescript-api.md    # TypeScript wrapper patterns
-    │   └── widget-catalog.md    # Widget types
-    └── spikes/                  # Technical feasibility reports
+TypeScript/Bun Layer (thin command client)
+  ↓ FFI: 62 opaque functions
+Rust Core (native performance engine)
+  ├─ Tree Module: node CRUD, hierarchy
+  ├─ Layout Module: Taffy integration
+  ├─ Style Module: colors, decorations
+  ├─ Render Module: double-buffered cell grid + diffing
+  ├─ Event Module: input classification, focus tracking
+  ├─ Scroll Module: viewport state
+  ├─ Text Module: Markdown/syntax highlighting parsing
+  └─ Terminal Module: crossterm backend abstraction
 ```
 
-**Primary work area**: `spike-ffi/src/lib.rs` — the Rust FFI library
+**Key principle**: All CPU-intensive work executes in Rust. TypeScript is a thin client—it has no rendering logic, no layout computation, no event state.
+
+### FFI Boundary Invariants (ADR-003, Architecture Section 5.2)
+
+1. **Unidirectional control**: Host calls Rust; Rust never calls back (no callbacks)
+2. **Single source of truth**: Rust owns all mutable state; Host holds opaque handles (`u32`)
+3. **Error codes, not exceptions**: Return -1 (error) or 0 (success); call `tui_get_last_error()` for details
+4. **No interior pointers**: All returned data is either opaque Handle or copied buffer (ADR-T03)
+5. **Copy semantics**: Strings copied across boundary; no shared references
+
+### Module Structure (TechSpec Section 5.1, 5.2)
+
+**File-to-Module Mapping** (planned):
+
+| Rust File | Module | FFI Functions | Responsibility |
+|-----------|--------|---------------|---|
+| `lib.rs` | — | All 62 | FFI entry points only; delegates to modules |
+| `tree.rs` | Tree | create, destroy, append, remove, query | Node CRUD, handle allocation, dirty propagation |
+| `layout.rs` | Layout | set_layout_*, get_layout, measure_text | Taffy integration, read-modify-write (ADR-T04) |
+| `style.rs` | Style | set_style_* | VisualStyle storage, color decoding |
+| `render.rs` | Render | render, mark_dirty | Double buffer, dirty diffing, terminal output |
+| `event.rs` | Event | read_input, next_event, focus_* | Input capture, classification, hit-testing, focus machine |
+| `scroll.rs` | Scroll | set_scroll, get_scroll, scroll_by | Viewport state, clipping |
+| `text.rs` | Text | (called by Render) | Markdown/syntax highlighting → styled spans |
+| `terminal.rs` | Terminal | (internal trait) | Backend abstraction (crossterm implementation) |
+| `context.rs` | — | — | TuiContext struct, global state accessor |
+| `types.rs` | — | — | Shared enums, constants, key codes |
+
+**Current state**: Only `lib.rs` and minimal Tree/Layout scaffolding exist in spike-ffi/src/lib.rs. The modular structure is a roadmap, not yet implemented.
 
 ---
 
-## Current Implementation Status
+## Development Commands
 
-### Implemented ✅
-
-- **Tree Module** (lib.rs lines ~84–357)
-  - `tui_create_node()` — allocate widget handle
-  - `tui_destroy_node()` — deallocate
-  - `tui_append_child()`, `tui_remove_child()` — tree manipulation
-  - Tree query: `tui_get_parent()`, `tui_get_child_count()`, `tui_get_child_at()`
-
-- **Layout Module** (lib.rs lines ~507–564)
-  - `tui_compute_layout()` — resolve Taffy layout tree
-  - `tui_get_layout()` — query computed positions/dimensions
-  - Uses Taffy v0.9 for Flexbox resolution
-
-- **Content Module** (lib.rs lines ~360–398)
-  - `tui_set_content()` — set text content
-  - `tui_get_content()` — read text content
-
-- **Style Module (Partial)** (lib.rs lines ~404–498)
-  - `tui_set_style_i32()` — flex direction, flex wrap (partial)
-  - `tui_set_style_f32()` — width, height, min/max, gap (partial)
-  - `tui_set_style_color()` — stub
-  - `tui_set_style_string()` — stub
-
-- **Utility Functions**
-  - `tui_init()`, `tui_shutdown()` — lifecycle
-  - `tui_get_terminal_size()` — query dimensions
-  - `tui_get_error()`, `tui_clear_error()` — error handling
-  - `tui_benchmark_counter()` — FFI latency measurement
-
-### In Progress ⚠️
-
-- **Style Module (Color & Decoration)** — needs full i32/f32/color/string implementation
-- **FFI Test Suite** — basic tests exist, needs expansion
-
-### Not Started ⏳
-
-- **Render Module** — terminal output + cell buffer + dirty diffing
-- **Event Module** — input capture, hit-testing, focus management
-- **Text Module** — Markdown/syntax highlighting parsing
-- **Scroll Module** — viewport management, clipping
-- **Theme Module** — v1 feature, not v0
-
----
-
-## Core Concepts
-
-### Handle Model (ADR-003)
-
-Every widget is identified by an opaque u32 **Handle** allocated at creation:
-
-```c
-NodeHandle handle = tui_create_node("box");  // Returns 1, 2, 3, ...
-tui_set_style_i32(handle, TUI_STYLE_FLEX_DIRECTION, TUI_FLEX_DIRECTION_ROW);
-tui_append_child(parent_handle, child_handle);
-tui_destroy_node(handle);  // Reclaim handle (but don't reuse; new ones monotonically increase)
-```
-
-**Key invariants:**
-- Handle(0) is reserved for "invalid" sentinel
-- Handles never repeat (sequential u32 allocation, no recycling in v0)
-- Host Layer holds opaque handles; Native Core owns all state
-
-### Flexbox Layout (ADR-002)
-
-Layout is resolved via **Taffy**, a pure-Rust Flexbox library:
-
-```c
-// 1. Build tree and apply constraints
-tui_append_child(parent, child);
-tui_set_style_f32(child, TUI_STYLE_WIDTH, 100.0, 1);  // 100px
-tui_set_style_f32(parent, TUI_STYLE_FLEX_DIRECTION, TUI_FLEX_DIRECTION_ROW, 0);
-
-// 2. Compute layout (batched operation, not per-mutation)
-tui_compute_layout();
-
-// 3. Query results
-int x, y, w, h;
-tui_get_layout(child, &x, &y, &w, &h);
-```
-
-Layout is **lazy** — computed only on explicit `tui_compute_layout()` call (batching optimization).
-
-### Rendering Model (ADR-001)
-
-Rendering will follow **retained-mode with dirty-flag diffing**:
-- Double-buffered cell grid (front/back)
-- Dirty flags track changed nodes
-- Only changed regions emit escape sequences
-- Implementation: future (not v0 MVP)
-
----
-
-## Development Setup
-
-### Prerequisites
-
-- Rust 1.70+ (stable)
-- Bun 1.0+
-- Git
-- Linux, macOS, or Windows
-
-### First-Time Setup
+### Environment Setup
 
 ```bash
-# 1. Enter development environment
+# Enter devenv (loads Rust + Bun + devenv utilities)
 devenv shell
-# This loads Rust + Bun from devenv.nix
 
-# 2. Build Rust FFI library
+# Verify tools
+rustc --version
+cargo --version
+bun --version
+```
+
+### Build
+
+```bash
+# Build Rust FFI library (optimized)
 cd spike-ffi
 cargo build --release
+# Output: spike-ffi/target/release/libspike_ffi.so (Linux)
 
-# 3. Verify with tests
-bun run test-ffi.ts
-# Expected: "All tests passed!"
-```
-
----
-
-## Building & Testing
-
-### Build Commands
-
-```bash
-# Release build (optimized, slower compile)
-cargo build --release
-
-# Debug build (fast compile, includes debug symbols)
+# Debug build (faster compile, slower runtime)
 cargo build
 
-# Just check for errors (no build artifacts)
+# Check without building (fast validation)
 cargo check
-
-# Format code
-cargo fmt
-
-# Lint with Clippy
-cargo clippy
 ```
 
 ### Testing
@@ -221,385 +136,212 @@ cargo clippy
 ```bash
 # Rust unit tests
 cargo test
-# Tests in src/lib.rs marked with #[test]
+# Runs tests marked with #[test] in spike-ffi/src/lib.rs
 
-# FFI integration tests (validates Rust + TypeScript boundary)
+# FFI integration tests (validates Rust ↔ TypeScript boundary)
 bun run spike-ffi/test-ffi.ts
-# Tests in spike-ffi/test-ffi.ts
 
-# Run standalone Rust example
+# Single Rust test (by name)
+cargo test test_taffy_tree -- --exact
+
+# Run with output
+cargo test -- --nocapture
+```
+
+### Code Quality
+
+```bash
+# Format
+cargo fmt
+
+# Lint
+cargo clippy
+
+# Both
+cargo fmt && cargo clippy
+```
+
+### Examples
+
+```bash
+# Run crossterm example (Rust-only terminal demo)
 cargo run --example crossterm_spike
 ```
 
-### Build Artifacts
-
-After `cargo build --release`, the FFI library is at:
-- Linux: `spike-ffi/target/release/libspike_ffi.so`
-- macOS: `spike-ffi/target/release/libspike_ffi.dylib`
-- Windows: `spike-ffi/target/release/spike_ffi.dll`
-
 ---
 
-## Module Breakdown
+## FFI Contract Quick Reference
 
-### Tree Module (lib.rs lines ~84–357)
+### Handle Model (ADR-003)
 
-**Responsibility**: Widget tree CRUD and hierarchy
+Every widget is identified by an opaque `u32` handle:
 
-**Key Data Structures**:
-```rust
-pub struct TuiNode {
-    pub node_type: String,           // "box", "text", "input", etc.
-    pub taffy_node: NodeId,          // Taffy handle
-    pub content: String,             // Text content
-    pub children: Vec<NodeHandle>,   // Child handles
-    pub parent: Option<NodeHandle>,  // Parent handle
-}
-
-pub struct TuiContext {
-    tree: TaffyTree<()>,             // Layout tree
-    nodes: HashMap<NodeHandle, TuiNode>,
-    next_handle: NodeHandle,         // Sequential allocation
-    last_error: String,              // Last error message
-}
-
-static mut CONTEXT: Option<TuiContext> = None;
-```
-
-**Functions**:
-- `tui_create_node(type)` — allocate + insert
-- `tui_destroy_node(h)` — deallocate + remove
-- `tui_append_child(p, c)` — set parent-child link (both directions)
-- `tui_remove_child(p, c)` — unlink
-- `tui_get_parent(h)` — query parent
-- `tui_get_child_count(h)` — query children length
-- `tui_get_child_at(h, i)` — query child at index
-- `tui_get_node_type(h)` — query type
-
-**Important**: Parent-child relationships are bidirectional — both sides track the link for fast traversal.
-
-### Layout Module (lib.rs lines ~507–564)
-
-**Responsibility**: Flexbox constraint resolution via Taffy
-
-**Functions**:
-- `tui_compute_layout()` — resolve full tree, cache results in Taffy
-- `tui_get_layout(h, &x, &y, &w, &h)` — query cached positions/dimensions
-
-**Note**: Layout is **lazy** — computed only on explicit `tui_compute_layout()` calls. This enables batching multiple mutations before a single compute pass.
-
-### Style Module (lib.rs lines ~404–498)
-
-**Responsibility**: Apply styling to nodes
-
-**Functions**:
-- `tui_set_style_i32(h, prop, value)` — discrete enum values (flex direction, wrap)
-  - `prop=7` → TUI_STYLE_FLEX_DIRECTION, value 0–3 maps to Row/Column/RowReverse/ColumnReverse
-  - `prop=8` → TUI_STYLE_FLEX_WRAP, value 0–2 maps to NoWrap/Wrap/WrapReverse
-
-- `tui_set_style_f32(h, prop, value, unit)` — dimensional values
-  - `prop=0` → TUI_STYLE_WIDTH, `prop=1` → TUI_STYLE_HEIGHT, etc.
-  - `unit=0` → auto, `unit=1` → pixels, `unit=2` → percentage
-
-- `tui_set_style_color(h, prop, color)` — stub (color support TBD)
-- `tui_set_style_string(h, prop, value)` — stub (string properties TBD)
-
-**Current State**: Partially implemented. i32 and f32 setters work for flex direction/wrap and dimensions. Color and string setters are stubs.
-
-### Content Module (lib.rs lines ~360–398)
-
-**Responsibility**: Text content management
-
-**Functions**:
-- `tui_set_content(h, FfiString)` — store text in node
-- `tui_get_content(h, buffer, len)` — copy text into host buffer
-
-### Utility Functions (lib.rs)
-
-**Error Handling**:
-- `tui_get_error()` — get last error message (null-terminated C string)
-- `tui_clear_error()` — reset error state
-
-**Lifecycle**:
-- `tui_init()` → initialize context, allocate Taffy tree
-- `tui_shutdown()` → deallocate context
-- `tui_get_terminal_size(w, h)` → query terminal dimensions (hardcoded 80x24 for now)
-
-**Benchmarking**:
-- `tui_benchmark_counter()` — increment and return counter (measure FFI overhead)
-- `tui_benchmark_get()` — read current counter value
-
-### FFI Types (lib.rs lines ~9–29)
-
-```rust
-#[repr(C)]
-pub struct FfiString {
-    pub ptr: *const u8,  // Pointer to bytes
-    pub len: usize,      // String length (no null terminator required)
-}
-
-pub type NodeHandle = u32;  // Opaque widget reference
-```
-
-**FfiString.to_string()** validates UTF-8 and returns owned Rust String.
-
----
-
-## FFI Boundary Contract
-
-### Core Invariants
-
-1. **Unidirectional control**: Host calls Rust; Rust never calls back (no callbacks)
-2. **Single owner**: Rust owns all mutable state; Host holds opaque handles only
-3. **Error codes**: Failures return -1 (i32) or null (ptr); call `tui_get_error()` for details
-4. **No interior pointers**: All returned data is either opaque Handle or copied buffer
-5. **Copy semantics**: Strings copied across boundary; no shared references
-
-### Function Categories
-
-**Lifecycle**
 ```c
-i32 tui_init()
-i32 tui_shutdown()
-i32 tui_get_terminal_size(int* w, int* h)
+u32 handle = tui_create_node(0);  // Returns 1, 2, 3, ...
+tui_destroy_node(handle);         // Deallocate
 ```
 
-**Node Lifecycle**
+- Handle 0 is reserved for "invalid sentinel" (never allocated)
+- Handles are sequential (monotonically increasing)
+- Rust owns the handle→node mapping; TypeScript never touches it
+
+### Function Categories (62 Total)
+
+**TechSpec Section 4 has the complete contract.** Quick breakdown:
+
+| Category | Count | Examples |
+|----------|-------|----------|
+| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities |
+| Tree | 6 | set_root, append_child, remove_child, get_parent |
+| Node | 4 | create, destroy, get_type, set_visible |
+| Content | 6 | set_content, get_content, set_content_format, set_code_language |
+| Widgets (Input/Select) | 12 | input_set_cursor, select_add_option, select_clear_options, etc. |
+| Layout | 6 | set_layout_dimension, set_layout_flex, set_layout_edges, get_layout, measure_text |
+| Style | 4 | set_style_color, set_style_flag, set_style_border, set_style_opacity |
+| Focus | 6 | set_focusable, focus, get_focused, focus_next, focus_prev |
+| Scroll | 3 | set_scroll, get_scroll, scroll_by |
+| Input/Render | 4 | read_input, next_event, render, mark_dirty |
+| Diagnostics | 5 | get_last_error, set_debug, get_perf_counter, free_string |
+
+**For full details**: Read [TechSpec.md Section 4](./docs/TechSpec.md#4-ffi-contract-c-abi)
+
+### Return Code Pattern (ADR-T03)
+
 ```c
-u32 tui_create_node(FfiString type_name)
-i32 tui_destroy_node(u32 handle)
-```
-
-**Tree Structure**
-```c
-i32 tui_append_child(u32 parent, u32 child)
-i32 tui_remove_child(u32 parent, u32 child)
-i32 tui_get_child_count(u32 handle)
-u32 tui_get_child_at(u32 handle, usize index)
-u32 tui_get_parent(u32 handle)
-const char* tui_get_node_type(u32 handle)
-```
-
-**Styling**
-```c
-i32 tui_set_style_i32(u32 h, u32 prop, i32 value)
-i32 tui_set_style_f32(u32 h, u32 prop, f32 value, u8 unit)
-i32 tui_set_style_color(u32 h, u32 prop, u32 color)
-i32 tui_set_style_string(u32 h, u32 prop, FfiString value)
-```
-
-**Content**
-```c
-i32 tui_set_content(u32 handle, FfiString content)
-i32 tui_get_content(u32 handle, u8* buffer, usize len)
-```
-
-**Layout & Rendering**
-```c
-i32 tui_compute_layout()
-i32 tui_get_layout(u32 h, int* x, int* y, int* w, int* h)
-i32 tui_render()               // Stub
-i32 tui_mark_dirty(u32 h)      // Stub
-i32 tui_mark_all_dirty()       // Stub
-i32 tui_set_input_mode(u32)    // Stub
-```
-
-**Error Handling**
-```c
-const char* tui_get_error()
-void tui_clear_error()
-```
-
-### Return Code Conventions
-
-- **0**: Success (i32 returns)
-- **-1**: Failure (check `tui_get_error()` for details)
-- **null**: Not found / failure (ptr returns)
-- **u32**: Handle value; 0 means invalid/failure
-
----
-
-## Code Conventions
-
-### Organization
-
-**lib.rs** is structured with clear section headers:
-
-```rust
-// ============================================================================
-// Section Name
-// ============================================================================
-```
-
-Sections:
-- FFI Spike intro
-- Type defs (FfiString, NodeHandle)
-- Enums (TuiStyleProperty, TuiFlexDirection)
-- Context structs (TuiNode, TuiContext)
-- Error handling
-- Initialization/shutdown
-- Node lifecycle
-- Tree structure
-- Content
-- Styling
-- Layout
-- Rendering (stubs)
-- Input mode (stubs)
-- Benchmarking
-- Tests
-
-### Safety
-
-Every `unsafe` block has a comment explaining why it's safe:
-
-```rust
-unsafe {
-    // SAFETY: We validated the pointer is non-null and ptr_to_valid_context
-    if let Some(ref mut ctx) = CONTEXT { ... }
+i32 result = tui_function(...);
+if (result == 0) {
+    // Success
+} else if (result == -1) {
+    // Error: check tui_get_last_error()
+} else if (result == -2) {
+    // Internal panic (should never occur)
 }
 ```
 
-### Naming
-
-**FFI Functions**: `tui_<verb>_<object>()` (e.g., `tui_set_style_i32`, `tui_get_layout`)
-
-**Types**: PascalCase with `Tui` prefix (e.g., `TuiNode`, `TuiContext`, `TuiStyleProperty`)
-
-**Enums**: Uppercase with `TUI_` prefix (e.g., `TUI_STYLE_WIDTH`, `TUI_FLEX_DIRECTION_ROW`)
-
-**Variables**: snake_case (e.g., `parent_node`, `available_space`)
-
-### Error Handling
-
-- Store last error in `CONTEXT.last_error` (String)
-- Return -1 or null for errors
-- Never panic across FFI boundary
-- Validate all inputs before processing
+All functions wrapped in `catch_unwind` per ADR-T03.
 
 ---
 
-## Common Tasks
+## Implementation Roadmap
 
-### Adding a New FFI Function
+### v0 Module Implementation Order
 
-**Example: `tui_set_background_color()`**
+Suggested sequence (dependencies matter):
 
-1. **Add function to lib.rs**:
-```rust
-#[no_mangle]
-pub extern "C" fn tui_set_background_color(handle: NodeHandle, color: u32) -> i32 {
-    println!("[Rust] tui_set_background_color(handle={}, color=0x{:x})", handle, color);
+1. **Tree Module** (✅ exists, needs completion)
+   - Full CRUD, visibility, focusability tracking
+   - Dependency: none
 
-    unsafe {
-        if let Some(ref mut ctx) = CONTEXT {
-            if let Some(_node) = ctx.nodes.get(&handle) {
-                // TODO: Apply background color to Taffy style
-                return 0;
-            }
-            ctx.last_error = "Invalid handle".to_string();
-        }
-    }
-    -1
-}
-```
+2. **Layout Module** (⚠️ in progress)
+   - Complete `tui_set_layout_*` property routing
+   - Implement `tui_measure_text()` using unicode-width (ADR-T07)
+   - Dependency: Tree + Taffy
 
-2. **Add test in test-ffi.ts**:
-```typescript
-const bgResult = lib.symbols.tui_set_background_color(nodeHandle, 0xFF0000FF);
-console.log(`Background color result: ${bgResult}`);
-```
+3. **Style Module** (⚠️ in progress)
+   - Complete color encoding/decoding per TechSpec Section 3.2
+   - Implement style flag setters (bold, italic, underline)
+   - Implement border style setter
+   - Dependency: Tree + types
 
-3. **Build and test**:
-```bash
-cargo build --release
-bun run spike-ffi/test-ffi.ts
-```
+4. **Content Module** (✅ basic, may need expansion)
+   - Handle content_format (Plain, Markdown, Code)
+   - Handle code_language field
+   - Dependency: Tree
 
-4. **Commit**:
-```bash
-git add spike-ffi/src/lib.rs spike-ffi/test-ffi.ts
-git commit -m "feat: add tui_set_background_color FFI function"
-git push -u origin claude/add-claude-documentation-hAA0T
-```
+5. **Text Module** (⏳ new)
+   - Markdown parsing: `pulldown_cmark::Parser` → `Vec<StyledSpan>`
+   - Syntax highlighting: `syntect` → `Vec<StyledSpan>`
+   - Dependency: Style
 
-### Debugging FFI Failures
+6. **Terminal Module** (⏳ new)
+   - Define `TerminalBackend` trait per ADR-T05
+   - Implement `CrosstermBackend`
+   - Implement `MockBackend` for testing
+   - Dependency: none (trait definition)
 
-**Common issues:**
-1. **"Invalid handle"** — Call `tui_get_error()` to see error message. Ensure handle was returned from `tui_create_node()`.
-2. **Null pointer** — Check pointer is non-null before accessing. Add `!ptr.is_null()` guards.
-3. **UTF-8 error** — FfiString may contain invalid UTF-8. The `to_string()` method handles this; check results.
-4. **Segmentation fault** — Likely accessing uninitialized CONTEXT. Always call `tui_init()` first.
+7. **Render Module** (⏳ new)
+   - Double-buffered `Buffer` (front/back)
+   - Dirty-flag propagation and clearing
+   - Traverse tree, render visible nodes into front buffer
+   - Diff front vs back, emit minimal cell updates
+   - Call backend to write to terminal
+   - Swap buffers
+   - Dependency: Tree, Layout, Style, Text, Terminal
 
-**Debug workflow:**
-1. Add `println!("[Rust] ...")` to trace execution
-2. Run `cargo build --release && bun run spike-ffi/test-ffi.ts`
-3. Check output for which step fails
-4. Call `tui_get_error()` to read error message
+8. **Event Module** (⏳ new)
+   - `tui_read_input()`: calls backend, classifies terminal events
+   - `tui_next_event()`: drains buffer (repeated single-call pattern per ADR-T01)
+   - Focus state machine (Tab/BackTab navigation, focus_next/focus_prev)
+   - Hit-testing for mouse events (Layout Module provides geometry)
+   - Dependency: Tree, Layout, Terminal
 
----
+9. **Scroll Module** (⏳ new)
+   - Store scroll_x, scroll_y per node
+   - Clamp to content bounds
+   - Render Module clips children to scroll bounds
+   - Dependency: Tree, Layout, Render
 
-## Performance Budgets
+### Key Decision Points Before Starting
 
-From PRD Section 5 (Non-Functional Constraints):
-
-| Metric | Target | Notes |
-|--------|--------|-------|
-| **FFI call overhead** | < 1ms | Measured: 0.189μs per call (from benchmark) |
-| **Memory** | < 20MB for 100 widgets | Not yet measured |
-| **Frame latency** | < 50ms @ 60fps | Not yet measured |
-| **Host bundle** | < 50KB JS | Not yet measured |
-
-**Strategy**:
-- Batch mutations before `tui_render()` calls
-- Minimize FFI crossings (one `render()` call = full pipeline in native code)
-- Reuse handles (don't create/destroy every frame)
-- Dirty-flag propagation prevents full-tree recomputation
+- **ADR-T04 (Style Patching)**: Never create `Style::DEFAULT` and overwrite. Always read existing style, modify one property, write back.
+- **ADR-T01 (Event Drain)**: Use repeated single-call pattern (`tui_read_input()` + loop `tui_next_event()`) not packed buffer.
+- **ADR-T06 (Custom Struct Handling)**: Implement custom TS struct pack/unpack (~50 lines) in `ts/src/ffi/structs.ts`. Do NOT add external FFI library.
+- **ADR-T05 (Terminal Backend Trait)**: Define `TerminalBackend` trait from day one. Concrete `CrosstermBackend` is one implementation.
 
 ---
 
-## v0 Implementation Roadmap
+## Important Specifications to Read Before Coding
 
-**v0 Target**: Epic 1-7 from PRD
+### Before implementing any module:
 
-| Epic | Features | Status | Dependencies |
-|------|----------|--------|--------------|
-| 1 | Widget composition (create, destroy, tree) | ✅ Started | Tree module |
-| 2 | Spatial layout (Flexbox) | ✅ Started | Layout module |
-| 3 | Visual styling (colors, decorations, borders) | ⚠️ WIP | Style module (partial) |
-| 4 | Keyboard + mouse input | ⏳ Todo | Event module |
-| 5 | Scrollable regions | ⏳ Todo | Scroll module |
-| 6 | Cross-platform terminal | ⏳ Todo | Render + Event modules |
-| 7 | Rich text (Markdown, syntax highlighting) | ⏳ Todo | Text module |
+1. **Module contract** in TechSpec Section 4 (all 62 functions are documented here)
+2. **Relevant ADR** (T01–T11) — decisions that govern implementation
+3. **Data model** in TechSpec Section 3 (enums, structs, layout)
 
-**Key Dependencies**:
-- Render module (for terminal output)
-- Event module (for input)
-- Complete Style module (color, decorations, borders)
+### Example workflow:
+
+**Implementing `tui_set_style_color()`:**
+
+1. Read TechSpec Section 4.8 (Visual Style Properties) → understand the function signature
+2. Read TechSpec Section 3.2 (Color Encoding) → understand the u32 encoding scheme
+3. Read ADR-T02 (Property Routing) → understand why this is a Style Module function, not Layout Module
+4. Read TechSpec Section 5.2 (Module → File Mapping) → understand Style Module's responsibility
+5. Implement in `style.rs` as a private function; delegate from `lib.rs` via `catch_unwind`
 
 ---
 
-## Key References
+## Build Artifacts
 
-**Must Read:**
-1. [PRD.md](./docs/PRD.md) — What we're building and why (v2.0)
-2. [Architecture.md](./docs/Architecture.md) — System design, flows, risks
-3. [ADRs](./docs/architecture/) — Decisions and rationale
+After `cargo build --release`:
 
-**API Specs:**
-- [rust-c-api.md](./docs/api/rust-c-api.md) — All FFI signatures
-- [widget-catalog.md](./docs/api/widget-catalog.md) — Widget types
+```
+spike-ffi/target/release/
+├── libspike_ffi.so       (Linux)
+├── libspike_ffi.dylib    (macOS)
+└── spike_ffi.dll         (Windows)
+```
+
+The TypeScript layer (`ts/src/ffi.ts`) loads this via `dlopen`.
+
+---
+
+## References
+
+**Authoritative specifications** (in reading order):
+1. [PRD.md](./docs/PRD.md) — Product requirements (v2.0)
+2. [TechSpec.md](./docs/TechSpec.md) — **Complete FFI specification, data model, ADRs T01–T11** (v2.1)
+3. [Architecture.md](./docs/Architecture.md) — System design, risks, flows (v2.0)
+
+**Implementation details**:
+- [ADRs](./docs/architecture/) — Architectural Decision Records 1–5 (technical foundations)
+- [API Specs](./docs/api/) — Widget catalog, API patterns (legacy; superseded by TechSpec)
 
 **Code**:
-- [spike-ffi/src/lib.rs](./spike-ffi/src/lib.rs) — Implementation
-- [spike-ffi/test-ffi.ts](./spike-ffi/test-ffi.ts) — Working examples
+- [spike-ffi/src/lib.rs](./spike-ffi/src/lib.rs) — Current prototype implementation
+- [spike-ffi/test-ffi.ts](./spike-ffi/test-ffi.ts) — FFI integration tests
+- [spike-ffi/examples/](./spike-ffi/examples/) — Rust-only examples
 
-**External Docs**:
-- [Taffy Layout](https://taffy.dev/) — Flexbox resolution
+**External libraries**:
+- [Taffy](https://taffy.dev/) — Flexbox layout engine
 - [crossterm](https://github.com/crossterm-rs/crossterm) — Terminal I/O
-- [Bun FFI](https://bun.sh/docs/ffi) — Language boundary
-
----
-
-**Document End**
-
-Last Updated: February 17, 2026
+- [Bun FFI](https://bun.sh/docs/ffi) — Foreign Function Interface
