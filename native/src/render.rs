@@ -78,6 +78,10 @@ fn blend_opacity(fg: u32, bg: u32, opacity: f32) -> u32 {
     if opacity >= 1.0 {
         return fg;
     }
+    // Fully transparent: fg becomes bg regardless of color encoding
+    if opacity <= 0.0 {
+        return bg;
+    }
     if color_tag(fg) != 0x01 {
         return fg;
     }
@@ -582,13 +586,17 @@ fn render_input_cursor(
         None => return,
     };
 
-    let cursor_pos = node.cursor_position as usize;
     let display_content = if node.mask_char != 0 {
         let mask = char::from_u32(node.mask_char).unwrap_or('*');
         mask.to_string().repeat(node.content.chars().count())
     } else {
         node.content.clone()
     };
+
+    // Clamp cursor_pos to display content length to handle edge cases
+    // where cursor_position exceeds content (e.g., content truncated externally)
+    let char_count = display_content.chars().count();
+    let cursor_pos = (node.cursor_position as usize).min(char_count);
 
     // Calculate cursor x-offset by measuring width of content up to cursor_pos
     let prefix: String = display_content.chars().take(cursor_pos).collect();
@@ -921,6 +929,19 @@ mod tests {
         // Blends toward black (0,0,0) when bg is not RGB
         let r = (result >> 16) & 0xFF;
         assert!(r == 127 || r == 128);
+    }
+
+    #[test]
+    fn test_blend_opacity_zero_non_rgb() {
+        let bg = 0x01000000; // black RGB
+
+        // Default fg at zero opacity should return bg
+        let default_fg = 0x00000000;
+        assert_eq!(blend_opacity(default_fg, bg, 0.0), bg);
+
+        // Indexed fg at zero opacity should return bg
+        let indexed_fg = 0x02000001;
+        assert_eq!(blend_opacity(indexed_fg, bg, 0.0), bg);
     }
 
     // --- Input cursor tests (B2) ---
