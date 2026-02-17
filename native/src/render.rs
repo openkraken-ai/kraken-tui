@@ -267,13 +267,23 @@ fn render_node(
                 // For Markdown/Code, render as styled spans via Text Module
                 let spans = crate::text::parse_content(ctx, &content, content_format, None);
                 render_styled_spans(
-                    ctx, &spans, content_x, content_y, content_w, content_h, bg, clip, opacity,
+                    ctx, &spans, content_x, content_y, content_w, content_h, fg, bg, clip, opacity,
                 );
             }
 
-            // Render cursor for focused Input widgets
+            // Guard: only Input (not Text) gets a cursor
             if node_type == NodeType::Input && ctx.focused == Some(handle) {
-                render_input_cursor(ctx, handle, content_x, content_y, content_w, fg, bg, clip);
+                render_input_cursor(
+                    ctx,
+                    handle,
+                    &display_content,
+                    content_x,
+                    content_y,
+                    content_w,
+                    fg,
+                    bg,
+                    clip,
+                );
             }
         }
         NodeType::Select => {
@@ -516,6 +526,7 @@ fn render_styled_spans(
     y: i32,
     max_w: i32,
     max_h: i32,
+    default_fg: u32,
     default_bg: u32,
     clip: ClipRect,
     opacity: f32,
@@ -524,9 +535,14 @@ fn render_styled_spans(
     let mut row = 0i32;
 
     for span in spans {
-        let raw_fg = if span.fg != 0 { span.fg } else { 0 };
         let bg = if span.bg != 0 { span.bg } else { default_bg };
-        let fg = blend_opacity(raw_fg, bg, opacity);
+        // Spans with explicit fg get opacity-blended; default-colored spans
+        // use the node's already-blended fg passed in as default_fg.
+        let fg = if span.fg != 0 {
+            blend_opacity(span.fg, bg, opacity)
+        } else {
+            default_fg
+        };
 
         for ch in span.text.chars() {
             if row >= max_h {
@@ -574,6 +590,7 @@ fn render_styled_spans(
 fn render_input_cursor(
     ctx: &mut TuiContext,
     handle: u32,
+    display_content: &str,
     content_x: i32,
     content_y: i32,
     content_w: i32,
@@ -584,13 +601,6 @@ fn render_input_cursor(
     let node = match ctx.nodes.get(&handle) {
         Some(n) => n,
         None => return,
-    };
-
-    let display_content = if node.mask_char != 0 {
-        let mask = char::from_u32(node.mask_char).unwrap_or('*');
-        mask.to_string().repeat(node.content.chars().count())
-    } else {
-        node.content.clone()
     };
 
     // Clamp cursor_pos to display content length to handle edge cases
@@ -932,6 +942,36 @@ mod tests {
     }
 
     #[test]
+    fn test_styled_spans_default_fg_opacity() {
+        use crate::terminal::MockBackend;
+        use crate::types::StyledSpan;
+
+        let mut ctx = TuiContext::new(Box::new(MockBackend::new(80, 24)));
+        let default_fg = 0x01FF0000; // red RGB
+        let default_bg = 0x01000000; // black RGB
+        let opacity = 0.5;
+        let blended_fg = blend_opacity(default_fg, default_bg, opacity);
+
+        // Span with no explicit fg (fg=0) should inherit the node's blended fg
+        let spans = vec![StyledSpan {
+            text: "A".to_string(),
+            attrs: CellAttrs::empty(),
+            fg: 0, // default — should inherit node's blended fg
+            bg: 0,
+        }];
+
+        let clip = ClipRect::full(80, 24);
+        render_styled_spans(
+            &mut ctx, &spans, 0, 0, 80, 24, blended_fg, default_bg, clip, opacity,
+        );
+
+        let cell = ctx.front_buffer.get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'A');
+        // The default-colored span should use the blended fg, not 0 (default)
+        assert_eq!(cell.fg, blended_fg);
+    }
+
+    #[test]
     fn test_blend_opacity_zero_non_rgb() {
         let bg = 0x01000000; // black RGB
 
@@ -960,7 +1000,7 @@ mod tests {
         ctx.focused = Some(h);
 
         let clip = ClipRect::full(80, 24);
-        render_input_cursor(&mut ctx, h, 0, 0, 80, 0x01FFFFFF, 0x01000000, clip);
+        render_input_cursor(&mut ctx, h, "hello", 0, 0, 80, 0x01FFFFFF, 0x01000000, clip);
 
         // Cursor at position 2 means column 2 (ASCII chars are 1-wide)
         let cell = ctx.front_buffer.get(2, 0).unwrap();
@@ -984,7 +1024,7 @@ mod tests {
         ctx.focused = Some(h);
 
         let clip = ClipRect::full(80, 24);
-        render_input_cursor(&mut ctx, h, 0, 0, 80, 0x01FFFFFF, 0x01000000, clip);
+        render_input_cursor(&mut ctx, h, "hi", 0, 0, 80, 0x01FFFFFF, 0x01000000, clip);
 
         // Cursor at end renders a space
         let cell = ctx.front_buffer.get(2, 0).unwrap();
