@@ -89,7 +89,10 @@ pub(crate) fn append_child(ctx: &mut TuiContext, parent: u32, child: u32) -> Res
                 old_p.children.retain(|&h| h != child);
             }
             let _ = ctx.tree.remove_child(
-                ctx.nodes.get(&old_parent).map(|n| n.taffy_node).unwrap_or(taffy::NodeId::from(taffy::NodeId::new(0))),
+                ctx.nodes
+                    .get(&old_parent)
+                    .map(|n| n.taffy_node)
+                    .unwrap_or(taffy::NodeId::new(0)),
                 child_taffy,
             );
         }
@@ -156,14 +159,10 @@ pub(crate) fn mark_dirty(ctx: &mut TuiContext, handle: u32) {
 /// Propagate dirty flag up to ancestors.
 fn mark_dirty_ancestors(ctx: &mut TuiContext, handle: u32) {
     let mut current = handle;
-    loop {
-        if let Some(node) = ctx.nodes.get_mut(&current) {
-            node.dirty = true;
-            if let Some(parent) = node.parent {
-                current = parent;
-            } else {
-                break;
-            }
+    while let Some(node) = ctx.nodes.get_mut(&current) {
+        node.dirty = true;
+        if let Some(parent) = node.parent {
+            current = parent;
         } else {
             break;
         }

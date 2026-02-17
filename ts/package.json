@@ -1,0 +1,12 @@
+{
+  "name": "kraken-tui",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "bun test test-ffi.test.ts",
+    "bench": "bun run bench-ffi.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

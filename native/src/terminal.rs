@@ -86,12 +86,14 @@ impl TerminalBackend for CrosstermBackend {
     }
 
     fn write_diff(&mut self, diff: &[CellUpdate]) -> Result<(), String> {
+        use crate::types::{color_to_crossterm, CellAttrs};
         use crossterm::{
             cursor::MoveTo,
-            style::{Attribute, Color, Print, SetAttribute, SetBackgroundColor, SetForegroundColor},
+            style::{
+                Attribute, Color, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
+            },
             QueueableCommand,
         };
-        use crate::types::{color_to_crossterm, CellAttrs};
 
         let mut stdout = std::io::stdout();
 
@@ -164,8 +166,8 @@ impl TerminalBackend for CrosstermBackend {
     }
 
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent> {
-        use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseEventKind, MouseButton};
         use crate::types::key;
+        use crossterm::event::{self, Event, KeyCode, KeyEventKind, MouseButton, MouseEventKind};
 
         let mut events = Vec::new();
         let timeout = std::time::Duration::from_millis(timeout_ms as u64);

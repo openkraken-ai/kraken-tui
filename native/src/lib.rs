@@ -8,6 +8,14 @@
 //!
 //! No business logic lives here.
 
+// All public functions in this file are `extern "C"` FFI entry points called
+// across the C ABI boundary. The caller is already in unsafe territory by
+// definition — raw-pointer arguments are part of the FFI contract. Marking
+// every entry point `unsafe fn` would be incorrect (it would change the ABI
+// signature) and unhelpful. Pointer validity is checked (null guards) inside
+// each function body before dereferencing.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 mod context;
 mod event;
 mod layout;
@@ -113,7 +121,7 @@ pub extern "C" fn tui_get_terminal_size(width: *mut i32, height: *mut i32) -> i3
 
 #[no_mangle]
 pub extern "C" fn tui_get_capabilities() -> u32 {
-    match catch_unwind(AssertUnwindSafe(|| -> u32 {
+    catch_unwind(AssertUnwindSafe(|| -> u32 {
         // Detect capabilities (basic implementation)
         let mut caps: u32 = 0;
         // Most modern terminals support these
@@ -124,10 +132,8 @@ pub extern "C" fn tui_get_capabilities() -> u32 {
         caps |= 0x10; // UTF-8
         caps |= 0x20; // alternate screen
         caps
-    })) {
-        Ok(caps) => caps,
-        Err(_) => 0,
-    }
+    }))
+    .unwrap_or_default()
 }
 
 // ============================================================================
@@ -188,12 +194,10 @@ pub extern "C" fn tui_get_visible(handle: u32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn tui_get_node_count() -> u32 {
-    match catch_unwind(AssertUnwindSafe(|| -> u32 {
+    catch_unwind(AssertUnwindSafe(|| -> u32 {
         context().map(|ctx| ctx.nodes.len() as u32).unwrap_or(0)
-    })) {
-        Ok(n) => n,
-        Err(_) => 0,
-    }
+    }))
+    .unwrap_or_default()
 }
 
 // ============================================================================
@@ -257,16 +261,14 @@ pub extern "C" fn tui_get_child_at(handle: u32, index: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn tui_get_parent(handle: u32) -> u32 {
-    match catch_unwind(AssertUnwindSafe(|| -> u32 {
+    catch_unwind(AssertUnwindSafe(|| -> u32 {
         context()
             .ok()
             .and_then(|ctx| ctx.nodes.get(&handle))
             .and_then(|n| n.parent)
             .unwrap_or(0)
-    })) {
-        Ok(h) => h,
-        Err(_) => 0,
-    }
+    }))
+    .unwrap_or_default()
 }
 
 // ============================================================================
@@ -620,12 +622,7 @@ pub extern "C" fn tui_select_get_selected(handle: u32) -> i32 {
 // ============================================================================
 
 #[no_mangle]
-pub extern "C" fn tui_set_layout_dimension(
-    handle: u32,
-    prop: u32,
-    value: f32,
-    unit: u8,
-) -> i32 {
+pub extern "C" fn tui_set_layout_dimension(handle: u32, prop: u32, value: f32, unit: u8) -> i32 {
     ffi_wrap(|| {
         let ctx = context_mut()?;
         ctx.validate_handle(handle)?;
@@ -798,8 +795,7 @@ pub extern "C" fn tui_focus(handle: u32) -> i32 {
         let old = ctx.focused.unwrap_or(0);
         ctx.focused = Some(handle);
         if old != handle {
-            ctx.event_buffer
-                .push(TuiEvent::focus_change(old, handle));
+            ctx.event_buffer.push(TuiEvent::focus_change(old, handle));
         }
         Ok(0)
     })
@@ -807,15 +803,10 @@ pub extern "C" fn tui_focus(handle: u32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn tui_get_focused() -> u32 {
-    match catch_unwind(AssertUnwindSafe(|| -> u32 {
-        context()
-            .ok()
-            .and_then(|ctx| ctx.focused)
-            .unwrap_or(0)
-    })) {
-        Ok(h) => h,
-        Err(_) => 0,
-    }
+    catch_unwind(AssertUnwindSafe(|| -> u32 {
+        context().ok().and_then(|ctx| ctx.focused).unwrap_or(0)
+    }))
+    .unwrap_or_default()
 }
 
 #[no_mangle]
@@ -971,7 +962,7 @@ pub extern "C" fn tui_set_debug(enabled: u8) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
-    match catch_unwind(AssertUnwindSafe(|| -> u64 {
+    catch_unwind(AssertUnwindSafe(|| -> u64 {
         let ctx = match context() {
             Ok(c) => c,
             Err(_) => return 0,
@@ -985,10 +976,8 @@ pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
             5 => ctx.nodes.values().filter(|n| n.dirty).count() as u64,
             _ => 0,
         }
-    })) {
-        Ok(v) => v,
-        Err(_) => 0,
-    }
+    }))
+    .unwrap_or_default()
 }
 
 #[no_mangle]
@@ -997,4 +986,56 @@ pub extern "C" fn tui_free_string(_ptr: *const u8) {
     // (get_last_error) or caller-provides-buffer (get_content).
     // This function is reserved for future use when the native core
     // allocates strings that the host must free.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_last_error_null_terminated() {
+        // Initialize a headless context for testing
+        tui_init_headless(80, 24);
+
+        // Set an error via an operation that will fail (invalid handle)
+        let result = tui_destroy_node(999);
+        assert_eq!(result, -1);
+
+        // Get the error pointer
+        let ptr = tui_get_last_error();
+        assert!(!ptr.is_null(), "Error pointer should not be null");
+
+        // Read it as a C string — this is safe because we now null-terminate
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        let error_msg = c_str.to_str().expect("Error should be valid UTF-8");
+        assert!(
+            error_msg.contains("Invalid handle"),
+            "Expected error about invalid handle, got: {error_msg}"
+        );
+
+        // Clear the error
+        tui_clear_error();
+        let ptr_after_clear = tui_get_last_error();
+        assert!(
+            ptr_after_clear.is_null(),
+            "Error pointer should be null after clear"
+        );
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_get_last_error_specific_message() {
+        tui_init_headless(80, 24);
+
+        // Trigger a known error message
+        set_last_error("test error".to_string());
+        let ptr = tui_get_last_error();
+        assert!(!ptr.is_null());
+
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        assert_eq!(c_str.to_str().unwrap(), "test error");
+
+        tui_shutdown();
+    }
 }

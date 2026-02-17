@@ -176,8 +176,12 @@ mod tests {
     #[test]
     fn test_parse_markdown_bold() {
         let spans = parse_markdown("**bold** text");
-        assert!(spans.iter().any(|s| s.text == "bold" && s.attrs.contains(CellAttrs::BOLD)));
-        assert!(spans.iter().any(|s| s.text == " text" && !s.attrs.contains(CellAttrs::BOLD)));
+        assert!(spans
+            .iter()
+            .any(|s| s.text == "bold" && s.attrs.contains(CellAttrs::BOLD)));
+        assert!(spans
+            .iter()
+            .any(|s| s.text == " text" && !s.attrs.contains(CellAttrs::BOLD)));
     }
 
     #[test]

@@ -511,7 +511,16 @@ mod tests {
         let mut buf = Buffer::new(10, 5);
         assert_eq!(buf.cells.len(), 50);
 
-        buf.set(3, 2, Cell { ch: 'X', fg: 0, bg: 0, attrs: CellAttrs::empty() });
+        buf.set(
+            3,
+            2,
+            Cell {
+                ch: 'X',
+                fg: 0,
+                bg: 0,
+                attrs: CellAttrs::empty(),
+            },
+        );
         assert_eq!(buf.get(3, 2).unwrap().ch, 'X');
         assert_eq!(buf.get(0, 0).unwrap().ch, ' ');
         assert!(buf.get(10, 5).is_none());

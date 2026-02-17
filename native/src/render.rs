@@ -145,15 +145,20 @@ fn render_node(
 
             if content_format == ContentFormat::Plain || node_type == NodeType::Input {
                 render_plain_text(
-                    ctx, &display_content, content_x, content_y, content_w, content_h, fg, bg,
+                    ctx,
+                    &display_content,
+                    content_x,
+                    content_y,
+                    content_w,
+                    content_h,
+                    fg,
+                    bg,
                     attrs,
                 );
             } else {
                 // For Markdown/Code, render as styled spans via Text Module
                 let spans = crate::text::parse_content(ctx, &content, content_format, None);
-                render_styled_spans(
-                    ctx, &spans, content_x, content_y, content_w, content_h, bg,
-                );
+                render_styled_spans(ctx, &spans, content_x, content_y, content_w, content_h, bg);
             }
         }
         NodeType::Select => {
@@ -171,12 +176,7 @@ fn render_node(
         NodeType::ScrollBox => {
             // ScrollBox children are rendered with scroll offset applied
             for &child_handle in &children {
-                render_node(
-                    ctx,
-                    child_handle,
-                    abs_x - scroll_x,
-                    abs_y - scroll_y,
-                )?;
+                render_node(ctx, child_handle, abs_x - scroll_x, abs_y - scroll_y)?;
             }
             return Ok(());
         }
@@ -195,6 +195,7 @@ fn render_node(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)] // Internal render helper; a parameter struct adds indirection without benefit.
 fn render_border(
     ctx: &mut TuiContext,
     x: i32,
@@ -213,27 +214,50 @@ fn render_border(
     let attrs = CellAttrs::empty();
 
     // Corners
-    ctx.front_buffer
-        .set(x as u16, y as u16, Cell { ch: tl, fg, bg, attrs });
+    ctx.front_buffer.set(
+        x as u16,
+        y as u16,
+        Cell {
+            ch: tl,
+            fg,
+            bg,
+            attrs,
+        },
+    );
     if w > 1 {
         ctx.front_buffer.set(
             (x + w - 1) as u16,
             y as u16,
-            Cell { ch: tr, fg, bg, attrs },
+            Cell {
+                ch: tr,
+                fg,
+                bg,
+                attrs,
+            },
         );
     }
     if h > 1 {
         ctx.front_buffer.set(
             x as u16,
             (y + h - 1) as u16,
-            Cell { ch: bl, fg, bg, attrs },
+            Cell {
+                ch: bl,
+                fg,
+                bg,
+                attrs,
+            },
         );
     }
     if w > 1 && h > 1 {
         ctx.front_buffer.set(
             (x + w - 1) as u16,
             (y + h - 1) as u16,
-            Cell { ch: br, fg, bg, attrs },
+            Cell {
+                ch: br,
+                fg,
+                bg,
+                attrs,
+            },
         );
     }
 
@@ -242,13 +266,23 @@ fn render_border(
         ctx.front_buffer.set(
             (x + col) as u16,
             y as u16,
-            Cell { ch: horiz, fg, bg, attrs },
+            Cell {
+                ch: horiz,
+                fg,
+                bg,
+                attrs,
+            },
         );
         if h > 1 {
             ctx.front_buffer.set(
                 (x + col) as u16,
                 (y + h - 1) as u16,
-                Cell { ch: horiz, fg, bg, attrs },
+                Cell {
+                    ch: horiz,
+                    fg,
+                    bg,
+                    attrs,
+                },
             );
         }
     }
@@ -258,18 +292,29 @@ fn render_border(
         ctx.front_buffer.set(
             x as u16,
             (y + row) as u16,
-            Cell { ch: vert, fg, bg, attrs },
+            Cell {
+                ch: vert,
+                fg,
+                bg,
+                attrs,
+            },
         );
         if w > 1 {
             ctx.front_buffer.set(
                 (x + w - 1) as u16,
                 (y + row) as u16,
-                Cell { ch: vert, fg, bg, attrs },
+                Cell {
+                    ch: vert,
+                    fg,
+                    bg,
+                    attrs,
+                },
             );
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Internal render helper; a parameter struct adds indirection without benefit.
 fn render_plain_text(
     ctx: &mut TuiContext,
     text: &str,

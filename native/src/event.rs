@@ -74,16 +74,14 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                 let target = crate::layout::hit_test(ctx, x, y).unwrap_or(0);
 
                 // Click events (buttons 0-2) can change focus
-                if button <= 2 {
-                    if target != 0 {
-                        if let Some(node) = ctx.nodes.get(&target) {
-                            if node.focusable {
-                                let old_focus = ctx.focused.unwrap_or(0);
-                                if old_focus != target {
-                                    ctx.focused = Some(target);
-                                    ctx.event_buffer
-                                        .push(TuiEvent::focus_change(old_focus, target));
-                                }
+                if button <= 2 && target != 0 {
+                    if let Some(node) = ctx.nodes.get(&target) {
+                        if node.focusable {
+                            let old_focus = ctx.focused.unwrap_or(0);
+                            if old_focus != target {
+                                ctx.focused = Some(target);
+                                ctx.event_buffer
+                                    .push(TuiEvent::focus_change(old_focus, target));
                             }
                         }
                     }
@@ -230,8 +228,7 @@ fn handle_select_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
             if current > 0 {
                 node.selected_index = Some(current - 1);
                 node.dirty = true;
-                ctx.event_buffer
-                    .push(TuiEvent::change(handle, current - 1));
+                ctx.event_buffer.push(TuiEvent::change(handle, current - 1));
             }
             return true;
         }
@@ -240,8 +237,7 @@ fn handle_select_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
             if current + 1 < option_count {
                 node.selected_index = Some(current + 1);
                 node.dirty = true;
-                ctx.event_buffer
-                    .push(TuiEvent::change(handle, current + 1));
+                ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
             }
             return true;
         }
@@ -407,8 +403,7 @@ mod tests {
     #[test]
     fn test_next_event_drain() {
         let mut ctx = test_ctx();
-        ctx.event_buffer
-            .push(TuiEvent::resize(100, 50));
+        ctx.event_buffer.push(TuiEvent::resize(100, 50));
         ctx.event_buffer.push(TuiEvent::key(0, key::ESCAPE, 0, 0));
 
         let e1 = next_event(&mut ctx).unwrap();
