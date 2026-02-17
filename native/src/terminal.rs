@@ -286,7 +286,48 @@ impl TerminalBackend for CrosstermBackend {
 }
 
 // ============================================================================
-// MockBackend (for testing)
+// HeadlessBackend (for testing and CI environments)
+// ============================================================================
+
+pub struct HeadlessBackend {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl HeadlessBackend {
+    pub fn new(width: u16, height: u16) -> Self {
+        Self { width, height }
+    }
+}
+
+impl TerminalBackend for HeadlessBackend {
+    fn init(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn shutdown(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn size(&self) -> (u16, u16) {
+        (self.width, self.height)
+    }
+
+    fn write_diff(&mut self, _diff: &[CellUpdate]) -> Result<(), String> {
+        Ok(()) // Discard output
+    }
+
+    fn flush(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
+        Vec::new() // No terminal input
+    }
+}
+
+// ============================================================================
+// MockBackend (for Rust unit tests only)
 // ============================================================================
 
 #[cfg(test)]

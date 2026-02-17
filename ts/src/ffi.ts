@@ -25,6 +25,10 @@ const LIB_PATH = resolve(
 const symbols = {
 	// Lifecycle
 	tui_init: { args: [] as FFIType[], returns: "i32" as const },
+	tui_init_headless: {
+		args: ["u16", "u16"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_shutdown: { args: [] as FFIType[], returns: "i32" as const },
 	tui_get_terminal_size: {
 		args: ["ptr", "ptr"] as FFIType[],

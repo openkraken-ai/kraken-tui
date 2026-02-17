@@ -73,6 +73,17 @@ pub extern "C" fn tui_init() -> i32 {
     })
 }
 
+/// Headless init — creates the context with a no-op backend.
+/// For testing, CI, and environments without a terminal.
+#[no_mangle]
+pub extern "C" fn tui_init_headless(width: u16, height: u16) -> i32 {
+    ffi_wrap(|| {
+        let backend = Box::new(terminal::HeadlessBackend::new(width, height));
+        init_context(backend);
+        Ok(0)
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn tui_shutdown() -> i32 {
     ffi_wrap(|| {
