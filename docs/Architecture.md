@@ -46,7 +46,7 @@ Per **Eric Evans** (_Domain-Driven Design_), the FFI boundary is the primary **B
 | Container                  | Logical Type                     | Responsibility                                                                                                                                               |
 | -------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Native Core**            | Compiled Shared Library (cdylib) | Owns all widget state, performs layout computation, renders to terminal, processes input events, parses rich text. The single performance-critical artifact. |
-| **Host Language Bindings** | Script Package                   | Provides an ergonomic, type-safe API for Developers. Translates method calls into FFI commands. Contains zero rendering, layout, or state logic.             |
+| **Host Language Bindings** | Script Package                   | Provides an ergonomic, type-safe API for Developers. Translates method calls into FFI commands. Contains zero rendering, layout, or state logic. Ergonomic utilities (color parsing, ID mapping) are expected. |
 | **Terminal Emulator**      | External System                  | The rendering surface. Receives escape sequences from the Native Core and presents visual output to the End User. Provides raw input events.                 |
 | **Script Runtime**         | External System                  | Loads the Native Core shared library, executes Developer code, and facilitates the FFI boundary.                                                             |
 
@@ -59,7 +59,7 @@ These are not independently deployable containers but are architecturally signif
 | **Tree Module**      | Composition Tree CRUD operations. Handle allocation (per ADR-003). Parent-child relationships. Dirty-flag propagation.                                                                                                                                                                          | None (foundational)               |
 | **Layout Module**    | Flexbox constraint resolution (per ADR-002). Resize handling. Caches computed positions and dimensions. Provides hit-test geometry.                                                                                                                                                             | Tree Module                       |
 | **Theme Module**     | _(v1 — Not implemented in v0)_ Owns named theme definitions (collections of style defaults). Maintains theme-to-subtree bindings. Resolves applicable theme per node via ancestry traversal. Provides built-in light and dark themes.                                                           | Tree Module                       |
-| **Style Module**     | Color resolution (named, hex, 256-palette). Text decoration (bold, italic, underline). Border computation. Merges explicit node styles with applicable Theme defaults (explicit styles win).                                                                                                    | Tree, Theme Modules               |
+| **Style Module**     | Color resolution (named, hex, 256-palette). Text decoration (bold, italic, underline). Border computation. v0: explicit styles only. v1: merges with Theme defaults (explicit styles win). | Tree Module (v0); Tree, Theme Modules (v1) |
 | **Animation Module** | _(v1 — Not implemented in v0)_ Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). | Tree, Style Modules               |
 | **Text Module**      | Rich text parsing: Markdown → styled spans, syntax highlighting. Built-in parsers are native. Custom formats are pre-processed in the Host Layer and arrive as styled span descriptors.                                                                                                         | Style Module                      |
 | **Render Module**    | Double-buffered cell grid. Dirty-flag diffing (per ADR-001). Minimal terminal I/O via escape sequences. Terminal capability detection and graceful degradation.                                                                                                                                 | Tree, Layout, Style, Text Modules |
@@ -81,23 +81,23 @@ Host Language Bindings
 │  ┌────────────┐                                               │
 │  │    Tree    │◄─────────────────────────────────┐            │
 │  │   Module   │                                  │            │
-│  └─┬──┬──┬──┬─┘                                  │            │
-│    │  │  │  └──────────────────┐                 │            │
-│    │  │  │                     │                 │            │
-│  ┌─▼──┘  └──┐  ┌───────────────▼─┐  ┌────────────┴─────────┐  │
-│  │  Layout  │  │  Theme Module   │  │    Event Module      │  │
-│  │  Module  │  └────────┬────────┘  └──────────┬───────────┘  │
+│  └─┬──┬──┬────┘                                  │            │
+│    │  │  │                                        │            │
+│    │  │  │                                        │            │
+│  ┌─▼──┘  └──────────┐              ┌──────────────┴─────────┐  │
+│  │  Layout          │              │    Event Module        │  │
+│  │  Module          │              └──────────┬─────────────┘  │
 │  └────┬─────┘           │                      │              │
 │       │      ┌──────────▼─────────┐            │              │
 │       │      │   Style Module     │            │              │
 │       │      └──┬───────────┬─────┘            │              │
 │       │         │           │                  │              │
-│  ┌────▼─────┐ ┌─▼────────┐ ┌▼──────────────┐   │              │
-│  │  Scroll  │ │   Text   │ │  Animation    │   │              │
-│  │  Module  │ │  Module  │ │   Module      │   │              │
-│  └────┬─────┘ └────┬─────┘ └──────┬────────┘   │              │
-│       │            │              │            │              │
-│  ┌────▼────────────▼──────────────▼────────────▼───────────┐  │
+│  ┌────▼─────┐ ┌─▼────────┐   │                  │              │
+│  │  Scroll  │ │   Text   │   │                  │              │
+│  │  Module  │ │  Module  │   │                  │              │
+│  └────┬─────┘ └────┬─────┘   │                  │              │
+│       │            │         │                  │              │
+│  ┌────▼────────────▼─────────┴──────────────────▼───────────┐  │
 │  │                    Render Module                        │  │
 │  └─────────────────────────┬───────────────────────────────┘  │
 │                            │                                  │
@@ -171,6 +171,17 @@ sequenceDiagram
     FFI->>Tree: set parent-child relationship
     Tree->>Tree: mark subtree dirty
 
+    Dev->>Host: new ScrollBox({ scrollable: true })
+    Host->>FFI: create_node("scrollbox")
+    FFI->>Tree: allocate Handle, insert node
+    Tree-->>FFI: Handle(3)
+    FFI-->>Host: Handle(3)
+
+    Dev->>Host: scrollbox.append(box)
+    Host->>FFI: append_child(3, 1)
+    FFI->>Tree: set parent-child relationship
+    Tree->>Tree: mark subtree dirty
+
     Dev->>Host: text.style({ bold: true, fg: "green" })
     Host->>FFI: set_style(2, BOLD, 1)
     FFI->>Style: apply decoration
@@ -184,6 +195,8 @@ sequenceDiagram
     Layout->>Layout: resolve Flexbox constraints
     Layout-->>Render: computed positions & dimensions
     Render->>Render: traverse dirty nodes
+    Render->>Render: apply scroll offsets (ScrollBox viewports)
+    Render->>Render: clip content to scroll bounds
     Render->>Render: write styled cells to front buffer
     Render->>Render: diff front buffer vs back buffer
     Render->>Term: emit minimal escape sequences
@@ -316,6 +329,40 @@ The FFI boundary is the most safety-critical interface in the system. The follow
 ### 5.4 Identity & Authentication
 
 Not applicable. Kraken TUI is a local, in-process library with no network communication, user sessions, or authentication concerns.
+
+lrsa-320
+
+## 6. PERFORMANCE BUDGETS
+
+Per PRD Section 5 (Non-Functional Constraints), the following budgets govern implementation decisions:
+
+### 6.1 FFI Overhead Budget (< 1ms per call)
+
+**Allocation:**
+- **Target:** < 500μs per FFI crossing (50% of budget for safety margin)
+- **Measured via:** `tui_get_perf_counter(6)` [reserved for FFI latency tracking]
+
+**Strategy:**
+- Batch mutations in Host Layer before FFI calls
+- Minimize call frequency: `render()` triggers full pipeline in one native execution
+- Event drain uses repeated single-call pattern (ADR-T01) — acceptable due to low event volume
+
+### 6.2 Host Bundle Budget (< 50KB)
+
+**Allocation:**
+| Component | Budget | Rationale |
+|-----------|--------|-----------|
+| FFI bindings | ~10KB | `dlopen`, symbol definitions, struct packing |
+| Widget classes | ~20KB | 5 widget types × ~4KB each |
+| Style helpers | ~5KB | Color parsing, style merging |
+| Event handling | ~8KB | Event types, drain loop, dispatch |
+| Error handling | ~4KB | Error classes, code mapping |
+| **Buffer** | ~3KB | Safety margin |
+
+**Strategy:**
+- Zero runtime dependencies beyond `bun:ffi` (built-in)
+- No external struct libraries (ADR-T06: custom minimal implementation)
+- Tree-shakeable widget imports
 
 ---
 
