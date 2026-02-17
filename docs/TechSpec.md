@@ -7,6 +7,8 @@
 **Date**: February 2026
 **Source of Truth**: [Architecture.md](./Architecture.md) v2.0, [PRD.md](./PRD.md) v2.0
 
+**Changelog**: v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
+
 ---
 
 ## 1. STACK SPECIFICATION (BILL OF MATERIALS)
@@ -23,6 +25,7 @@
 | **Markdown Parser**    | pulldown-cmark | 0.13.x        | CommonMark-compliant pull parser. Lightweight, no allocations during iteration.                                                    |
 | **Syntax Highlighter** | syntect        | 5.3.x         | Sublime Text grammar-based. Default feature set with `default-onig` disabled to reduce binary size (use `default-fancy` features). |
 | **Bitflags**           | bitflags       | 2.x           | Cell attribute flag representation.                                                                                                |
+| **Unicode Width**      | unicode-width  | 0.2.x         | Display cell width calculation for CJK, emoji, combining chars. Required for layout engine integration.                           |
 
 ### Host Language Bindings
 
@@ -184,6 +187,121 @@ pub trait TerminalBackend {
 - (-) No compile-time struct definition validation (manual bookkeeping required)
 
 **Implementation Note:** The custom module shall be implemented in `ts/src/ffi/structs.ts` with tests verifying byte layout matches Rust `#[repr(C)]` structs exactly.
+
+### ADR-T07: Text Measurement — Unicode Display Cell Width
+
+**Context:** Taffy layout engine requires intrinsic size measurements for text nodes to compute `auto` width and Flexbox layouts. Unicode text does not map 1:1 to terminal cells — CJK characters render as 2 cells, emoji as 2 cells, combining characters as 0 cells.
+
+**Decision:** Expose `tui_measure_text()` FFI function using the `unicode-width` crate (v0.2.x). This crate is the industry standard used by Alacritty, ripgrep, and the Rust ecosystem. It implements Unicode Standard Annex #11 (East Asian Width) correctly.
+
+**Critical Implementation Details:**
+- Returns **display cell width**, not grapheme count or byte length
+- CJK characters: 2 cells
+- Emoji: 2 cells (including ZWJ sequences like 👩‍🔬)
+- Combining characters: 0 cells
+- Devanagari and complex scripts: context-dependent (per Unicode spec)
+
+**Consequences:**
+
+- (+) Correct layout computation for international text
+- (+) Industry-proven implementation (unicode-width 0.2.x)
+- (+) Zero additional architectural complexity
+- (-) One additional dependency (~10KB)
+- (note) Terminal emulator rendering may differ from Unicode spec for some edge cases (legacy engines)
+
+### ADR-T08: Single-Line Input — Scope Deliberation
+
+**Context:** Multi-line text editing (textarea) requires a two-dimensional cursor model (row, col) and significantly more complexity: line wrapping, vertical cursor movement, scroll position management. The PRD JTBD emphasizes "ship polished terminal UIs in hours, not days."
+
+**Decision:** v0 Input widget is **single-line only**. This satisfies the PRD Epic 4 requirement ("End User can type text into input Widgets") without the complexity of full text editor functionality. Multi-line input (textarea) is deferred to v1.
+
+**Rationale:**
+
+Per **tui-textarea** reference implementation (most popular Rust multi-line editor): multi-line editing requires:
+- 2D cursor tracking (row, column)
+- Line buffer management
+- Vertical navigation key bindings
+- Viewport scrolling for overflow
+- Line number tracking (optional)
+
+This is 5-10x the implementation complexity of single-line input.
+
+**v0 Input Scope:**
+- Single line of text
+- Horizontal cursor positioning (0 to content length)
+- Character insertion/deletion
+- Password masking support (ADR-T09)
+- Optional max length constraint
+
+**v1 Roadmap Addition:** MultiLineInput widget or TextArea mode.
+
+**Consequences:**
+
+- (+) Aligns with "ship faster" JTBD
+- (+) Covers 80% of CLI use cases (prompts, forms, search boxes)
+- (+) Flat cursor model (single u32) is simple and fast
+- (-) Does not support multi-line text entry (email body, comments, etc.)
+- (migration) v2 reconciler can wrap the same primitives; no API breakage
+
+### ADR-T09: Password Masking — Security Minimum Viable
+
+**Context:** Password input is table stakes for TUI libraries. The PRD does not explicitly exclude it, and the **Ship-It CLI Developer** persona ("I want it to look professional in 20 minutes") expects this capability.
+
+**Decision:** Add `tui_input_set_mask(u32 handle, u32 mask_char)` to the Input widget. When mask_char is non-zero, the Input renders mask_char instead of the actual typed character. Default is 0 (no masking).
+
+**Design:**
+- mask_char = 0: Display actual characters (default)
+- mask_char = 0x2A ('*'): Display asterisks (common pattern)
+- mask_char = 0x2022 ('•'): Display bullet (modern UI pattern)
+- Cursor movement and editing work on actual content; display is masked only
+
+**Reference:** reedline (Nushell's editor), tui-textarea, and ratatui all implement this pattern.
+
+**Consequences:**
+
+- (+) Meets security expectations for CLI tools
+- (+) Simple implementation (display-time transformation only)
+- (+) Zero impact on non-password inputs (default off)
+- (-) Slightly larger Input widget state (one u32)
+
+### ADR-T10: Select Widget State Management — Full CRUD
+
+**Context:** The initial TechSpec only provided `tui_select_add_option()`. For dynamic UIs (dashboards with configurable filters, settings panels), developers need to clear and rebuild option lists at runtime. Destroying and recreating the entire widget is unacceptable DX.
+
+**Decision:** Add `tui_select_clear_options()` and `tui_select_remove_option(index)` to complete the CRUD surface. This enables:
+- Clearing a filter dropdown when parent selection changes
+- Removing invalid options based on validation
+- Rebuilding option lists from API responses
+
+**Consequences:**
+
+- (+) Enables dynamic, data-driven UIs
+- (+) Matches standard UI toolkit patterns (HTML Select, React Select, etc.)
+- (+) Zero architectural complexity (Vec operations only)
+- (-) Two additional FFI functions
+
+### ADR-T11: Select Change Events — Index-First Payload
+
+**Context:** The initial TechSpec documented that Change events for all widgets require calling `tui_get_content()` to retrieve the new value. However, Select widgets don't have content—they have a selected index. This created undefined behavior.
+
+**Decision:** Select Change events carry the selected index directly in `event.data[0]`. This eliminates an FFI round-trip (performance) and clarifies the API (ergonomics).
+
+**Event Payload Specification:**
+
+| Widget | `data[0]` | Retrieval Method |
+|--------|-----------|------------------|
+| Input | 0 (unused) | `tui_get_content(target)` |
+| Select | Selected index | Use `data[0]` directly, or `tui_select_get_option(target, data[0], ...)` for text |
+
+**Rationale:** Per Architecture Section 5.2 (FFI Boundary Contract), "Copy semantics for data transfer" — small fixed-size data should cross the boundary in the event struct. An index is 4 bytes; retrieving it via a separate call violates this principle.
+
+**Consequences:**
+
+- (+) Eliminates FFI round-trip for Select changes
+- (+) Consistent with "Rust is the performance engine" invariant
+- (+) Matches developer mental model (Select has index, not text content)
+- (-) Slight asymmetry with Input widget (which retrieves text via getter)
+- (note) Input cannot include text in event due to unbounded string length; Select index is bounded
 
 ---
 
@@ -421,10 +539,17 @@ pub struct TuiEvent {
 | **Mouse**       | Hit-tested handle | x (column)  | y (row)    | button           | modifiers |
 | **Resize**      | 0                 | new_width   | new_height | —                | —         |
 | **FocusChange** | 0                 | from_handle | to_handle  | —                | —         |
-| **Change**      | Target handle     | —           | —          | —                | —         |
+| **Change**      | Target handle     | See notes   | —          | —                | —         |
 | **Submit**      | Target handle     | —           | —          | —                | —         |
 
-For **Change** and **Submit**: the host reads the new value via `tui_get_content(target)`. No string data in events.
+**Change Event Payload by Widget Type:**
+
+| Widget Type | `data[0]` Interpretation | How to Retrieve Value |
+| ----------- | ------------------------ | --------------------- |
+| **Input**   | Unused (0)               | Call `tui_get_content(target)` to get text |
+| **Select**  | Selected index (0-based) | Use `data[0]` directly, or call `tui_select_get_option(target, data[0], ...)` for text |
+
+For **Submit**: The host reads the value via widget-specific getters (`tui_get_content` for Input, `tui_select_get_selected` for Select). No string data in events.
 
 **Key code ranges:**
 
@@ -623,11 +748,18 @@ Widget-specific properties for Input and Select nodes.
 | Function                  | Signature                                                        | Returns            | Description                                               |
 | ------------------------- | ---------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
 | **Input Widget**          |                                                                  |                    |                                                           |
-| `tui_input_set_cursor`    | `(u32 handle, u32 position) -> i32`                              | 0 / -1             | Set cursor position within Input widget.                  |
-| `tui_input_get_cursor`    | `(u32 handle) -> i32`                                            | Position / -1      | Get current cursor position.                              |
+| `tui_input_set_cursor`    | `(u32 handle, u32 position) -> i32`                              | 0 / -1             | Set cursor position within Input widget (single-line).    |
+| `tui_input_get_cursor`    | `(u32 handle) -> i32`                                            | Position / -1      | Get current cursor position (0 to content length).        |
 | `tui_input_set_max_len`   | `(u32 handle, u32 max_len) -> i32`                               | 0 / -1             | Set maximum character length for Input. 0 = unlimited.    |
+| `tui_input_set_mask`      | `(u32 handle, u32 mask_char) -> i32`                             | 0 / -1             | Set password mask character. 0 = no masking, else display mask_char instead of actual input. |
+| `tui_input_get_mask`      | `(u32 handle) -> i32`                                            | Mask char / 0 / -1 | Get current mask character. 0 = no masking.               |
+
+**Input Widget Scope (v0):** Single-line text input only. Cursor position is a single `u32` (0 to content length). For multi-line text entry, wrap multiple Input widgets or wait for v1 TextArea widget. See ADR-T08.
+
 | **Select Widget**         |                                                                  |                    |                                                           |
 | `tui_select_add_option`   | `(u32 handle, *const u8 ptr, u32 len) -> i32`                    | 0 / -1             | Add an option to Select widget.                           |
+| `tui_select_remove_option`| `(u32 handle, u32 index) -> i32`                                 | 0 / -1             | Remove option at index. Subsequent indices shift down.    |
+| `tui_select_clear_options`| `(u32 handle) -> i32`                                            | 0 / -1             | Remove all options from Select widget.                    |
 | `tui_select_get_count`    | `(u32 handle) -> i32`                                            | Count / -1         | Get number of options in Select.                          |
 | `tui_select_get_option`   | `(u32 handle, u32 index, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Get option text at index.                                 |
 | `tui_select_set_selected` | `(u32 handle, u32 index) -> i32`                                 | 0 / -1             | Set selected option by index.                             |
@@ -644,6 +776,7 @@ Layout properties are routed to Taffy via the Layout Module. They control spatia
 | `tui_set_layout_edges`     | `(u32 handle, u32 prop, f32 top, f32 right, f32 bottom, f32 left) -> i32` | 0 / -1  | Set a 4-sided property.                                        |
 | `tui_set_layout_gap`       | `(u32 handle, f32 row_gap, f32 column_gap) -> i32`                        | 0 / -1  | Set row and column gap.                                        |
 | `tui_get_layout`           | `(u32 handle, *mut i32 x, *mut i32 y, *mut i32 w, *mut i32 h) -> i32`     | 0 / -1  | Query computed position and size (valid after `tui_render()`). |
+| `tui_measure_text`         | `(*const u8 ptr, u32 len, *mut u32 width) -> i32`                         | 0 / -1  | Measure display cell width of UTF-8 text. Accounts for CJK (2 cells), emoji (2 cells), combining chars (0 cells). |
 
 **Dimension properties** (`prop` for `tui_set_layout_dimension`):
 
@@ -731,10 +864,12 @@ Visual properties are routed to the Style Module. They control appearance withou
 
 **ScrollBox Behavior:**
 
+- **v0 Limitation — Single Child:** ScrollBox accepts exactly one child. To scroll multiple widgets, wrap them in a Box container. Multi-child scrolling planned for v1.
 - **Overflow detection:** When content dimensions exceed the ScrollBox's computed layout dimensions, scrolling is enabled.
 - **Scrollbar rendering:** The Native Core does not render scrollbars by default. The Host Layer may render them based on scroll position if desired.
-- **Child wrapper:** The ScrollBox node expects a single child. The child's content is clipped to the ScrollBox's bounds during rendering.
+- **Child wrapper:** The ScrollBox node's single child content is clipped to the ScrollBox's bounds during rendering.
 - **Content size:** Determined by the computed size of the ScrollBox's child after layout. The scroll range is `(content_width - scrollbox_width, content_height - scrollbox_height)`.
+- **Scroll position limits:** Scroll coordinates use `i32` (±2,147,483,647). This exceeds all known terminal emulator capabilities (typical maximum: 10,000–50,000 lines of scrollback) by several orders of magnitude.
 
 ### 4.11 Input & Rendering
 
@@ -787,19 +922,23 @@ Visual properties are routed to the Style Module. They control appearance withou
 
 ### 4.15 Complete FFI Symbol Count
 
-**Total: 57 functions** (v0 scope)
+**Total: 62 functions** (v0 scope)
 
-- Lifecycle: 4
-- Node: 6
-- Tree: 6
-- Content: 6
-- Widget: 8
-- Layout: 5
-- Style: 4
-- Focus: 6
-- Scroll: 3
-- Input/Render: 4
-- Diagnostics: 5
+| Category | Count | Note |
+|----------|-------|------|
+| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities |
+| Node | 6 | create, destroy, type, visibility |
+| Tree | 6 | root, append/remove child, parent queries |
+| Content | 6 | text content, format, code language |
+| Widget | 12 | Input (5) + Select (7). +2 password masking, +2 Select CRUD |
+| Layout | 6 | dimensions, flex, edges, gap, get_layout, measure_text. +1 measure_text |
+| Style | 4 | colors, flags, border, opacity |
+| Focus | 6 | focusable state, focus navigation |
+| Scroll | 3 | scroll position and delta |
+| Input/Render | 4 | read_input, next_event, render, mark_dirty |
+| Diagnostics | 5 | errors, debug, perf, free_string |
+
+**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5 = **62**
 
 ---
 
@@ -1015,3 +1154,8 @@ The v0 implementation structure is designed to accommodate v1 additions (Animati
 | ADR-004         | Accepted        | Imperative command API (v0/v1). Reactive reconciler deferred to v2.                                                                                                                                                                                                                                   |
 | ADR-005         | Accepted        | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation.                                                                                                                                                                                                                               |
 | ADR-T06         | Accepted        | Custom minimal FFI struct handling (no external libraries).                                                                                                                                                                                                                                           |
+| ADR-T07         | Accepted        | Text measurement via unicode-width crate for CJK/emoji width calculation.                                                                                                                                                                                                                          |
+| ADR-T08         | Accepted        | Single-line Input only for v0. Multi-line deferred to v1.                                                                                                                                                                                                                                      |
+| ADR-T09         | Accepted        | Password masking support in Input widget.                                                                                                                                                                                                                                                      |
+| ADR-T10         | Accepted        | Full CRUD for Select widget (add, remove, clear options).                                                                                                                                                                                                                                    |
+| ADR-T11         | Accepted        | Select Change events carry index in data[0] to avoid FFI round-trip.                                                                                                                                                                                                                         |
