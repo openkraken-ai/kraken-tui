@@ -292,6 +292,13 @@ Examples:
   0x020000E8 = Grey (256-palette index 232)
 ```
 
+**Edge cases:**
+
+- **Invalid tag (0x03–0xFF):** Treated as `Default` (0x00). The Native Core does not error on invalid tags — it falls back gracefully.
+- **Invalid RGB values:** Values > 255 in any component are clamped to 255.
+- **Invalid ANSI index:** Indices > 255 are treated as `Default`.
+- **Default inheritance:** When a node's color is `0x00` (Default), it inherits from the terminal's default. No explicit parent traversal occurs.
+
 The Host Layer parses developer-friendly formats (`"#FF0000"`, `"red"`, `196`) into this encoding. The Native Core decodes into crossterm `Color` variants.
 
 #### BorderStyle
@@ -392,6 +399,8 @@ pub struct TuiNode {
     pub scroll_y: i32,
 }
 ```
+
+**Storage strategy:** String fields (`content`, `code_language`) use Rust's `String` type with heap allocation. No string interning is used in v0 — each content mutation allocates a new string. This may be optimized in future versions based on profiling data.
 
 #### TuiEvent (`#[repr(C)]`, 24 bytes)
 
@@ -556,19 +565,34 @@ pub struct TuiContext {
 
 ### 4.2 Lifecycle
 
-| Function                | Signature                     | Returns | Description                                                                    |
-| ----------------------- | ----------------------------- | ------- | ------------------------------------------------------------------------------ |
-| `tui_init`              | `() -> i32`                   | 0 / -1  | Initialize context, enter alternate screen, enable raw mode and mouse capture. |
-| `tui_shutdown`          | `() -> i32`                   | 0 / -1  | Restore terminal state, destroy context, free all resources.                   |
-| `tui_get_terminal_size` | `(*mut i32, *mut i32) -> i32` | 0 / -1  | Write current terminal width and height to provided pointers.                  |
+| Function                | Signature                     | Returns  | Description                                                                    |
+| ----------------------- | ----------------------------- | -------- | ------------------------------------------------------------------------------ |
+| `tui_init`              | `() -> i32`                   | 0 / -1   | Initialize context, enter alternate screen, enable raw mode and mouse capture. |
+| `tui_shutdown`          | `() -> i32`                   | 0 / -1   | Restore terminal state, destroy context, free all resources.                   |
+| `tui_get_terminal_size` | `(*mut i32, *mut i32) -> i32` | 0 / -1   | Write current terminal width and height to provided pointers.                  |
+| `tui_get_capabilities`  | `() -> u32`                   | Bitfield | Get terminal capabilities. See capability flags below.                         |
+
+**Terminal capability flags** (bitfield returned by `tui_get_capabilities`):
+
+| Bit | Capability         |
+| --- | ------------------ |
+| 0   | Truecolor (24-bit) |
+| 1   | 256-color          |
+| 2   | 16-color           |
+| 3   | Mouse support      |
+| 4   | UTF-8              |
+| 5   | Alternate screen   |
 
 ### 4.3 Node Lifecycle
 
-| Function            | Signature               | Returns       | Description                                                              |
-| ------------------- | ----------------------- | ------------- | ------------------------------------------------------------------------ |
-| `tui_create_node`   | `(u8 node_type) -> u32` | Handle / 0    | Create a node. `node_type`: see `NodeType` enum. Returns opaque handle.  |
-| `tui_destroy_node`  | `(u32 handle) -> i32`   | 0 / -1        | Destroy node. Detaches from parent. Orphans children (does not cascade). |
-| `tui_get_node_type` | `(u32 handle) -> i32`   | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).              |
+| Function             | Signature                         | Returns       | Description                                                                             |
+| -------------------- | --------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
+| `tui_create_node`    | `(u8 node_type) -> u32`           | Handle / 0    | Create a node. `node_type`: see `NodeType` enum. Returns opaque handle.                 |
+| `tui_destroy_node`   | `(u32 handle) -> i32`             | 0 / -1        | Destroy node. Detaches from parent. Orphans children (does not cascade).                |
+| `tui_get_node_type`  | `(u32 handle) -> i32`             | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).                             |
+| `tui_set_visible`    | `(u32 handle, u8 visible) -> i32` | 0 / -1        | Set node visibility. `visible`: 0 = hidden, 1 = visible. Hidden nodes are not rendered. |
+| `tui_get_visible`    | `(u32 handle) -> i32`             | 1 / 0 / -1    | Get node visibility. Returns 1 if visible, 0 if hidden, -1 on error.                    |
+| `tui_get_node_count` | `() -> u32`                       | Count         | Get total number of nodes in the context.                                               |
 
 ### 4.4 Tree Structure
 
@@ -590,8 +614,26 @@ pub struct TuiContext {
 | `tui_get_content`        | `(u32 handle, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Copy content to caller-provided buffer. Null-terminated if space permits.                            |
 | `tui_set_content_format` | `(u32 handle, u8 format) -> i32`                      | 0 / -1             | Set `ContentFormat`: 0=Plain, 1=Markdown, 2=Code. Marks dirty.                                       |
 | `tui_set_code_language`  | `(u32 handle, *const u8 ptr, u32 len) -> i32`         | 0 / -1             | Set syntax highlighting language (e.g., `"rust"`, `"typescript"`). Only meaningful when format=Code. |
+| `tui_get_code_language`  | `(u32 handle, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Get syntax highlighting language.                                                                    |
 
-### 4.6 Layout Properties
+### 4.6 Widget Properties (Input/Select)
+
+Widget-specific properties for Input and Select nodes.
+
+| Function                  | Signature                                                        | Returns            | Description                                               |
+| ------------------------- | ---------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
+| **Input Widget**          |                                                                  |                    |                                                           |
+| `tui_input_set_cursor`    | `(u32 handle, u32 position) -> i32`                              | 0 / -1             | Set cursor position within Input widget.                  |
+| `tui_input_get_cursor`    | `(u32 handle) -> i32`                                            | Position / -1      | Get current cursor position.                              |
+| `tui_input_set_max_len`   | `(u32 handle, u32 max_len) -> i32`                               | 0 / -1             | Set maximum character length for Input. 0 = unlimited.    |
+| **Select Widget**         |                                                                  |                    |                                                           |
+| `tui_select_add_option`   | `(u32 handle, *const u8 ptr, u32 len) -> i32`                    | 0 / -1             | Add an option to Select widget.                           |
+| `tui_select_get_count`    | `(u32 handle) -> i32`                                            | Count / -1         | Get number of options in Select.                          |
+| `tui_select_get_option`   | `(u32 handle, u32 index, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Get option text at index.                                 |
+| `tui_select_set_selected` | `(u32 handle, u32 index) -> i32`                                 | 0 / -1             | Set selected option by index.                             |
+| `tui_select_get_selected` | `(u32 handle) -> i32`                                            | Index / -1         | Get currently selected option index. -1 if none selected. |
+
+### 4.7 Layout Properties
 
 Layout properties are routed to Taffy via the Layout Module. They control spatial positioning and sizing.
 
@@ -641,7 +683,7 @@ Layout properties are routed to Taffy via the Layout Module. They control spatia
 | 0     | padding  |
 | 1     | margin   |
 
-### 4.7 Visual Style Properties
+### 4.8 Visual Style Properties
 
 Visual properties are routed to the Style Module. They control appearance without affecting layout.
 
@@ -668,17 +710,18 @@ Visual properties are routed to the Style Module. They control appearance withou
 | 1     | italic    |
 | 2     | underline |
 
-### 4.8 Focus Management
+### 4.9 Focus Management
 
-| Function            | Signature                           | Returns    | Description                                                    |
-| ------------------- | ----------------------------------- | ---------- | -------------------------------------------------------------- |
-| `tui_set_focusable` | `(u32 handle, u8 focusable) -> i32` | 0 / -1     | Set whether a node participates in focus traversal.            |
-| `tui_focus`         | `(u32 handle) -> i32`               | 0 / -1     | Set focus to a specific node. Generates FocusChange event.     |
-| `tui_get_focused`   | `() -> u32`                         | Handle / 0 | Get currently focused node handle. 0 = nothing focused.        |
-| `tui_focus_next`    | `() -> i32`                         | 0 / -1     | Advance focus to next focusable node (depth-first tree order). |
-| `tui_focus_prev`    | `() -> i32`                         | 0 / -1     | Move focus to previous focusable node.                         |
+| Function            | Signature                           | Returns    | Description                                                           |
+| ------------------- | ----------------------------------- | ---------- | --------------------------------------------------------------------- |
+| `tui_set_focusable` | `(u32 handle, u8 focusable) -> i32` | 0 / -1     | Set whether a node participates in focus traversal.                   |
+| `tui_is_focusable`  | `(u32 handle) -> i32`               | 1 / 0 / -1 | Query if a node is focusable. Returns 1 if yes, 0 if no, -1 on error. |
+| `tui_focus`         | `(u32 handle) -> i32`               | 0 / -1     | Set focus to a specific node. Generates FocusChange event.            |
+| `tui_get_focused`   | `() -> u32`                         | Handle / 0 | Get currently focused node handle. 0 = nothing focused.               |
+| `tui_focus_next`    | `() -> i32`                         | 0 / -1     | Advance focus to next focusable node (depth-first tree order).        |
+| `tui_focus_prev`    | `() -> i32`                         | 0 / -1     | Move focus to previous focusable node.                                |
 
-### 4.9 Scroll
+### 4.10 Scroll
 
 | Function         | Signature                                     | Returns | Description                                        |
 | ---------------- | --------------------------------------------- | ------- | -------------------------------------------------- |
@@ -686,7 +729,14 @@ Visual properties are routed to the Style Module. They control appearance withou
 | `tui_get_scroll` | `(u32 handle, *mut i32 x, *mut i32 y) -> i32` | 0 / -1  | Query current scroll position.                     |
 | `tui_scroll_by`  | `(u32 handle, i32 dx, i32 dy) -> i32`         | 0 / -1  | Scroll by delta. Clamped to content bounds.        |
 
-### 4.10 Input & Rendering
+**ScrollBox Behavior:**
+
+- **Overflow detection:** When content dimensions exceed the ScrollBox's computed layout dimensions, scrolling is enabled.
+- **Scrollbar rendering:** The Native Core does not render scrollbars by default. The Host Layer may render them based on scroll position if desired.
+- **Child wrapper:** The ScrollBox node expects a single child. The child's content is clipped to the ScrollBox's bounds during rendering.
+- **Content size:** Determined by the computed size of the ScrollBox's child after layout. The scroll range is `(content_width - scrollbox_width, content_height - scrollbox_height)`.
+
+### 4.11 Input & Rendering
 
 | Function         | Signature                    | Returns          | Description                                                                                                                               |
 | ---------------- | ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -695,14 +745,15 @@ Visual properties are routed to the Style Module. They control appearance withou
 | `tui_render`     | `() -> i32`                  | 0 / -1           | Full render pipeline: layout resolution → dirty-flag diffing → terminal I/O. Requires root set via `tui_set_root()`.                      |
 | `tui_mark_dirty` | `(u32 handle) -> i32`        | 0 / -1           | Mark a node dirty. Propagates to ancestors.                                                                                               |
 
-### 4.11 Diagnostics
+### 4.12 Diagnostics
 
 | Function               | Signature                 | Returns        | Description                                                                                  |
 | ---------------------- | ------------------------- | -------------- | -------------------------------------------------------------------------------------------- |
 | `tui_get_last_error`   | `() -> *const c_char`     | Pointer / null | Get last error message. Pointer is borrowed — valid until next error or `tui_clear_error()`. |
-| `tui_clear_error`      | `()`                      | void           | Clear the error state.                                                                       |
+| `tui_clear_error`      | `() -> void`              | —              | Clear the error state.                                                                       |
 | `tui_set_debug`        | `(u8 enabled) -> i32`     | 0 / -1         | Enable (1) or disable (0) debug logging to stderr.                                           |
 | `tui_get_perf_counter` | `(u32 counter_id) -> u64` | Counter value  | Query a performance counter.                                                                 |
+| `tui_free_string`      | `(*const u8 ptr) -> void` | —              | Free a string buffer previously returned by the Native Core.                                 |
 
 **Performance counter IDs:**
 
@@ -713,18 +764,20 @@ Visual properties are routed to the Style Module. They control appearance withou
 | 2   | Last diff cell count       | cells  |
 | 3   | Current event buffer depth | events |
 | 4   | Total node count           | nodes  |
+| 5   | Dirty node count           | nodes  |
 
-### 4.12 Memory Management Rules
+### 4.13 Memory Management Rules
 
 | Direction                      | Rule                                                                                                                                                                            |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **TS → Rust (strings)**        | Caller provides `(pointer, length)`. Rust copies the data internally. Caller may free immediately after call returns.                                                           |
 | **Rust → TS (get_content)**    | Caller provides `(buffer, buffer_length)`. Rust copies into caller's buffer. No Rust-side allocation for the caller.                                                            |
+| **Rust → TS (allocated)**      | Strings that require explicit deallocation are returned with a pointer. Caller must call `tui_free_string()` to release the memory.                                             |
 | **Rust → TS (get_last_error)** | Returns pointer to context-owned string. Valid until the next error occurs or `tui_clear_error()` is called. Caller must not free. Caller should copy if persistence is needed. |
 | **Handles**                    | Owned by Rust. Valid from `tui_create_node()` until `tui_destroy_node()`. Handle `0` is permanently invalid and never allocated.                                                |
 | **Context**                    | Created by `tui_init()`, destroyed by `tui_shutdown()`. All handles and state are invalidated on shutdown.                                                                      |
 
-### 4.13 Error Codes
+### 4.14 Error Codes
 
 | Code | Meaning                                                                      |
 | ---- | ---------------------------------------------------------------------------- |
@@ -732,20 +785,21 @@ Visual properties are routed to the Style Module. They control appearance withou
 | `-1` | Error — check `tui_get_last_error()` for message                             |
 | `-2` | Internal panic — caught by `catch_unwind`, should not occur in correct usage |
 
-### 4.14 Complete FFI Symbol Count
+### 4.15 Complete FFI Symbol Count
 
-**Total: 30 functions** (v0 scope)
+**Total: 57 functions** (v0 scope)
 
-- Lifecycle: 3
-- Node: 3
+- Lifecycle: 4
+- Node: 6
 - Tree: 6
-- Content: 5
+- Content: 6
+- Widget: 8
 - Layout: 5
 - Style: 4
-- Focus: 5
+- Focus: 6
 - Scroll: 3
 - Input/Render: 4
-- Diagnostics: 4
+- Diagnostics: 5
 
 ---
 
@@ -820,6 +874,7 @@ kraken-tui/
 - Internal module functions accept `&mut TuiContext` — no global state access inside modules.
 - Module visibility: `pub(crate)` for module-internal functions. Only `lib.rs` is `pub`.
 - No `unwrap()` in production code. Use `?` with `Result` or explicit match.
+- **ADR-T04 compliance:** Layout and style setters must read the existing state, modify only the targeted property, then write back. Never create fresh `Style::DEFAULT` — this overwrites unrelated properties.
 - Format: `rustfmt` (default config). Lint: `clippy` (default config).
 
 **TypeScript:**
