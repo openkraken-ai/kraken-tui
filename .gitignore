@@ -26,6 +26,9 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
+# Node
+node_modules/
+
 # Build outputs
 *.so
 *.dylib
