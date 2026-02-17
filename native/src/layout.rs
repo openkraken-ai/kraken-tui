@@ -25,7 +25,9 @@ pub(crate) fn set_dimension(
         .taffy_node;
 
     // Read current style
-    let mut style = ctx.tree.style(taffy_node)
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
         .map_err(|e| format!("Failed to read style: {e:?}"))?
         .clone();
 
@@ -69,7 +71,9 @@ pub(crate) fn set_flex(
         .ok_or_else(|| format!("Invalid handle: {handle}"))?
         .taffy_node;
 
-    let mut style = ctx.tree.style(taffy_node)
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
         .map_err(|e| format!("Failed to read style: {e:?}"))?
         .clone();
 
@@ -168,7 +172,9 @@ pub(crate) fn set_edges(
         .ok_or_else(|| format!("Invalid handle: {handle}"))?
         .taffy_node;
 
-    let mut style = ctx.tree.style(taffy_node)
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
         .map_err(|e| format!("Failed to read style: {e:?}"))?
         .clone();
 
@@ -213,7 +219,9 @@ pub(crate) fn set_gap(
         .ok_or_else(|| format!("Invalid handle: {handle}"))?
         .taffy_node;
 
-    let mut style = ctx.tree.style(taffy_node)
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
         .map_err(|e| format!("Failed to read style: {e:?}"))?
         .clone();
 
@@ -305,8 +313,7 @@ fn hit_test_recursive(
     let abs_y = offset_y + layout.location.y;
 
     // Check if point is within this node's bounds
-    if x < abs_x || y < abs_y || x >= abs_x + layout.size.width || y >= abs_y + layout.size.height
-    {
+    if x < abs_x || y < abs_y || x >= abs_x + layout.size.width || y >= abs_y + layout.size.height {
         return None;
     }
 

@@ -80,11 +80,7 @@ pub(crate) fn set_border(
 }
 
 /// Set opacity (0.0–1.0).
-pub(crate) fn set_opacity(
-    ctx: &mut TuiContext,
-    handle: u32,
-    opacity: f32,
-) -> Result<(), String> {
+pub(crate) fn set_opacity(ctx: &mut TuiContext, handle: u32, opacity: f32) -> Result<(), String> {
     let node = ctx
         .nodes
         .get_mut(&handle)

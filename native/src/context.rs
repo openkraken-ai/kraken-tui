@@ -126,17 +126,21 @@ pub fn init_context(backend: Box<dyn TerminalBackend>) {
 /// Destroy the global context and return the backend for shutdown.
 #[allow(static_mut_refs)]
 pub fn destroy_context() -> Option<Box<dyn TerminalBackend>> {
-    unsafe {
-        CONTEXT.take().map(|ctx| ctx.backend)
-    }
+    unsafe { CONTEXT.take().map(|ctx| ctx.backend) }
 }
 
 /// Store an error message in the global context (best-effort; ignores if no context).
+///
+/// Appends a null byte so the string can be safely returned as a C string
+/// pointer via `tui_get_last_error()`. Without this, reading the pointer
+/// as a C string would cause undefined behavior (buffer overread).
 #[allow(static_mut_refs)]
 pub fn set_last_error(msg: String) {
     unsafe {
         if let Some(ref mut ctx) = CONTEXT {
-            ctx.last_error = msg;
+            let mut s = msg;
+            s.push('\0');
+            ctx.last_error = s;
         }
     }
 }
