@@ -1,0 +1,15 @@
+[package]
+name = "kraken_tui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+taffy = "0.9"
+crossterm = "0.29"
+pulldown-cmark = "0.13"
+syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
+bitflags = "2"
+unicode-width = "0.2"
