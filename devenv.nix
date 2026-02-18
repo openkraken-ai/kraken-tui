@@ -30,3 +30,4 @@
     echo "Welcome to KrakenTUI dev environment"
     git --version
   '';
+}
