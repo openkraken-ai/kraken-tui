@@ -38,11 +38,16 @@ const lib = dlopen(LIB_PATH, {
 	tui_get_child_at:    { args: ["u32", "u32"] as FFIType[],                    returns: "u32" as const },
 	tui_get_parent:      { args: ["u32"] as FFIType[],                           returns: "u32" as const },
 
+	// Terminal Size
+	tui_get_terminal_size: { args: ["ptr", "ptr"] as FFIType[],                  returns: "i32" as const },
+
 	// Content
 	tui_set_content:     { args: ["u32", "ptr", "u32"] as FFIType[],             returns: "i32" as const },
 	tui_get_content_len: { args: ["u32"] as FFIType[],                           returns: "i32" as const },
 	tui_get_content:     { args: ["u32", "ptr", "u32"] as FFIType[],             returns: "i32" as const },
 	tui_set_content_format: { args: ["u32", "u8"] as FFIType[],                  returns: "i32" as const },
+	tui_set_code_language:  { args: ["u32", "ptr", "u32"] as FFIType[],          returns: "i32" as const },
+	tui_get_code_language:  { args: ["u32", "ptr", "u32"] as FFIType[],          returns: "i32" as const },
 
 	// Layout
 	tui_set_layout_dimension: { args: ["u32", "u32", "f32", "u8"] as FFIType[],  returns: "i32" as const },
@@ -91,11 +96,18 @@ const lib = dlopen(LIB_PATH, {
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
 	tui_mark_dirty: { args: ["u32"] as FFIType[],                               returns: "i32" as const },
 
+	// Events
+	tui_read_input:    { args: ["u32"] as FFIType[],                            returns: "i32" as const },
+	tui_next_event:    { args: ["ptr"] as FFIType[],                            returns: "i32" as const },
+
 	// Diagnostics
 	tui_get_last_error: { args: [] as FFIType[],  returns: "ptr" as const },
 	tui_clear_error:    { args: [] as FFIType[],  returns: "void" as const },
 	tui_set_debug:      { args: ["u8"] as FFIType[], returns: "i32" as const },
 	tui_get_perf_counter: { args: ["u32"] as FFIType[], returns: "u64" as const },
+
+	// Memory
+	tui_free_string:   { args: ["ptr"] as FFIType[],                            returns: "void" as const },
 });
 
 const ffi = lib.symbols;
@@ -123,6 +135,18 @@ function addOption(handle: number, text: string): number {
 function getOption(handle: number, index: number): string {
 	const buf = Buffer.alloc(256);
 	const written = ffi.tui_select_get_option(handle, index, buf, 256);
+	return buf.toString("utf-8", 0, written);
+}
+
+function setCodeLanguage(handle: number, lang: string): number {
+	const encoded = new TextEncoder().encode(lang);
+	return ffi.tui_set_code_language(handle, Buffer.from(encoded), encoded.length);
+}
+
+function getCodeLanguage(handle: number): string {
+	const buf = Buffer.alloc(256);
+	const written = ffi.tui_get_code_language(handle, buf, 256);
+	if (written <= 0) return "";
 	return buf.toString("utf-8", 0, written);
 }
 
@@ -432,21 +456,32 @@ describe("FFI integration", () => {
 
 	describe("scroll", () => {
 		test("set, get, scroll_by with clamping", () => {
-			const h = ffi.tui_create_node(4);
-			expect(ffi.tui_set_scroll(h, 10, 20)).toBe(0);
+			// Must set up layout so max scroll bounds are computed correctly
+			const sb = ffi.tui_create_node(4);    // ScrollBox
+			const child = ffi.tui_create_node(0); // Box child
+			ffi.tui_set_root(sb);
+			ffi.tui_append_child(sb, child);
+			ffi.tui_set_layout_dimension(sb, 0, 10, 1);    // 10px wide
+			ffi.tui_set_layout_dimension(sb, 1, 10, 1);    // 10px tall
+			ffi.tui_set_layout_dimension(child, 0, 30, 1); // 30px wide
+			ffi.tui_set_layout_dimension(child, 1, 40, 1); // 40px tall
+			ffi.tui_render(); // compute layout: max_scroll = (20, 30)
+
+			expect(ffi.tui_set_scroll(sb, 10, 20)).toBe(0);
 
 			const xBuf = new Int32Array(1);
 			const yBuf = new Int32Array(1);
-			ffi.tui_get_scroll(h, xBuf, yBuf);
+			ffi.tui_get_scroll(sb, xBuf, yBuf);
 			expect(xBuf[0]).toBe(10);
 			expect(yBuf[0]).toBe(20);
 
-			ffi.tui_scroll_by(h, 5, -30);
-			ffi.tui_get_scroll(h, xBuf, yBuf);
+			ffi.tui_scroll_by(sb, 5, -30);
+			ffi.tui_get_scroll(sb, xBuf, yBuf);
 			expect(xBuf[0]).toBe(15);
-			expect(yBuf[0]).toBe(0); // clamped
+			expect(yBuf[0]).toBe(0); // clamped to lower bound
 
-			ffi.tui_destroy_node(h);
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(sb);
 		});
 
 		test("scroll on non-ScrollBox returns -1", () => {
@@ -509,6 +544,271 @@ describe("FFI integration", () => {
 		test("perf counters return values", () => {
 			const val = ffi.tui_get_perf_counter(4); // node count
 			expect(Number(val)).toBeGreaterThanOrEqual(0);
+		});
+	});
+
+	// ── Terminal Size ───────────────────────────────────────────────────────
+
+	describe("terminal size", () => {
+		test("get_terminal_size returns headless dimensions", () => {
+			const wBuf = new Int32Array(1);
+			const hBuf = new Int32Array(1);
+			expect(ffi.tui_get_terminal_size(wBuf, hBuf)).toBe(0);
+			expect(wBuf[0]).toBe(80);
+			expect(hBuf[0]).toBe(24);
+		});
+	});
+
+	// ── Code Language ───────────────────────────────────────────────────────
+
+	describe("code language", () => {
+		test("set and get code language", () => {
+			const h = ffi.tui_create_node(1); // Text
+			expect(setCodeLanguage(h, "rust")).toBe(0);
+			expect(getCodeLanguage(h)).toBe("rust");
+			ffi.tui_destroy_node(h);
+		});
+
+		test("get code language returns empty when unset", () => {
+			const h = ffi.tui_create_node(1);
+			expect(getCodeLanguage(h)).toBe("");
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Input Widget Extended ───────────────────────────────────────────────
+
+	describe("input widget extended", () => {
+		test("cursor position round-trip", () => {
+			const h = ffi.tui_create_node(2);
+			setContent(h, "Hello World");
+			ffi.tui_input_set_cursor(h, 5);
+			expect(ffi.tui_input_get_cursor(h)).toBe(5);
+			ffi.tui_input_set_cursor(h, 0);
+			expect(ffi.tui_input_get_cursor(h)).toBe(0);
+			ffi.tui_input_set_cursor(h, 11);
+			expect(ffi.tui_input_get_cursor(h)).toBe(11);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("password mask round-trip", () => {
+			const h = ffi.tui_create_node(2);
+			const bullet = 0x2022; // '•'
+			ffi.tui_input_set_mask(h, bullet);
+			expect(ffi.tui_input_get_mask(h)).toBe(bullet);
+			ffi.tui_input_set_mask(h, 0);
+			expect(ffi.tui_input_get_mask(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Select Widget Extended ──────────────────────────────────────────────
+
+	describe("select widget extended", () => {
+		test("full CRUD lifecycle", () => {
+			const h = ffi.tui_create_node(3);
+			for (const opt of ["Alpha", "Beta", "Gamma", "Delta"]) addOption(h, opt);
+			expect(ffi.tui_select_get_count(h)).toBe(4);
+			expect(getOption(h, 0)).toBe("Alpha");
+			expect(getOption(h, 3)).toBe("Delta");
+
+			ffi.tui_select_set_selected(h, 2);
+			expect(ffi.tui_select_get_selected(h)).toBe(2);
+
+			ffi.tui_select_remove_option(h, 1); // remove Beta
+			expect(ffi.tui_select_get_count(h)).toBe(3);
+			expect(ffi.tui_select_get_selected(h)).toBe(1); // adjusted
+			expect(getOption(h, 1)).toBe("Gamma");
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("selection cleared when selected option removed", () => {
+			const h = ffi.tui_create_node(3);
+			addOption(h, "Only");
+			ffi.tui_select_set_selected(h, 0);
+			ffi.tui_select_remove_option(h, 0);
+			expect(ffi.tui_select_get_selected(h)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Layout Extended ─────────────────────────────────────────────────────
+
+	describe("layout extended", () => {
+		test("min/max dimension props", () => {
+			const h = ffi.tui_create_node(0);
+			// prop 2=min_width, 3=min_height, 4=max_width, 5=max_height
+			expect(ffi.tui_set_layout_dimension(h, 2, 10, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(h, 3, 5, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(h, 4, 100, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(h, 5, 50, 1)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("all flex enum values", () => {
+			const h = ffi.tui_create_node(0);
+			// flex_direction: 0=row, 1=col, 2=row-rev, 3=col-rev
+			for (let v = 0; v <= 3; v++) expect(ffi.tui_set_layout_flex(h, 0, v)).toBe(0);
+			// flex_wrap: 0=nowrap, 1=wrap, 2=wrap-reverse
+			for (let v = 0; v <= 2; v++) expect(ffi.tui_set_layout_flex(h, 1, v)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("percent dimensions and get_layout", () => {
+			const root = ffi.tui_create_node(0);
+			const child = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, child);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);  // 80px
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);  // 24px
+			ffi.tui_set_layout_dimension(child, 0, 50, 2); // 50%
+			ffi.tui_set_layout_dimension(child, 1, 50, 2); // 50%
+			ffi.tui_render();
+
+			const xBuf = new Int32Array(1);
+			const yBuf = new Int32Array(1);
+			const wBuf = new Int32Array(1);
+			const hBuf = new Int32Array(1);
+			ffi.tui_get_layout(child, xBuf, yBuf, wBuf, hBuf);
+			expect(wBuf[0]).toBe(40);  // 50% of 80
+			expect(hBuf[0]).toBe(12);  // 50% of 24
+
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(root);
+		});
+
+		test("edge types: margin", () => {
+			const h = ffi.tui_create_node(0);
+			// prop 1 = margin (top, right, bottom, left)
+			expect(ffi.tui_set_layout_edges(h, 1, 5, 10, 15, 20)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Style Extended ──────────────────────────────────────────────────────
+
+	describe("style extended", () => {
+		test("all border styles (None through Thick)", () => {
+			const h = ffi.tui_create_node(0);
+			for (let bs = 0; bs <= 4; bs++) {
+				expect(ffi.tui_set_style_border(h, bs)).toBe(0);
+			}
+			ffi.tui_destroy_node(h);
+		});
+
+		test("opacity range", () => {
+			const h = ffi.tui_create_node(0);
+			expect(ffi.tui_set_style_opacity(h, 0.0)).toBe(0);
+			expect(ffi.tui_set_style_opacity(h, 1.0)).toBe(0);
+			expect(ffi.tui_set_style_opacity(h, -1.0)).toBe(0);
+			expect(ffi.tui_set_style_opacity(h, 5.0)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Focus Extended ──────────────────────────────────────────────────────
+
+	describe("focus extended", () => {
+		test("set_focusable toggle on Box", () => {
+			const h = ffi.tui_create_node(0); // Box: not focusable by default
+			expect(ffi.tui_is_focusable(h)).toBe(0);
+			ffi.tui_set_focusable(h, 1);
+			expect(ffi.tui_is_focusable(h)).toBe(1);
+			ffi.tui_set_focusable(h, 0);
+			expect(ffi.tui_is_focusable(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Scroll Extended ─────────────────────────────────────────────────────
+
+	describe("scroll extended", () => {
+		test("layout-based clamping after render", () => {
+			const sb = ffi.tui_create_node(4);    // ScrollBox
+			const child = ffi.tui_create_node(0); // Box
+			ffi.tui_set_root(sb);
+			ffi.tui_append_child(sb, child);
+			ffi.tui_set_layout_dimension(sb, 0, 10, 1);
+			ffi.tui_set_layout_dimension(sb, 1, 5, 1);
+			ffi.tui_set_layout_dimension(child, 0, 20, 1);
+			ffi.tui_set_layout_dimension(child, 1, 15, 1);
+			ffi.tui_render(); // compute layout
+
+			ffi.tui_set_scroll(sb, 100, 100);
+			const xBuf = new Int32Array(1);
+			const yBuf = new Int32Array(1);
+			ffi.tui_get_scroll(sb, xBuf, yBuf);
+			expect(xBuf[0]).toBe(10); // max_scroll_x = 20-10
+			expect(yBuf[0]).toBe(10); // max_scroll_y = 15-5
+
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(sb);
+		});
+	});
+
+	// ── Content Extended ────────────────────────────────────────────────────
+
+	describe("content extended", () => {
+		test("UTF-8 round-trip with emoji", () => {
+			const h = ffi.tui_create_node(1);
+			const str = "Hello \u{1F680} World \u{2764}\u{FE0F}";
+			setContent(h, str);
+			expect(getContent(h)).toBe(str);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("code language with format", () => {
+			const h = ffi.tui_create_node(1);
+			ffi.tui_set_content_format(h, 2); // Code
+			setCodeLanguage(h, "javascript");
+			expect(getCodeLanguage(h)).toBe("javascript");
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ── Event Pipeline ──────────────────────────────────────────────────────
+
+	describe("event pipeline", () => {
+		test("read_input returns 0 with no events (headless)", () => {
+			expect(ffi.tui_read_input(0)).toBe(0);
+		});
+
+		test("next_event returns 0 when buffer empty", () => {
+			// Drain any leftover events from previous tests (e.g. focus changes)
+			const drainBuf = Buffer.alloc(24);
+			while (ffi.tui_next_event(drainBuf) === 1) { /* drain */ }
+
+			const eventBuf = Buffer.alloc(24); // TuiEvent is 24 bytes
+			expect(ffi.tui_next_event(eventBuf)).toBe(0);
+		});
+	});
+
+	// ── Diagnostics Extended ────────────────────────────────────────────────
+
+	describe("diagnostics extended", () => {
+		test("all perf counter IDs return values", () => {
+			for (let i = 0; i <= 5; i++) {
+				expect(Number(ffi.tui_get_perf_counter(i))).toBeGreaterThanOrEqual(0);
+			}
+			expect(Number(ffi.tui_get_perf_counter(99))).toBe(0);
+		});
+	});
+
+	// ── Memory Management ───────────────────────────────────────────────────
+
+	describe("memory management", () => {
+		test("free_string is callable", () => {
+			ffi.tui_free_string(null);
+		});
+
+		test("clear_error resets error state", () => {
+			ffi.tui_destroy_node(99999); // trigger an error
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBe(null);
+			ffi.tui_clear_error();
+			const errPtr2 = ffi.tui_get_last_error();
+			expect(errPtr2 === null || errPtr2 === 0).toBe(true);
 		});
 	});
 

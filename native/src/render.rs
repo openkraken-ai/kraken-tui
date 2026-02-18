@@ -1160,4 +1160,358 @@ mod tests {
         // When fg=0x01FFFFFF and bg=0: selected uses inv_fg=0 (default), inv_bg=0x01FFFFFF
         assert_eq!(selected_cell.bg, 0x01FFFFFF);
     }
+
+    // =========================================================================
+    // D1: Render Pipeline Integration Tests
+    // =========================================================================
+    //
+    // These tests exercise the full render() pipeline: create nodes → set
+    // properties → set root → call render(ctx) → assert cell contents.
+    //
+    // CRITICAL: After render(), std::mem::swap moves the front buffer into
+    // back_buffer. All assertions read from ctx.back_buffer.
+
+    /// Helper: build a full-pipeline test context.
+    fn integration_ctx(w: u16, h: u16) -> TuiContext {
+        TuiContext::new(Box::new(crate::terminal::MockBackend::new(w, h)))
+    }
+
+    #[test]
+    fn test_render_box_with_text_child() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 1.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "Hello".to_string();
+
+        render(&mut ctx).unwrap();
+
+        // After render(), the rendered content is in back_buffer (swap happened)
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'H');
+        assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, 'e');
+        assert_eq!(ctx.back_buffer.get(2, 0).unwrap().ch, 'l');
+        assert_eq!(ctx.back_buffer.get(3, 0).unwrap().ch, 'l');
+        assert_eq!(ctx.back_buffer.get(4, 0).unwrap().ch, 'o');
+        // Cell past end of content is default space
+        assert_eq!(ctx.back_buffer.get(5, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn test_render_nested_boxes_flex_column() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let child1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let child2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text1 = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let text2 = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, child1).unwrap();
+        tree::append_child(&mut ctx, root, child2).unwrap();
+        tree::append_child(&mut ctx, child1, text1).unwrap();
+        tree::append_child(&mut ctx, child2, text2).unwrap();
+        ctx.root = Some(root);
+
+        // Root: column flex direction (prop 0 = direction, value 1 = column)
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_flex(&mut ctx, root, 0, 1).unwrap(); // column
+
+        layout::set_dimension(&mut ctx, child1, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, child1, 1, 3.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, child2, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, child2, 1, 3.0, 1).unwrap();
+
+        layout::set_dimension(&mut ctx, text1, 0, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text1, 1, 1.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text2, 0, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text2, 1, 1.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text1).unwrap().content = "TOP".to_string();
+        ctx.nodes.get_mut(&text2).unwrap().content = "BOT".to_string();
+
+        render(&mut ctx).unwrap();
+
+        // "TOP" at row 0
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'T');
+        assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, 'O');
+        assert_eq!(ctx.back_buffer.get(2, 0).unwrap().ch, 'P');
+
+        // "BOT" at row 3 (child1 is 3px tall)
+        assert_eq!(ctx.back_buffer.get(0, 3).unwrap().ch, 'B');
+        assert_eq!(ctx.back_buffer.get(1, 3).unwrap().ch, 'O');
+        assert_eq!(ctx.back_buffer.get(2, 3).unwrap().ch, 'T');
+    }
+
+    #[test]
+    fn test_render_bordered_box() {
+        use crate::{layout, style, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 5.0, 1).unwrap();
+        style::set_border(&mut ctx, root, 1).unwrap(); // Single border
+
+        render(&mut ctx).unwrap();
+
+        // Corners
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, '┌');
+        assert_eq!(ctx.back_buffer.get(9, 0).unwrap().ch, '┐');
+        assert_eq!(ctx.back_buffer.get(0, 4).unwrap().ch, '└');
+        assert_eq!(ctx.back_buffer.get(9, 4).unwrap().ch, '┘');
+
+        // Horizontal edges
+        assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, '─');
+        assert_eq!(ctx.back_buffer.get(5, 0).unwrap().ch, '─');
+
+        // Vertical edges
+        assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, '│');
+        assert_eq!(ctx.back_buffer.get(0, 2).unwrap().ch, '│');
+    }
+
+    #[test]
+    fn test_render_markdown_bold_attrs() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 3.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "**bold** plain".to_string();
+        ctx.nodes.get_mut(&text).unwrap().content_format = ContentFormat::Markdown;
+
+        render(&mut ctx).unwrap();
+
+        // "bold" should have BOLD attr
+        let b = ctx.back_buffer.get(0, 0).unwrap();
+        assert_eq!(b.ch, 'b');
+        assert!(b.attrs.contains(CellAttrs::BOLD));
+
+        let o = ctx.back_buffer.get(1, 0).unwrap();
+        assert_eq!(o.ch, 'o');
+        assert!(o.attrs.contains(CellAttrs::BOLD));
+
+        let l = ctx.back_buffer.get(2, 0).unwrap();
+        assert_eq!(l.ch, 'l');
+        assert!(l.attrs.contains(CellAttrs::BOLD));
+
+        let d = ctx.back_buffer.get(3, 0).unwrap();
+        assert_eq!(d.ch, 'd');
+        assert!(d.attrs.contains(CellAttrs::BOLD));
+
+        // Space after bold — not bold
+        let sp = ctx.back_buffer.get(4, 0).unwrap();
+        assert_eq!(sp.ch, ' ');
+        assert!(!sp.attrs.contains(CellAttrs::BOLD));
+
+        // "plain" — not bold
+        let p = ctx.back_buffer.get(5, 0).unwrap();
+        assert_eq!(p.ch, 'p');
+        assert!(!p.attrs.contains(CellAttrs::BOLD));
+    }
+
+    #[test]
+    fn test_render_background_color_fill() {
+        use crate::{layout, style, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 5.0, 1).unwrap();
+        style::set_color(&mut ctx, root, 1, 0x01FF0000).unwrap(); // bg = red RGB
+
+        render(&mut ctx).unwrap();
+
+        // All 10x5 cells should have the background color
+        for row in 0..5 {
+            for col in 0..10 {
+                let cell = ctx.back_buffer.get(col, row).unwrap();
+                assert_eq!(cell.bg, 0x01FF0000, "cell ({col}, {row}) bg mismatch");
+            }
+        }
+        // Cell outside the box should have default bg
+        assert_eq!(ctx.back_buffer.get(10, 0).unwrap().bg, 0);
+    }
+
+    #[test]
+    fn test_render_invisible_node_not_rendered() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 1.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "Hidden".to_string();
+        ctx.nodes.get_mut(&text).unwrap().visible = false;
+
+        render(&mut ctx).unwrap();
+
+        // Invisible node should not write any content
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, ' ');
+        assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, ' ');
+        assert_eq!(ctx.back_buffer.get(5, 0).unwrap().ch, ' ');
+    }
+
+    // =========================================================================
+    // D3: ScrollBox Rendering and Scroll Tests
+    // =========================================================================
+
+    /// Helper: create a ScrollBox → child Box → grandchild Text tree for
+    /// scroll rendering tests.
+    fn setup_scrollbox_render(
+        ctx: &mut TuiContext,
+        sb_w: f32,
+        sb_h: f32,
+        child_w: f32,
+        child_h: f32,
+        content: &str,
+    ) -> (u32, u32, u32) {
+        use crate::{layout, tree};
+
+        let sb = tree::create_node(ctx, NodeType::ScrollBox).unwrap();
+        let child = tree::create_node(ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(ctx, NodeType::Text).unwrap();
+
+        tree::append_child(ctx, sb, child).unwrap();
+        tree::append_child(ctx, child, text).unwrap();
+        ctx.root = Some(sb);
+
+        layout::set_dimension(ctx, sb, 0, sb_w, 1).unwrap();
+        layout::set_dimension(ctx, sb, 1, sb_h, 1).unwrap();
+        layout::set_dimension(ctx, child, 0, child_w, 1).unwrap();
+        layout::set_dimension(ctx, child, 1, child_h, 1).unwrap();
+        layout::set_dimension(ctx, text, 0, child_w, 1).unwrap();
+        layout::set_dimension(ctx, text, 1, child_h, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = content.to_string();
+
+        (sb, child, text)
+    }
+
+    #[test]
+    fn test_render_scrollbox_content_with_offset() {
+        use crate::{layout, scroll};
+
+        let mut ctx = integration_ctx(80, 24);
+        let (sb, _, _) =
+            setup_scrollbox_render(&mut ctx, 20.0, 3.0, 20.0, 10.0, "AAA\nBBB\nCCC\nDDD\nEEE");
+
+        // Compute layout first so set_scroll can clamp correctly
+        layout::compute_layout(&mut ctx).unwrap();
+        // Scroll down by 2 rows
+        scroll::set_scroll(&mut ctx, sb, 0, 2).unwrap();
+        render(&mut ctx).unwrap();
+
+        // Row 0 of the viewport should show line index 2 ("CCC")
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'C');
+        assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, 'C');
+        assert_eq!(ctx.back_buffer.get(2, 0).unwrap().ch, 'C');
+
+        // Row 1 should show "DDD"
+        assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, 'D');
+
+        // Row 2 should show "EEE"
+        assert_eq!(ctx.back_buffer.get(0, 2).unwrap().ch, 'E');
+    }
+
+    #[test]
+    fn test_render_scrollbox_clips_outside_bounds() {
+        let mut ctx = integration_ctx(80, 24);
+        // ScrollBox is 10x3, child is 10x10 with lots of content
+        let (_, _, _) = setup_scrollbox_render(
+            &mut ctx,
+            10.0,
+            3.0,
+            10.0,
+            10.0,
+            "AAAAAAAAAA\nBBBBBBBBBB\nCCCCCCCCCC\nDDDDDDDDDD\nEEEEEEEEEE",
+        );
+
+        render(&mut ctx).unwrap();
+
+        // Rows 0-2 should have content (within ScrollBox bounds)
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'A');
+        assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, 'B');
+        assert_eq!(ctx.back_buffer.get(0, 2).unwrap().ch, 'C');
+
+        // Row 3+ should be clipped (default space)
+        assert_eq!(ctx.back_buffer.get(0, 3).unwrap().ch, ' ');
+        assert_eq!(ctx.back_buffer.get(0, 4).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn test_render_scrollbox_scroll_persists() {
+        use crate::{layout, scroll};
+
+        let mut ctx = integration_ctx(80, 24);
+        let (sb, _, _) =
+            setup_scrollbox_render(&mut ctx, 20.0, 3.0, 20.0, 10.0, "AAA\nBBB\nCCC\nDDD");
+
+        // Compute layout first so set_scroll can clamp correctly
+        layout::compute_layout(&mut ctx).unwrap();
+        scroll::set_scroll(&mut ctx, sb, 0, 1).unwrap();
+
+        // First render
+        render(&mut ctx).unwrap();
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'B');
+
+        // Second render — scroll should persist
+        render(&mut ctx).unwrap();
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'B');
+    }
+
+    #[test]
+    fn test_render_scrollbox_bounds_clamped_during_render() {
+        let mut ctx = integration_ctx(80, 24);
+        // ScrollBox 10x5, child 10x7 → max_scroll_y = 7 - 5 = 2
+        let (sb, _, _) = setup_scrollbox_render(
+            &mut ctx,
+            10.0,
+            5.0,
+            10.0,
+            7.0,
+            "AAA\nBBB\nCCC\nDDD\nEEE\nFFF\nGGG",
+        );
+
+        // Set scroll way beyond max
+        ctx.nodes.get_mut(&sb).unwrap().scroll_y = 100;
+
+        render(&mut ctx).unwrap();
+
+        // Render re-clamps scroll positions (render.rs lines 296-303)
+        // After swap, the node's scroll_y should be clamped to max (2)
+        assert_eq!(ctx.nodes[&sb].scroll_y, 2);
+    }
 }

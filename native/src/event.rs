@@ -414,4 +414,249 @@ mod tests {
 
         assert!(next_event(&mut ctx).is_none());
     }
+
+    // =========================================================================
+    // D2: Event Pipeline Integration Tests (end-to-end via read_input)
+    // =========================================================================
+
+    /// Inject terminal events into the MockBackend for end-to-end testing.
+    fn inject_events(ctx: &mut TuiContext, events: Vec<TerminalInputEvent>) {
+        let mock = ctx
+            .backend
+            .as_any_mut()
+            .downcast_mut::<MockBackend>()
+            .expect("test context must use MockBackend");
+        mock.injected_events.extend(events);
+    }
+
+    #[test]
+    fn test_e2e_key_press_event() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(root);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Key as u32);
+        assert_eq!(event.data[0], key::ESCAPE);
+        assert_eq!(event.data[1], 0); // no modifiers
+        assert_eq!(event.target, 0); // no focus
+    }
+
+    #[test]
+    fn test_e2e_tab_focus_change() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input1 = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let input2 = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input1).unwrap();
+        tree::append_child(&mut ctx, root, input2).unwrap();
+        ctx.root = Some(root);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::TAB,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        // Tab is consumed internally (not counted), but produces a FocusChange event
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 0);
+
+        // Focus should advance to first focusable node
+        assert_eq!(ctx.focused, Some(input1));
+
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::FocusChange as u32);
+        assert_eq!(event.data[0], 0); // from: none
+        assert_eq!(event.data[1], input1); // to: input1
+    }
+
+    #[test]
+    fn test_e2e_char_input_on_focused_input() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: 'a' as u32,
+                modifiers: 0,
+                character: 'a',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Content should be updated
+        assert_eq!(ctx.nodes[&input].content, "a");
+        assert_eq!(ctx.nodes[&input].cursor_position, 1);
+
+        // Change event should be emitted
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Change as u32);
+        assert_eq!(event.target, input);
+    }
+
+    #[test]
+    fn test_e2e_enter_on_focused_input() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(input);
+        ctx.nodes.get_mut(&input).unwrap().content = "hello".to_string();
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ENTER,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Submit as u32);
+        assert_eq!(event.target, input);
+    }
+
+    #[test]
+    fn test_e2e_arrow_on_focused_select() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let select = tree::create_node(&mut ctx, NodeType::Select).unwrap();
+
+        tree::append_child(&mut ctx, root, select).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(select);
+
+        let node = ctx.nodes.get_mut(&select).unwrap();
+        node.options = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        node.selected_index = Some(0);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::DOWN,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Selection should advance
+        assert_eq!(ctx.nodes[&select].selected_index, Some(1));
+
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Change as u32);
+        assert_eq!(event.target, select);
+        assert_eq!(event.data[0], 1); // new selected index
+    }
+
+    #[test]
+    fn test_e2e_backtab_focus_backward() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input1 = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let input2 = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input1).unwrap();
+        tree::append_child(&mut ctx, root, input2).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(input2);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::BACK_TAB,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 0); // BackTab consumed internally
+
+        assert_eq!(ctx.focused, Some(input1));
+
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::FocusChange as u32);
+        assert_eq!(event.data[0], input2); // from
+        assert_eq!(event.data[1], input1); // to
+    }
+
+    #[test]
+    fn test_e2e_mouse_click_focus() {
+        use crate::layout;
+
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, input, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, input, 1, 3.0, 1).unwrap();
+
+        // Compute layout so hit-test works
+        layout::compute_layout(&mut ctx).unwrap();
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Mouse {
+                x: 5,
+                y: 1,
+                button: 0, // left click
+                modifiers: 0,
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Focus should change to the clicked Input
+        assert_eq!(ctx.focused, Some(input));
+
+        // Should have FocusChange + Mouse events in buffer
+        let fc = next_event(&mut ctx).unwrap();
+        assert_eq!(fc.event_type, TuiEventType::FocusChange as u32);
+        assert_eq!(fc.data[0], 0); // from: none
+        assert_eq!(fc.data[1], input); // to: input
+
+        let mouse = next_event(&mut ctx).unwrap();
+        assert_eq!(mouse.event_type, TuiEventType::Mouse as u32);
+        assert_eq!(mouse.target, input);
+    }
 }
