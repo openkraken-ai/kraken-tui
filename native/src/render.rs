@@ -316,8 +316,8 @@ fn render_node(
                 render_node(
                     ctx,
                     child_handle,
-                    abs_x - clamped_sx,
-                    abs_y - clamped_sy,
+                    content_x - clamped_sx,
+                    content_y - clamped_sy,
                     child_clip,
                 )?;
             }

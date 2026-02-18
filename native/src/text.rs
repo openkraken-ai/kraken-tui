@@ -45,7 +45,7 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
             Event::End(tag_end) => match tag_end {
                 TagEnd::Strong => attrs.remove(CellAttrs::BOLD),
                 TagEnd::Emphasis => attrs.remove(CellAttrs::ITALIC),
-                TagEnd::Paragraph => {
+                TagEnd::Heading(_) | TagEnd::Paragraph => {
                     spans.push(StyledSpan {
                         text: "\n".to_string(),
                         attrs,

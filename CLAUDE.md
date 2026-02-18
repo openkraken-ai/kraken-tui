@@ -9,7 +9,7 @@ These instructions guide you to focus on project-specific architecture and comma
 
 **Kraken TUI** is a Rust-powered terminal UI library with TypeScript/Bun bindings via FFI. Rust handles all performance-critical work (layout, rendering, events); TypeScript is a thin client with no rendering logic, no layout computation, and no event state.
 
-The specification (TechSpec v2.1) defines the full v0 scope of 62 FFI functions. Implementation covers all modules but some are partially complete.
+The specification (TechSpec v2.1) defines the full v0 scope of 62 FFI functions. All modules are fully implemented with 70 Rust unit tests and 54 FFI integration tests.
 
 **Authority documents** (read in this order for any design questions):
 1. [PRD.md](./docs/PRD.md) (v2.0) — What we're building and why
@@ -41,7 +41,7 @@ Output: `native/target/release/libkraken_tui.so` (Linux) / `.dylib` (macOS) / `.
 ### Test
 
 ```bash
-# Rust unit tests (27 tests across all modules)
+# Rust unit tests (70 tests across all modules)
 cargo test --manifest-path native/Cargo.toml
 
 # Single test by name
@@ -50,11 +50,14 @@ cargo test --manifest-path native/Cargo.toml test_create_and_destroy -- --exact
 # Tests with stdout
 cargo test --manifest-path native/Cargo.toml -- --nocapture
 
-# FFI integration tests (requires release build first)
+# FFI integration tests (54 tests, requires release build first)
 cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts
 
 # FFI benchmarks
 bun run ts/bench-ffi.ts
+
+# Interactive demo (requires release build first)
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
 ```
 
 ### Code Quality
@@ -174,14 +177,14 @@ All widgets are identified by opaque `u32` handles. Handle 0 is reserved as inva
 
 | Module | Status | Notes |
 |--------|--------|-------|
-| Tree | ✅ Mostly complete | CRUD, hierarchy, dirty propagation |
-| Layout | ⚠️ Partial | Taffy integration works; property setters incomplete |
-| Style | ⚠️ Partial | Color/flag/border/opacity setters exist; some stubs |
-| Render | ⚠️ Partial | Double buffer structure exists; diffing incomplete |
-| Event | ⚠️ Partial | Basic scaffolding, focus machine |
-| Terminal | ✅ Mostly complete | CrosstermBackend + HeadlessBackend |
-| Text | ⚠️ Scaffolding | Markdown/syntax parsing structure exists |
-| Scroll | ⚠️ Minimal | Basic set/get/scroll_by |
-| Content | ✅ Basic | set/get text, format, code language |
+| Tree | ✅ Complete | CRUD, hierarchy, dirty propagation, ScrollBox constraints |
+| Layout | ✅ Complete | Taffy flexbox routing, dimension/flex/edges/gap setters, hit-testing |
+| Style | ✅ Complete | Color encoding/decoding, bold/italic/underline flags, border styles, opacity |
+| Render | ✅ Complete | Full pipeline: layout → buffer → dirty diff → terminal I/O; all 5 node types |
+| Event | ✅ Complete | Terminal input classification, focus state machine, widget key handling, mouse hit-test |
+| Terminal | ✅ Complete | CrosstermBackend + HeadlessBackend + MockBackend (testing) |
+| Text | ✅ Complete | Markdown parsing (pulldown-cmark), syntax highlighting (syntect), text measurement |
+| Scroll | ✅ Complete | Per-node viewport state, max-scroll clamping, scroll_by with bounds |
+| Content | ✅ Complete | set/get text, format (plain/markdown/code), code language |
 
-The full 62-function contract is defined in TechSpec Section 4. Compare against `lib.rs` to find remaining gaps.
+All 62 FFI functions from TechSpec Section 4 are implemented in `lib.rs`.

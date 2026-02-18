@@ -19,6 +19,7 @@ pub trait TerminalBackend {
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent>;
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
+    #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
@@ -289,6 +290,7 @@ impl TerminalBackend for CrosstermBackend {
         events
     }
 
+    #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
@@ -334,6 +336,7 @@ impl TerminalBackend for HeadlessBackend {
         Vec::new() // No terminal input
     }
 
+    #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
@@ -390,6 +393,7 @@ impl TerminalBackend for MockBackend {
         std::mem::take(&mut self.injected_events)
     }
 
+    #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
     }
