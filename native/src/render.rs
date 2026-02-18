@@ -292,6 +292,16 @@ fn render_node(
             );
         }
         NodeType::ScrollBox => {
+            // Re-clamp scroll positions to current layout bounds (safety net
+            // for cases where layout changed since set_scroll was called)
+            let (max_sx, max_sy) = crate::scroll::compute_max_scroll(ctx, handle);
+            let clamped_sx = scroll_x.clamp(0, max_sx);
+            let clamped_sy = scroll_y.clamp(0, max_sy);
+            if let Some(node) = ctx.nodes.get_mut(&handle) {
+                node.scroll_x = clamped_sx;
+                node.scroll_y = clamped_sy;
+            }
+
             // Compute clip rect for ScrollBox children: intersection of parent clip
             // and ScrollBox content area (for nested ScrollBox support)
             let scrollbox_clip = ClipRect {
@@ -306,8 +316,8 @@ fn render_node(
                 render_node(
                     ctx,
                     child_handle,
-                    abs_x - scroll_x,
-                    abs_y - scroll_y,
+                    abs_x - clamped_sx,
+                    abs_y - clamped_sy,
                     child_clip,
                 )?;
             }

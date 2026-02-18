@@ -15,10 +15,23 @@ pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u
     let handle = ctx.next_handle;
     ctx.next_handle += 1;
 
-    let taffy_result = if node_type.is_leaf() {
-        ctx.tree.new_leaf(Style::DEFAULT)
+    // ScrollBox uses Overflow::Scroll so Taffy measures children at their
+    // natural size instead of constraining them to the parent's bounds.
+    let style = if node_type == NodeType::ScrollBox {
+        let mut s = Style::DEFAULT;
+        s.overflow = taffy::Point {
+            x: taffy::Overflow::Scroll,
+            y: taffy::Overflow::Scroll,
+        };
+        s
     } else {
-        ctx.tree.new_with_children(Style::DEFAULT, &[])
+        Style::DEFAULT
+    };
+
+    let taffy_result = if node_type.is_leaf() {
+        ctx.tree.new_leaf(style)
+    } else {
+        ctx.tree.new_with_children(style, &[])
     };
 
     let taffy_node = taffy_result.map_err(|e| format!("Taffy node creation failed: {e:?}"))?;
@@ -82,6 +95,20 @@ pub(crate) fn append_child(ctx: &mut TuiContext, parent: u32, child: u32) -> Res
         .ok_or_else(|| format!("Invalid child handle: {child}"))?;
     let child_taffy = child_node.taffy_node;
 
+    // Enforce ScrollBox single-child constraint (TechSpec 4.10)
+    {
+        let parent_node = ctx.nodes.get(&parent).unwrap();
+        if parent_node.node_type == NodeType::ScrollBox
+            && !parent_node.children.is_empty()
+            && !(parent_node.children.len() == 1 && parent_node.children[0] == child)
+        {
+            return Err(
+                "ScrollBox accepts exactly one child. Wrap multiple widgets in a Box container."
+                    .to_string(),
+            );
+        }
+    }
+
     // Detach from previous parent if any
     if let Some(old_parent) = child_node.parent {
         if old_parent != parent {
@@ -102,6 +129,20 @@ pub(crate) fn append_child(ctx: &mut TuiContext, parent: u32, child: u32) -> Res
     ctx.tree
         .add_child(parent_taffy, child_taffy)
         .map_err(|e| format!("Taffy add_child failed: {e:?}"))?;
+
+    // ScrollBox children must not shrink so they can overflow the viewport.
+    // Without this, Taffy's default flex_shrink:1 constrains the child to
+    // the ScrollBox's size, making scrolling impossible.
+    if ctx
+        .nodes
+        .get(&parent)
+        .is_some_and(|n| n.node_type == NodeType::ScrollBox)
+    {
+        if let Ok(mut child_style) = ctx.tree.style(child_taffy).cloned() {
+            child_style.flex_shrink = 0.0;
+            let _ = ctx.tree.set_style(child_taffy, child_style);
+        }
+    }
 
     // Update bookkeeping
     if let Some(p) = ctx.nodes.get_mut(&parent) {
@@ -247,5 +288,43 @@ mod tests {
         assert_eq!(h1, 1);
         assert_eq!(h2, 2);
         assert_eq!(h3, 3);
+    }
+
+    #[test]
+    fn test_scrollbox_single_child_allowed() {
+        let mut ctx = test_ctx();
+        let sb = create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+        let child = create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(append_child(&mut ctx, sb, child).is_ok());
+        assert_eq!(ctx.nodes[&sb].children, vec![child]);
+    }
+
+    #[test]
+    fn test_scrollbox_second_child_rejected() {
+        let mut ctx = test_ctx();
+        let sb = create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+        let child1 = create_node(&mut ctx, NodeType::Box).unwrap();
+        let child2 = create_node(&mut ctx, NodeType::Box).unwrap();
+
+        append_child(&mut ctx, sb, child1).unwrap();
+        let result = append_child(&mut ctx, sb, child2);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("ScrollBox accepts exactly one child"));
+        // ScrollBox still has only the first child
+        assert_eq!(ctx.nodes[&sb].children, vec![child1]);
+    }
+
+    #[test]
+    fn test_scrollbox_re_append_same_child() {
+        let mut ctx = test_ctx();
+        let sb = create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+        let child = create_node(&mut ctx, NodeType::Box).unwrap();
+
+        append_child(&mut ctx, sb, child).unwrap();
+        // Re-appending the same child should succeed (idempotent)
+        assert!(append_child(&mut ctx, sb, child).is_ok());
+        assert_eq!(ctx.nodes[&sb].children, vec![child]);
     }
 }
