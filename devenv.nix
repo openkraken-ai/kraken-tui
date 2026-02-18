@@ -17,9 +17,20 @@
   };
 
   # https://devenv.sh/git-hooks/
+  # Custom entries because Cargo.toml lives in native/, not the repo root.
   git-hooks.hooks = {
-    rustfmt.enable = true;
-    clippy.enable = true;
+    clippy = {
+      enable = true;
+      entry = "cargo clippy --manifest-path native/Cargo.toml -- -D warnings";
+      files = "\\.rs$";
+      pass_filenames = false;
+    };
+    rustfmt = {
+      enable = true;
+      entry = "cargo fmt --manifest-path native/Cargo.toml --check";
+      files = "\\.rs$";
+      pass_filenames = false;
+    };
   };
 
   # https://devenv.sh/basics/

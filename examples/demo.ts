@@ -166,6 +166,84 @@ app.setId("select", select);
 // Set initial focus to input
 input.focus();
 
+// ── Theme definitions ──────────────────────────────────────────────────
+
+interface Theme {
+	bg: string;
+	fg: string;
+	accent: string;
+	label: string;
+	muted: string;
+	border: string;
+}
+
+const themes: Record<string, Theme> = {
+	"Dark Mode": {
+		bg: "#1e1e2e",
+		fg: "#cdd6f4",
+		accent: "#89b4fa",
+		label: "#a6e3a1",
+		muted: "#585b70",
+		border: "#6c7086",
+	},
+	"Light Mode": {
+		bg: "#eff1f5",
+		fg: "#4c4f69",
+		accent: "#1e66f5",
+		label: "#40a02b",
+		muted: "#9ca0b0",
+		border: "#8c8fa1",
+	},
+	Solarized: {
+		bg: "#002b36",
+		fg: "#839496",
+		accent: "#268bd2",
+		label: "#859900",
+		muted: "#586e75",
+		border: "#657b83",
+	},
+	Nord: {
+		bg: "#2e3440",
+		fg: "#d8dee9",
+		accent: "#88c0d0",
+		label: "#a3be8c",
+		muted: "#4c566a",
+		border: "#616e88",
+	},
+	Dracula: {
+		bg: "#282a36",
+		fg: "#f8f8f2",
+		accent: "#bd93f9",
+		label: "#50fa7b",
+		muted: "#6272a4",
+		border: "#44475a",
+	},
+};
+
+function applyTheme(name: string) {
+	const t = themes[name];
+	if (!t) return;
+
+	root.setBackground(t.bg);
+	header.setForeground(t.accent);
+	middleRow.setBackground(t.bg);
+	inputLabel.setForeground(t.label);
+	input.setForeground(t.fg);
+	input.setBackground(t.bg);
+	selectLabel.setForeground(t.label);
+	select.setForeground(t.fg);
+	select.setBackground(t.bg);
+	scrollLabel.setForeground(t.accent);
+	scrollBox.setForeground(t.border);
+	scrollBox.setBackground(t.bg);
+	scrollContent.setForeground(t.fg);
+	scrollContent.setBackground(t.bg);
+	statusBar.setForeground(t.muted);
+}
+
+// Apply initial theme
+applyTheme("Dark Mode");
+
 // ── Event loop at ~60fps ───────────────────────────────────────────────
 
 let running = true;
@@ -190,15 +268,17 @@ while (running) {
 			} else if (event.target === select.handle) {
 				const idx = select.getSelected();
 				const opt = select.getOption(idx);
-				statusBar.setContent(`Selected theme: ${opt}`);
+				applyTheme(opt);
+				statusBar.setContent(`Applied theme: ${opt}`);
 			}
 		}
 
-		// Update status bar on change events
+		// Apply theme on change (live preview as user browses)
 		if (event.type === "change") {
 			if (event.target === select.handle && event.selectedIndex != null) {
 				const opt = select.getOption(event.selectedIndex);
-				statusBar.setContent(`Browsing: ${opt}`);
+				applyTheme(opt);
+				statusBar.setContent(`Theme: ${opt}`);
 			}
 		}
 	}
