@@ -97,21 +97,14 @@ pub(crate) fn get_scroll(ctx: &TuiContext, handle: u32) -> Result<(i32, i32), St
 
 /// Scroll by delta. Clamped to `[0, max_scroll]` based on content bounds.
 pub(crate) fn scroll_by(ctx: &mut TuiContext, handle: u32, dx: i32, dy: i32) {
-    let is_scrollbox = ctx
-        .nodes
-        .get(&handle)
-        .is_some_and(|n| n.node_type == NodeType::ScrollBox);
-
-    if !is_scrollbox {
-        return;
-    }
-
     let (max_x, max_y) = compute_max_scroll(ctx, handle);
 
     if let Some(node) = ctx.nodes.get_mut(&handle) {
-        node.scroll_x = (node.scroll_x + dx).clamp(0, max_x);
-        node.scroll_y = (node.scroll_y + dy).clamp(0, max_y);
-        node.dirty = true;
+        if node.node_type == NodeType::ScrollBox {
+            node.scroll_x = (node.scroll_x + dx).clamp(0, max_x);
+            node.scroll_y = (node.scroll_y + dy).clamp(0, max_y);
+            node.dirty = true;
+        }
     }
 }
 
