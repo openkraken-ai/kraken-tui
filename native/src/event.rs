@@ -659,4 +659,68 @@ mod tests {
         assert_eq!(mouse.event_type, TuiEventType::Mouse as u32);
         assert_eq!(mouse.target, input);
     }
+
+    #[test]
+    fn test_e2e_scroll_wheel_on_scrollbox() {
+        use crate::layout;
+
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let sb = tree::create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+        let child = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        tree::append_child(&mut ctx, root, sb).unwrap();
+        tree::append_child(&mut ctx, sb, child).unwrap();
+        ctx.root = Some(root);
+
+        // Root: 80x24, ScrollBox: 20x10, Child: 20x40 (scrollable vertically)
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, sb, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, sb, 1, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, child, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, child, 1, 40.0, 1).unwrap();
+
+        layout::compute_layout(&mut ctx).unwrap();
+
+        // Verify initial scroll is 0
+        assert_eq!(ctx.nodes[&sb].scroll_y, 0);
+
+        // Inject scroll-down event (button 4) at coords within the ScrollBox
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Mouse {
+                x: 5,
+                y: 3,
+                button: 4, // scroll down
+                modifiers: 0,
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Scroll position should have increased by 1
+        assert_eq!(ctx.nodes[&sb].scroll_y, 1);
+
+        // Mouse event should still be emitted
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Mouse as u32);
+
+        // Inject scroll-up event (button 3)
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Mouse {
+                x: 5,
+                y: 3,
+                button: 3, // scroll up
+                modifiers: 0,
+            }],
+        );
+
+        read_input(&mut ctx, 0).unwrap();
+
+        // Scroll should be back to 0
+        assert_eq!(ctx.nodes[&sb].scroll_y, 0);
+    }
 }
