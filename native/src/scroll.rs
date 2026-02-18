@@ -28,7 +28,9 @@ pub(crate) fn compute_max_scroll(ctx: &TuiContext, handle: u32) -> (i32, i32) {
     let mut viewport_w = sb_layout.size.width as i32;
     let mut viewport_h = sb_layout.size.height as i32;
 
-    // Account for border insets (content area = layout - 2 per axis)
+    // All current border styles use 1-cell-wide characters (see BorderStyle::chars()),
+    // so the content area is reduced by 1 cell per side (2 total per axis).
+    // This matches the identical inset logic in render.rs:237-238.
     if node.visual_style.border_style != BorderStyle::None {
         viewport_w = (viewport_w - 2).max(0);
         viewport_h = (viewport_h - 2).max(0);
@@ -69,7 +71,10 @@ pub(crate) fn set_scroll(ctx: &mut TuiContext, handle: u32, x: i32, y: i32) -> R
 
     let (max_x, max_y) = compute_max_scroll(ctx, handle);
 
-    let node = ctx.nodes.get_mut(&handle).unwrap();
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .expect("handle was validated above");
     node.scroll_x = x.clamp(0, max_x);
     node.scroll_y = y.clamp(0, max_y);
     node.dirty = true;
