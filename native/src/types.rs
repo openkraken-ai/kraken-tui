@@ -271,6 +271,17 @@ pub struct VisualStyle {
     pub border_color: u32,
     pub attrs: CellAttrs,
     pub opacity: f32,
+    pub style_mask: u8,
+}
+
+impl VisualStyle {
+    pub const MASK_FG_COLOR: u8 = 0b0000_0001; // bit 0
+    pub const MASK_BG_COLOR: u8 = 0b0000_0010; // bit 1
+    pub const MASK_BORDER_COLOR: u8 = 0b0000_0100; // bit 2
+    pub const MASK_BORDER_STYLE: u8 = 0b0000_1000; // bit 3
+    pub const MASK_ATTRS: u8 = 0b0001_0000; // bit 4
+    pub const MASK_OPACITY: u8 = 0b0010_0000; // bit 5
+    pub const MASK_ALL: u8 = 0b0011_1111;
 }
 
 impl Default for VisualStyle {
@@ -282,6 +293,7 @@ impl Default for VisualStyle {
             border_color: 0,
             attrs: CellAttrs::empty(),
             opacity: 1.0,
+            style_mask: 0,
         }
     }
 }

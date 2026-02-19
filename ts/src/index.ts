@@ -12,6 +12,7 @@ export { Text } from "./widgets/text";
 export { Input } from "./widgets/input";
 export { Select } from "./widgets/select";
 export { ScrollBox } from "./widgets/scrollbox";
+export { Theme, DARK_THEME, LIGHT_THEME } from "./theme";
 export { KrakenError, checkResult } from "./errors";
 export { parseColor, parseDimension } from "./style";
 export { EventType, KeyCode, Modifier, NodeType } from "./ffi/structs";

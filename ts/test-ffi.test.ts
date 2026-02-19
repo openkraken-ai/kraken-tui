@@ -92,6 +92,17 @@ const lib = dlopen(LIB_PATH, {
 	tui_select_set_selected:  { args: ["u32", "u32"] as FFIType[],               returns: "i32" as const },
 	tui_select_get_selected:  { args: ["u32"] as FFIType[],                      returns: "i32" as const },
 
+	// Theme Management
+	tui_create_theme:      { args: [] as FFIType[],                              returns: "u32" as const },
+	tui_destroy_theme:     { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_set_theme_color:   { args: ["u32", "u8", "u32"] as FFIType[],            returns: "i32" as const },
+	tui_set_theme_flag:    { args: ["u32", "u8", "u8"] as FFIType[],             returns: "i32" as const },
+	tui_set_theme_border:  { args: ["u32", "u8"] as FFIType[],                   returns: "i32" as const },
+	tui_set_theme_opacity: { args: ["u32", "f32"] as FFIType[],                  returns: "i32" as const },
+	tui_apply_theme:       { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_clear_theme:       { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_switch_theme:      { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+
 	// Rendering
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
 	tui_mark_dirty: { args: ["u32"] as FFIType[],                               returns: "i32" as const },
@@ -809,6 +820,99 @@ describe("FFI integration", () => {
 			ffi.tui_clear_error();
 			const errPtr2 = ffi.tui_get_last_error();
 			expect(errPtr2 === null || errPtr2 === 0).toBe(true);
+		});
+	});
+
+	// ── Theme Management ────────────────────────────────────────────────────
+
+	describe("theme management", () => {
+		test("create and destroy custom theme", () => {
+			const t = ffi.tui_create_theme();
+			expect(t).toBeGreaterThanOrEqual(3);
+			expect(ffi.tui_destroy_theme(t)).toBe(0);
+		});
+
+		test("cannot destroy built-in themes", () => {
+			expect(ffi.tui_destroy_theme(1)).toBe(-1); // dark
+			expect(ffi.tui_destroy_theme(2)).toBe(-1); // light
+		});
+
+		test("destroy invalid theme returns -1", () => {
+			expect(ffi.tui_destroy_theme(999)).toBe(-1);
+		});
+
+		test("set theme color properties", () => {
+			const t = ffi.tui_create_theme();
+			expect(ffi.tui_set_theme_color(t, 0, 0x01FF0000)).toBe(0); // fg
+			expect(ffi.tui_set_theme_color(t, 1, 0x01000000)).toBe(0); // bg
+			expect(ffi.tui_set_theme_color(t, 2, 0x0100FF00)).toBe(0); // border
+			expect(ffi.tui_set_theme_color(t, 99, 0)).toBe(-1);        // invalid prop
+			ffi.tui_destroy_theme(t);
+		});
+
+		test("set theme flags and border", () => {
+			const t = ffi.tui_create_theme();
+			expect(ffi.tui_set_theme_flag(t, 0, 1)).toBe(0);  // bold
+			expect(ffi.tui_set_theme_flag(t, 1, 1)).toBe(0);  // italic
+			expect(ffi.tui_set_theme_flag(t, 2, 1)).toBe(0);  // underline
+			expect(ffi.tui_set_theme_border(t, 1)).toBe(0);   // single
+			expect(ffi.tui_set_theme_border(t, 99)).toBe(-1);  // invalid
+			ffi.tui_destroy_theme(t);
+		});
+
+		test("set theme opacity", () => {
+			const t = ffi.tui_create_theme();
+			expect(ffi.tui_set_theme_opacity(t, 0.5)).toBe(0);
+			ffi.tui_destroy_theme(t);
+		});
+
+		test("apply and clear theme on node", () => {
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			expect(ffi.tui_apply_theme(1, root)).toBe(0);   // apply dark
+			expect(ffi.tui_clear_theme(root)).toBe(0);       // clear
+			ffi.tui_destroy_node(root);
+		});
+
+		test("switch_theme applies to root", () => {
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			expect(ffi.tui_switch_theme(1)).toBe(0);  // dark
+			expect(ffi.tui_switch_theme(2)).toBe(0);  // light
+			ffi.tui_destroy_node(root);
+		});
+
+		test("switch_theme with no root returns -1", () => {
+			// Ensure no root is set by creating+destroying
+			const tmp = ffi.tui_create_node(0);
+			ffi.tui_set_root(tmp);
+			ffi.tui_destroy_node(tmp);
+			expect(ffi.tui_switch_theme(1)).toBe(-1);
+		});
+
+		test("apply theme with invalid handles returns error", () => {
+			const root = ffi.tui_create_node(0);
+			expect(ffi.tui_apply_theme(999, root)).toBe(-1);  // invalid theme
+			expect(ffi.tui_apply_theme(1, 999)).toBe(-1);     // invalid node
+			ffi.tui_destroy_node(root);
+		});
+
+		test("render with theme applied produces no errors", () => {
+			const root = ffi.tui_create_node(0);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, text);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+			ffi.tui_set_layout_dimension(text, 0, 20, 1);
+			ffi.tui_set_layout_dimension(text, 1, 1, 1);
+			setContent(text, "Themed text");
+
+			expect(ffi.tui_switch_theme(1)).toBe(0);  // dark theme
+			expect(ffi.tui_render()).toBe(0);          // render should succeed
+
+			ffi.tui_destroy_node(text);
+			ffi.tui_destroy_node(root);
 		});
 	});
 

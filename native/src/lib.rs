@@ -24,6 +24,7 @@ mod scroll;
 mod style;
 mod terminal;
 mod text;
+mod theme;
 mod tree;
 mod types;
 
@@ -758,6 +759,90 @@ pub extern "C" fn tui_set_style_opacity(handle: u32, opacity: f32) -> i32 {
         let ctx = context_mut()?;
         ctx.validate_handle(handle)?;
         style::set_opacity(ctx, handle, opacity)?;
+        Ok(0)
+    })
+}
+
+// ============================================================================
+// 4.15 Theme Management
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_create_theme() -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_mut()?;
+        theme::create_theme(ctx)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_destroy_theme(theme_handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::destroy_theme(ctx, theme_handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_color(theme_handle: u32, prop: u8, color: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::set_theme_color(ctx, theme_handle, prop, color)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_flag(theme_handle: u32, prop: u8, value: u8) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::set_theme_flag(ctx, theme_handle, prop, value)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_border(theme_handle: u32, border_style: u8) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::set_theme_border(ctx, theme_handle, border_style)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_opacity(theme_handle: u32, opacity: f32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::set_theme_opacity(ctx, theme_handle, opacity)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_apply_theme(theme_handle: u32, node_handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::apply_theme(ctx, theme_handle, node_handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_clear_theme(node_handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::clear_theme(ctx, node_handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_switch_theme(theme_handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        theme::switch_theme(ctx, theme_handle)?;
         Ok(0)
     })
 }
