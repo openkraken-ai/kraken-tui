@@ -2,12 +2,14 @@
 
 ## Kraken TUI
 
-**Version**: 2.0
+**Version**: 3.0
 **Status**: Draft
 **Date**: February 2026
 **Source of Truth**: [Architecture.md](./Architecture.md) v2.0, [PRD.md](./PRD.md) v2.0
 
-**Changelog**: v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
+**Changelog**:
+- v3.0 — Added Theme Module (ADR-T12, ADR-T15), Animation Module (ADR-T13, ADR-T14). 11 new FFI functions (73 total). Style mask for theme resolution. Built-in dark/light themes.
+- v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
 
 ---
 
@@ -303,6 +305,150 @@ This is 5-10x the implementation complexity of single-line input.
 - (-) Slight asymmetry with Input widget (which retrieves text via getter)
 - (note) Input cannot include text in event due to unbounded string length; Select index is bounded
 
+### ADR-T12: Theme Style Resolution — Explicit Property Mask
+
+**Context:** The v1 Theme Module provides VisualStyle defaults for subtrees. Theme resolution requires distinguishing between "property explicitly set on node" (explicit wins) and "property at default value" (use theme default). The current `VisualStyle` uses `0x00` for colors and `1.0` for opacity as defaults — there is no way to distinguish "explicitly set to default" from "never set."
+
+**Investigation:** Lipgloss (Go) tracks set/unset state per property internally via an opaque struct with unexported fields. Ratatui uses `Option<Color>` to represent "unset" vs "set to a value." Both patterns solve the same problem: enabling "fill gaps only" composition where explicit values are preserved and only unset properties receive theme defaults.
+
+**Decision:** Add a `style_mask: u8` bitfield to `VisualStyle`. Each bit indicates whether the corresponding property was explicitly set via a `tui_set_style_*` call. The `tui_set_style_*` functions automatically set the corresponding mask bit. Theme resolution checks the mask: set = use node's value, unset = use theme default.
+
+**Mask bit layout:**
+
+| Bit | Property |
+|-----|----------|
+| 0 | fg_color |
+| 1 | bg_color |
+| 2 | border_color |
+| 3 | border_style |
+| 4 | attrs (any of bold/italic/underline) |
+| 5 | opacity |
+
+**Resolution algorithm:** For each style property on a node during render:
+1. If `style_mask` bit is set → use node's explicit value
+2. Else if node (or ancestor) is bound to a theme, and theme provides that property → use theme's value
+3. Else → use the node's stored value (which defaults to 0x00/empty/1.0)
+
+**Theme lookup** follows nearest-ancestor semantics: walk from the node up the tree toward the root. The first ancestor (or the node itself) found in `theme_bindings` determines the applicable theme. O(depth) per node — negligible for typical TUI trees (depth 3–10).
+
+**Consequences:**
+
+- (+) Correct "fill gaps" resolution: explicit styles always win, themes fill unset properties
+- (+) Backwards-compatible: v0 apps without themes are unaffected (mask is never consulted when no theme is bound)
+- (+) Consistent with proven patterns (Lipgloss, ratatui)
+- (+) 1 byte overhead per node (negligible)
+- (-) Style setters must also set the mask bit (trivial implementation change)
+- (note) No `tui_reset_style` function in v1. To revert an explicit style to theme default, destroy and recreate the node. Reset can be added in a future version if demand exists.
+
+### ADR-T13: Animation Delta-Time Model
+
+**Context:** The Architecture specifies "host-driven" animation: `render()` queries the system clock internally, and the Animation Module advances transitions based on elapsed time. The PRD requires "frame-budget-aware" degradation.
+
+**Investigation:** Analyzed animation systems in tachyonfx (ratatui ecosystem, 1,125 stars), bubbletea/Harmonica (Go), and Ink (Node.js). Every framework with animation uses wall-clock elapsed time (delta-time). No TUI framework implements explicit frame dropping or animation priority queues. Delta-time naturally handles variable frame rates: if a frame takes 32ms instead of 16ms, the animation advances 32ms worth of progress. This is the same pattern used in game engines and is considered industry standard.
+
+**Decision:** The Animation Module stores `last_render_time: Option<Instant>` in TuiContext. On each `tui_render()` call:
+1. Compute `elapsed = now - last_render_time` (first call uses 0ms elapsed)
+2. Advance all active animations by `elapsed`
+3. Interpolate current values and apply to target nodes' `VisualStyle`
+4. Mark affected nodes dirty
+5. Remove completed animations from the registry
+6. Update `last_render_time = now`
+
+Animation advancement occurs **before** layout resolution in the render pipeline, consistent with the Architecture's pipeline: "mutation commands accumulate → animation advancement → layout resolution → dirty-flag diffing → terminal I/O."
+
+**Consequences:**
+
+- (+) Correct wall-clock timing regardless of frame rate
+- (+) Natural frame-budget handling: slow frames advance animations proportionally, no visual glitches
+- (+) Zero complexity beyond basic animation
+- (+) Matches the proven pattern used by tachyonfx, Harmonica, and game engines
+- (-) No explicit frame dropping for low-priority animations (can be added without API change if profiling reveals need)
+
+### ADR-T14: Animatable Property Scope (v1)
+
+**Context:** PRD Epic 8 lists "opacity, position, color" as animatable properties. Position animation in a Flexbox system requires either (a) bypassing Taffy with a visual-only pixel offset — a new render concern with no home in the current module graph, or (b) mutating Taffy layout constraint values — which breaks the Animation Module's bounded context (Architecture dependency graph: Animation → Tree, Style; no arrow to Layout).
+
+**Investigation:** tachyonfx (ratatui) animates buffer cells post-render rather than widget properties — a fundamentally different approach. Bubbletea/Harmonica animate widget state (e.g., progress percentage) with spring physics. Neither framework provides position animation within a flexbox layout system. Position animation in retained-mode TUI frameworks is uncharted territory.
+
+**Decision:** v1 animatable properties are: `opacity`, `fg_color`, `bg_color`, `border_color`. Position animation is deferred to v2. Animation chaining (triggering animation B when A completes) is deferred to v2.
+
+**Animatable property encoding:**
+
+| Value | Property | Type | Interpolation |
+|-------|----------|------|---------------|
+| 0 | opacity | f32 (as bits) | Linear lerp in f32 space |
+| 1 | fg_color | u32 (color encoding) | Per-channel RGB lerp |
+| 2 | bg_color | u32 (color encoding) | Per-channel RGB lerp |
+| 3 | border_color | u32 (color encoding) | Per-channel RGB lerp |
+
+**Color interpolation rules:**
+- Both start and end are RGB (tag `0x01`): interpolate R, G, B channels independently, recombine with RGB tag
+- Either start or end is not RGB (tag `0x00` default or `0x02` indexed): immediately snap to end value at `t >= 1.0` — no smooth transition for non-RGB colors
+
+**Value encoding across FFI:** The `target_bits` parameter is `u32`. For f32 properties (opacity), the Host Layer bit-casts the f32 to u32 before calling. The Native Core bit-casts back to f32 based on the property type. This avoids a split into multiple FFI functions.
+
+**Easing functions (v1):**
+
+| Value | Function | Formula |
+|-------|----------|---------|
+| 0 | Linear | `t` |
+| 1 | EaseIn | `t * t` |
+| 2 | EaseOut | `1.0 - (1.0 - t) * (1.0 - t)` |
+| 3 | EaseInOut | `t < 0.5 ? 2.0 * t * t : 1.0 - (-2.0 * t + 2.0).pow(2) / 2.0` |
+
+tachyonfx supports 32 easing variants. Four quadratic variants cover the primary TUI use cases. Additional easing functions (cubic, elastic, bounce) can be added without API change by extending the enum.
+
+**Consequences:**
+
+- (+) Clean bounded context: Animation touches only Style (VisualStyle) and Tree (dirty flags)
+- (+) 4 animatable properties cover the primary use cases (fade-in/out, color transitions, border highlights)
+- (+) Simple interpolation logic (lerp for f32, per-channel lerp for RGB)
+- (-) No position animation in v1 (PRD deviation — approved by developer)
+- (-) No animation chaining in v1 (PRD deviation — approved by developer)
+- (migration) Position animation in v2 can be implemented as visual-only render offset without changing the Animation Module's FFI surface
+
+### ADR-T15: Built-in Theme Palettes
+
+**Context:** PRD requires "at least two built-in Themes: light and dark" (v1). These must be available immediately after `tui_init()` without requiring the developer to manually construct them.
+
+**Investigation:** Lipgloss (Go) provides `AdaptiveColor` for light/dark terminal detection but no pre-built themes. Textual (Python) auto-derives ~120 CSS variables from a primary color using CIE-L\*ab color space. For Kraken TUI's FFI model (explicit property setters, no CSS engine), a simpler approach is appropriate: fixed palettes with reasonable defaults.
+
+**Decision:** Two built-in themes are created during `tui_init()` with reserved theme handles:
+
+**Dark Theme (handle 1):**
+
+| Property | Value | Notes |
+|----------|-------|-------|
+| `fg_color` | `0x01E0E0E0` | Light grey — readable on dark backgrounds |
+| `bg_color` | `0x011E1E2E` | Dark blue-grey |
+| `border_color` | `0x014A4A5A` | Muted grey |
+| `border_style` | `Single` | Standard single-line borders |
+| `attrs` | empty | No text decorations |
+| `opacity` | `1.0` | Fully opaque |
+
+**Light Theme (handle 2):**
+
+| Property | Value | Notes |
+|----------|-------|-------|
+| `fg_color` | `0x01222222` | Near-black — readable on light backgrounds |
+| `bg_color` | `0x01F5F5F5` | Near-white |
+| `border_color` | `0x01BBBBBB` | Medium grey |
+| `border_style` | `Single` | Standard single-line borders |
+| `attrs` | empty | No text decorations |
+| `opacity` | `1.0` | Fully opaque |
+
+Theme handles 1 and 2 are reserved. `tui_create_theme()` allocates from handle 3 onward. The built-in themes can be customized via `tui_set_theme_*` functions after init — they are not immutable.
+
+Neither built-in theme is applied by default. The developer must explicitly call `tui_apply_theme()` or `tui_switch_theme()` to activate theming. This ensures zero behavior change for v0 apps.
+
+**Consequences:**
+
+- (+) Zero-configuration dark/light mode for developers who want it
+- (+) Customizable — developers can modify built-in themes or create entirely new ones
+- (+) No implicit behavior change — themes must be explicitly activated
+- (-) Opinionated color choices (may not match every terminal's aesthetic)
+- (note) Advanced use case: detect terminal background color in the Host Layer and select the appropriate built-in theme. This is a Host Layer concern, not a Native Core responsibility.
+
 ---
 
 ## 3. DATA MODEL
@@ -315,8 +461,11 @@ erDiagram
     TuiContext ||--o{ TuiEvent : "event_buffer"
     TuiContext ||--|| Buffer : "front_buffer"
     TuiContext ||--|| Buffer : "back_buffer"
+    TuiContext ||--o{ Theme : "themes (HashMap u32)"
+    TuiContext ||--o{ Animation : "animations"
     TuiNode ||--|| VisualStyle : "visual_style"
     TuiNode }o--o| TuiNode : "parent-children"
+    TuiNode }o--o| Theme : "theme_bindings (HashMap u32→u32)"
     Buffer ||--o{ Cell : "cells"
 
     TuiContext {
@@ -328,6 +477,8 @@ erDiagram
         u64 perf_layout_us
         u64 perf_render_us
         u32 perf_diff_cells
+        u32 next_theme_handle
+        u32 next_anim_handle
     }
 
     TuiNode {
@@ -351,6 +502,29 @@ erDiagram
         u32 border_color
         u8 attrs
         f32 opacity
+        u8 style_mask
+    }
+
+    Theme {
+        u32 handle PK
+        u32 fg_color
+        u32 bg_color
+        u32 border_color
+        u8 border_style
+        u8 attrs
+        f32 opacity
+        u8 mask
+    }
+
+    Animation {
+        u32 id PK
+        u32 target FK
+        u8 property
+        u32 start_bits
+        u32 end_bits
+        u32 duration_ms
+        f32 elapsed_ms
+        u8 easing
     }
 
     TuiEvent {
@@ -471,6 +645,30 @@ pub enum TuiEventType {
 }
 ```
 
+#### AnimProp (v1)
+
+```rust
+#[repr(u8)]
+pub enum AnimProp {
+    Opacity     = 0,
+    FgColor     = 1,
+    BgColor     = 2,
+    BorderColor = 3,
+}
+```
+
+#### Easing (v1)
+
+```rust
+#[repr(u8)]
+pub enum Easing {
+    Linear    = 0,
+    EaseIn    = 1,
+    EaseOut   = 2,
+    EaseInOut = 3,
+}
+```
+
 ### 3.3 Struct Definitions
 
 #### VisualStyle
@@ -483,6 +681,7 @@ pub struct VisualStyle {
     pub border_color: u32,      // Color encoding. 0x00 = default.
     pub attrs: CellAttrs,       // Bold, italic, underline bitflags.
     pub opacity: f32,           // 0.0–1.0. Default 1.0.
+    pub style_mask: u8,         // v1: Tracks which properties were explicitly set. See ADR-T12.
 }
 
 impl Default for VisualStyle {
@@ -493,10 +692,62 @@ impl Default for VisualStyle {
             border_color: 0,
             attrs: CellAttrs::empty(),
             opacity: 1.0,
+            style_mask: 0,  // No properties explicitly set
         }
     }
 }
 ```
+
+**Style mask behavior:** The `tui_set_style_*` FFI functions set both the property value AND the corresponding `style_mask` bit. This is transparent to the caller — no additional FFI call is needed. The mask is internal state used only by the Style Module during theme-aware resolution (v1).
+
+#### Theme (v1)
+
+```rust
+pub struct Theme {
+    pub fg_color: u32,
+    pub bg_color: u32,
+    pub border_color: u32,
+    pub border_style: BorderStyle,
+    pub attrs: CellAttrs,
+    pub opacity: f32,
+    pub mask: u8,               // Which properties this theme provides defaults for.
+                                // Same bit layout as VisualStyle.style_mask.
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            fg_color: 0, bg_color: 0,
+            border_color: 0,
+            border_style: BorderStyle::None,
+            attrs: CellAttrs::empty(),
+            opacity: 1.0,
+            mask: 0,  // No defaults provided until tui_set_theme_* is called
+        }
+    }
+}
+```
+
+**Theme mask behavior:** `tui_set_theme_*` functions set both the property value AND the corresponding `mask` bit on the Theme. During resolution, only properties where the theme's mask bit is set are applied as defaults.
+
+#### Animation (v1, internal)
+
+```rust
+pub struct Animation {
+    pub id: u32,                // Unique animation handle
+    pub target: u32,            // Widget handle being animated
+    pub property: AnimProp,     // Which style property
+    pub start_bits: u32,        // Starting value (bit representation, captured at creation)
+    pub end_bits: u32,          // Target value (bit representation, from FFI call)
+    pub duration_ms: u32,       // Total animation duration in milliseconds
+    pub elapsed_ms: f32,        // Elapsed time since animation start
+    pub easing: Easing,         // Easing function
+}
+```
+
+**Lifecycle:** An `Animation` is created by `tui_animate()`, which captures the target property's current value as `start_bits`. On each `tui_render()`, `elapsed_ms` is advanced by the frame delta. When `elapsed_ms >= duration_ms`, the end value is applied and the animation is removed from the registry. `tui_cancel_animation()` removes the animation immediately, leaving the property at its current interpolated value.
+
+**Conflict resolution:** If `tui_animate()` is called for a property that already has an active animation, the existing animation is replaced. The new animation captures the current interpolated value as its `start_bits`, enabling smooth transitions from any in-progress state.
 
 #### TuiNode
 
@@ -664,6 +915,16 @@ pub struct TuiContext {
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub theme_set: syntect::highlighting::ThemeSet,
 
+    // Theme Module (v1)
+    pub themes: HashMap<u32, Theme>,
+    pub theme_bindings: HashMap<u32, u32>,  // node_handle → theme_handle
+    pub next_theme_handle: u32,             // Starts at 3 (1, 2 reserved for built-in)
+
+    // Animation Module (v1)
+    pub animations: Vec<Animation>,
+    pub next_anim_handle: u32,              // Starts at 1
+    pub last_render_time: Option<Instant>,  // std::time::Instant
+
     // Diagnostics
     pub last_error: String,
     pub debug_mode: bool,
@@ -681,7 +942,7 @@ pub struct TuiContext {
 
 - **Prefix:** All functions are prefixed with `tui_`.
 - **ABI:** `extern "C"`, `#[no_mangle]`.
-- **Handles:** `u32`. `0` = invalid sentinel. Never allocated.
+- **Handles:** `u32`. `0` = invalid sentinel. Never allocated. Widget handles, theme handles, and animation handles occupy **separate namespaces**.
 - **Strings in:** `(*const u8, u32)` — pointer + byte length. Rust copies. Caller frees after call.
 - **Strings out:** Caller provides `(*mut u8, u32)` buffer. Rust copies into buffer.
 - **Returns:** `i32` for status functions (0 = success). `u32` for handle functions (0 = error).
@@ -692,8 +953,8 @@ pub struct TuiContext {
 
 | Function                | Signature                     | Returns  | Description                                                                    |
 | ----------------------- | ----------------------------- | -------- | ------------------------------------------------------------------------------ |
-| `tui_init`              | `() -> i32`                   | 0 / -1   | Initialize context, enter alternate screen, enable raw mode and mouse capture. |
-| `tui_shutdown`          | `() -> i32`                   | 0 / -1   | Restore terminal state, destroy context, free all resources.                   |
+| `tui_init`              | `() -> i32`                   | 0 / -1   | Initialize context, enter alternate screen, enable raw mode and mouse capture. Creates built-in themes (handles 1 and 2). |
+| `tui_shutdown`          | `() -> i32`                   | 0 / -1   | Restore terminal state, destroy context, free all resources. Cancels all active animations.                   |
 | `tui_get_terminal_size` | `(*mut i32, *mut i32) -> i32` | 0 / -1   | Write current terminal width and height to provided pointers.                  |
 | `tui_get_capabilities`  | `() -> u32`                   | Bitfield | Get terminal capabilities. See capability flags below.                         |
 
@@ -713,7 +974,7 @@ pub struct TuiContext {
 | Function             | Signature                         | Returns       | Description                                                                             |
 | -------------------- | --------------------------------- | ------------- | --------------------------------------------------------------------------------------- |
 | `tui_create_node`    | `(u8 node_type) -> u32`           | Handle / 0    | Create a node. `node_type`: see `NodeType` enum. Returns opaque handle.                 |
-| `tui_destroy_node`   | `(u32 handle) -> i32`             | 0 / -1        | Destroy node. Detaches from parent. Orphans children (does not cascade).                |
+| `tui_destroy_node`   | `(u32 handle) -> i32`             | 0 / -1        | Destroy node. Detaches from parent. Orphans children (does not cascade). Cancels any active animations targeting this node. |
 | `tui_get_node_type`  | `(u32 handle) -> i32`             | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).                             |
 | `tui_set_visible`    | `(u32 handle, u8 visible) -> i32` | 0 / -1        | Set node visibility. `visible`: 0 = hidden, 1 = visible. Hidden nodes are not rendered. |
 | `tui_get_visible`    | `(u32 handle) -> i32`             | 1 / 0 / -1    | Get node visibility. Returns 1 if visible, 0 if hidden, -1 on error.                    |
@@ -818,7 +1079,7 @@ Layout properties are routed to Taffy via the Layout Module. They control spatia
 
 ### 4.8 Visual Style Properties
 
-Visual properties are routed to the Style Module. They control appearance without affecting layout.
+Visual properties are routed to the Style Module. They control appearance without affecting layout. **v1:** Each setter also sets the corresponding `style_mask` bit on the node (ADR-T12), enabling correct theme resolution.
 
 | Function                | Signature                                  | Returns | Description                                             |
 | ----------------------- | ------------------------------------------ | ------- | ------------------------------------------------------- |
@@ -877,8 +1138,20 @@ Visual properties are routed to the Style Module. They control appearance withou
 | ---------------- | ---------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `tui_read_input` | `(u32 timeout_ms) -> i32`    | Event count / -1 | Read pending terminal input, classify into events, store in buffer. `timeout_ms`: 0 = non-blocking, >0 = wait up to N ms for first input. |
 | `tui_next_event` | `(*mut TuiEvent out) -> i32` | 1 / 0 / -1       | Drain one event from the buffer. Returns 1 if event written, 0 if buffer empty.                                                           |
-| `tui_render`     | `() -> i32`                  | 0 / -1           | Full render pipeline: layout resolution → dirty-flag diffing → terminal I/O. Requires root set via `tui_set_root()`.                      |
+| `tui_render`     | `() -> i32`                  | 0 / -1           | Full render pipeline: **animation advancement (v1)** → layout resolution → dirty-flag diffing → terminal I/O. Requires root set via `tui_set_root()`. |
 | `tui_mark_dirty` | `(u32 handle) -> i32`        | 0 / -1           | Mark a node dirty. Propagates to ancestors.                                                                                               |
+
+**v1 Render Pipeline (updated):**
+
+The `tui_render()` pipeline with animation support:
+
+1. **Animation advancement:** Compute `elapsed = now - last_render_time`. For each active animation: advance `elapsed_ms`, interpolate value, apply to target node's `VisualStyle`, mark node dirty. Remove completed animations. Update `last_render_time`.
+2. **Theme resolution:** For each dirty node, resolve effective `VisualStyle` by merging node's explicit style with nearest ancestor theme defaults (per ADR-T12).
+3. **Layout resolution:** Compute Flexbox layout via Taffy for dirty subtrees.
+4. **Buffer rendering:** Traverse visible nodes, write styled cells to front buffer.
+5. **Dirty diffing:** Compare front buffer vs back buffer.
+6. **Terminal I/O:** Emit minimal escape sequences for changed cells.
+7. **Cleanup:** Swap buffers, clear dirty flags.
 
 ### 4.12 Diagnostics
 
@@ -900,6 +1173,7 @@ Visual properties are routed to the Style Module. They control appearance withou
 | 3   | Current event buffer depth | events |
 | 4   | Total node count           | nodes  |
 | 5   | Dirty node count           | nodes  |
+| 6   | Active animation count     | anims  |
 
 ### 4.13 Memory Management Rules
 
@@ -910,6 +1184,8 @@ Visual properties are routed to the Style Module. They control appearance withou
 | **Rust → TS (allocated)**      | Strings that require explicit deallocation are returned with a pointer. Caller must call `tui_free_string()` to release the memory.                                             |
 | **Rust → TS (get_last_error)** | Returns pointer to context-owned string. Valid until the next error occurs or `tui_clear_error()` is called. Caller must not free. Caller should copy if persistence is needed. |
 | **Handles**                    | Owned by Rust. Valid from `tui_create_node()` until `tui_destroy_node()`. Handle `0` is permanently invalid and never allocated.                                                |
+| **Theme handles**              | Owned by Rust. Handles 1–2 are reserved for built-in themes (created during `tui_init()`). Custom themes valid from `tui_create_theme()` until `tui_destroy_theme()`. |
+| **Animation handles**          | Owned by Rust. Valid from `tui_animate()` until the animation completes or `tui_cancel_animation()` is called. |
 | **Context**                    | Created by `tui_init()`, destroyed by `tui_shutdown()`. All handles and state are invalidated on shutdown.                                                                      |
 
 ### 4.14 Error Codes
@@ -920,9 +1196,57 @@ Visual properties are routed to the Style Module. They control appearance withou
 | `-1` | Error — check `tui_get_last_error()` for message                             |
 | `-2` | Internal panic — caught by `catch_unwind`, should not occur in correct usage |
 
-### 4.15 Complete FFI Symbol Count
+### 4.15 Theme Management (v1)
 
-**Total: 62 functions** (v0 scope)
+| Function                | Signature                                  | Returns    | Description                                                                                          |
+| ----------------------- | ------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------------- |
+| `tui_create_theme`      | `() -> u32`                                | Handle / 0 | Create a new empty theme. Returns theme handle (≥ 3). |
+| `tui_destroy_theme`     | `(u32 theme) -> i32`                       | 0 / -1     | Destroy a theme. Removes all bindings referencing it and marks affected subtrees dirty. Built-in themes (1, 2) cannot be destroyed — returns -1. |
+| `tui_set_theme_color`   | `(u32 theme, u8 prop, u32 color) -> i32`   | 0 / -1     | Set a theme color default. `prop`: 0=foreground, 1=background, 2=border_color. Sets the theme's mask bit. |
+| `tui_set_theme_flag`    | `(u32 theme, u8 prop, u8 value) -> i32`    | 0 / -1     | Set a theme text decoration default. `prop`: 0=bold, 1=italic, 2=underline. Sets the theme's mask bit. |
+| `tui_set_theme_border`  | `(u32 theme, u8 border_style) -> i32`      | 0 / -1     | Set theme border style default. Sets the theme's mask bit. |
+| `tui_set_theme_opacity` | `(u32 theme, f32 opacity) -> i32`          | 0 / -1     | Set theme opacity default (0.0–1.0). Sets the theme's mask bit. |
+| `tui_apply_theme`       | `(u32 theme, u32 node) -> i32`             | 0 / -1     | Bind theme to subtree rooted at `node`. Marks subtree dirty. Replaces any existing binding on that node. |
+| `tui_clear_theme`       | `(u32 node) -> i32`                        | 0 / -1     | Remove theme binding from `node`. Does not affect bindings on descendants. Marks subtree dirty. |
+| `tui_switch_theme`      | `(u32 theme) -> i32`                       | 0 / -1     | Apply theme to current root. Convenience for `tui_apply_theme(theme, root)`. Returns -1 if no root is set. |
+
+**Theme resolution during render:** See ADR-T12 for the full resolution algorithm.
+
+**Theme setter patterns:** The `tui_set_theme_*` functions mirror the `tui_set_style_*` functions exactly. The `prop` values for `tui_set_theme_color` and `tui_set_theme_flag` use the same encoding as `tui_set_style_color` and `tui_set_style_flag`.
+
+### 4.16 Animation (v1)
+
+| Function                 | Signature                                                               | Returns        | Description                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
+| `tui_animate`            | `(u32 handle, u8 property, u32 target_bits, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start animation on a widget property. `property`: see `AnimProp` enum. `target_bits`: target value encoded as u32 (f32 bit-cast for opacity, color encoding for colors). `duration_ms`: animation duration. `easing`: see `Easing` enum. Captures current value as start. Returns animation handle. |
+| `tui_cancel_animation`   | `(u32 anim_handle) -> i32`                                              | 0 / -1         | Cancel an active animation. The property retains its current interpolated value. Returns -1 if animation not found (already completed or invalid handle). |
+
+**Animation behavior:**
+
+- **Start value capture:** `tui_animate()` reads the target property's current value from the node's `VisualStyle` and stores it as `start_bits`. If the property is currently being animated, the existing animation is replaced and the current interpolated value becomes the new `start_bits`.
+- **Completion:** When `elapsed_ms >= duration_ms`, the end value is applied exactly (no floating-point drift), the node is marked dirty, and the animation is removed from the registry.
+- **Cancellation:** `tui_cancel_animation()` removes the animation immediately. The property retains whatever interpolated value it had at the last render. The node is NOT marked dirty — it remains at its current visual state.
+- **Node destruction:** `tui_destroy_node()` automatically cancels all animations targeting the destroyed node.
+- **Zero duration:** `duration_ms = 0` immediately applies the end value (no interpolation). The function still returns a valid animation handle, but the animation completes on the next `tui_render()`.
+
+**Host Layer usage example (TypeScript):**
+
+```typescript
+// Fade a widget to 50% opacity over 300ms with ease-out
+const opacity50 = new Float32Array([0.5]);
+const opacityBits = new Uint32Array(opacity50.buffer)[0]; // f32 → u32 bit-cast
+const animHandle = lib.tui_animate(widgetHandle, 0, opacityBits, 300, 2);
+
+// Later, cancel if needed
+lib.tui_cancel_animation(animHandle);
+
+// Color transition: fade border to red over 500ms
+lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, ease-in-out
+```
+
+### 4.17 Complete FFI Symbol Count
+
+**Total: 73 functions** (v0 + v1 scope)
 
 | Category | Count | Note |
 |----------|-------|------|
@@ -930,15 +1254,17 @@ Visual properties are routed to the Style Module. They control appearance withou
 | Node | 6 | create, destroy, type, visibility |
 | Tree | 6 | root, append/remove child, parent queries |
 | Content | 6 | text content, format, code language |
-| Widget | 12 | Input (5) + Select (7). +2 password masking, +2 Select CRUD |
-| Layout | 6 | dimensions, flex, edges, gap, get_layout, measure_text. +1 measure_text |
+| Widget | 12 | Input (5) + Select (7) |
+| Layout | 6 | dimensions, flex, edges, gap, get_layout, measure_text |
 | Style | 4 | colors, flags, border, opacity |
 | Focus | 6 | focusable state, focus navigation |
 | Scroll | 3 | scroll position and delta |
 | Input/Render | 4 | read_input, next_event, render, mark_dirty |
 | Diagnostics | 5 | errors, debug, perf, free_string |
+| **Theme** | **9** | **create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch** |
+| **Animation** | **2** | **animate, cancel_animation** |
 
-**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5 = **62**
+**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+2 = **73**
 
 ---
 
@@ -961,7 +1287,9 @@ kraken-tui/
 │       ├── event.rs               # Event Module (input, classification, focus)
 │       ├── scroll.rs              # Scroll Module (viewport state)
 │       ├── text.rs                # Text Module (Markdown, syntax highlighting)
-│       └── terminal.rs            # TerminalBackend trait + CrosstermBackend
+│       ├── terminal.rs            # TerminalBackend trait + CrosstermBackend
+│       ├── theme.rs               # Theme Module (v1: theme storage, bindings, resolution)
+│       └── animation.rs           # Animation Module (v1: registry, advancement, interpolation)
 ├── ts/                             # TypeScript host package
 │   ├── package.json
 │   └── src/
@@ -979,6 +1307,7 @@ kraken-tui/
 │       │   └── scrollbox.ts
 │       ├── events.ts              # Event types, drain loop, dispatch
 │       ├── style.ts               # Color parsing, style helpers
+│       ├── theme.ts               # Theme class (v1: create, configure, apply, switch)
 │       └── errors.ts              # KrakenError, error code mapping
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
@@ -990,16 +1319,16 @@ kraken-tui/
 |---|---|---|
 | Tree Module | `tree.rs` | Node CRUD, handle allocation (`next_handle++`), dirty flag set + propagation to ancestors, parent-child bookkeeping. |
 | Layout Module | `layout.rs` | Wraps Taffy: translates `tui_set_layout_*` calls into Taffy `Style` mutations (read-modify-write per ADR-T04). `compute_layout()` delegates to `tree.compute_layout()`. Hit-testing: traverse computed rectangles back-to-front. |
-| Style Module | `style.rs` | `VisualStyle` storage per node. `tui_set_style_*` setters mutate the node's `VisualStyle`. Color decoding from `u32` encoding to crossterm `Color`. v1: merge with Theme defaults. |
-| Render Module | `render.rs` | Allocates front/back `Buffer`. Tree traversal: renders each visible node's content + borders + style into front buffer cells at computed layout positions. Diffs front vs back buffer. Sends `CellUpdate` list to backend. Swaps buffers. Clears dirty flags. |
+| Style Module | `style.rs` | `VisualStyle` storage per node. `tui_set_style_*` setters mutate the node's `VisualStyle` and set `style_mask` bits (ADR-T12). Color decoding from `u32` encoding to crossterm `Color`. v1: `resolve_style()` merges explicit node style with nearest ancestor theme defaults based on `style_mask`. |
+| Render Module | `render.rs` | Allocates front/back `Buffer`. v1 render pipeline: animation advancement → theme resolution → layout → buffer rendering → dirty diffing → terminal I/O. Swaps buffers. Clears dirty flags. |
 | Event Module | `event.rs` | `read_input()`: calls `backend.read_events()`, classifies `TerminalInputEvent` → `TuiEvent` (mapping key codes, performing hit-testing for mouse events, managing focus state machine for Tab/BackTab). `next_event()`: drains from `event_buffer`. |
 | Scroll Module | `scroll.rs` | Stores `(scroll_x, scroll_y)` per ScrollBox node. Clamps to content bounds. Render Module calls into Scroll Module to offset child positions and clip overflow during rendering. |
 | Text Module | `text.rs` | Markdown: `pulldown_cmark::Parser` → iterate events → produce `Vec<StyledSpan>`. Code: `syntect` highlighter → produce `Vec<StyledSpan>`. `StyledSpan` = `{ text: &str, attrs: CellAttrs, fg: u32, bg: u32 }`. Render Module consumes spans. |
-| Theme Module | *(v1)* | Not implemented in v0. Style Module resolves without theme defaults. |
-| Animation Module | *(v1)* | Not implemented in v0. Render pipeline skips animation step. |
+| Theme Module | `theme.rs` | `Theme` storage (`HashMap<u32, Theme>`), built-in theme initialization (dark=1, light=2), theme-to-subtree bindings (`theme_bindings: HashMap<u32, u32>`), nearest-ancestor resolution. `tui_set_theme_*` setters mutate theme properties and set mask bits. |
+| Animation Module | `animation.rs` | `Animation` registry (`Vec<Animation>`), delta-time advancement per `tui_render()`, property interpolation (f32 lerp for opacity, per-channel RGB lerp for colors), easing functions (4 quadratic variants), animation lifecycle (start → advance → complete/cancel). Marks target nodes dirty on each advancement step. |
 | — | `terminal.rs` | `TerminalBackend` trait definition. `CrosstermBackend`: `init()` enters alternate screen + raw mode + mouse capture. `shutdown()` restores. `size()` queries terminal. `write_diff()` emits crossterm commands. `read_events()` polls crossterm events. |
-| — | `context.rs` | `TuiContext` struct. Global `static mut CONTEXT: Option<TuiContext>`. `context()` and `context_mut()` accessors that return `Result`. |
-| — | `types.rs` | `NodeHandle` type alias, all enums (`NodeType`, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`), `TuiEvent` struct, key code constants, modifier constants. |
+| — | `context.rs` | `TuiContext` struct. Global `static mut CONTEXT: Option<TuiContext>`. `context()` and `context_mut()` accessors that return `Result`. `tui_init()` creates built-in themes and initializes animation state. |
+| — | `types.rs` | `NodeHandle` type alias, all enums (`NodeType`, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`), `TuiEvent` struct, key code constants, modifier constants. |
 | — | `lib.rs` | **Only** `extern "C"` functions. Each function: `catch_unwind` → `context_mut()` → validate → delegate to module function → return status code. Zero logic beyond dispatch. |
 
 ### 5.3 Coding Standards
@@ -1014,6 +1343,7 @@ kraken-tui/
 - Module visibility: `pub(crate)` for module-internal functions. Only `lib.rs` is `pub`.
 - No `unwrap()` in production code. Use `?` with `Result` or explicit match.
 - **ADR-T04 compliance:** Layout and style setters must read the existing state, modify only the targeted property, then write back. Never create fresh `Style::DEFAULT` — this overwrites unrelated properties.
+- **ADR-T12 compliance:** Style setters must set the corresponding `style_mask` bit. Theme setters must set the corresponding theme `mask` bit.
 - Format: `rustfmt` (default config). Lint: `clippy` (default config).
 
 **TypeScript:**
@@ -1024,6 +1354,7 @@ kraken-tui/
 - Widget classes hold a `handle: number` and call FFI functions through the bindings in `ffi.ts` and `ffi/structs.ts`.
 - Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → `0x02000001`) happens in TypeScript (`style.ts`).
 - Developer-assigned IDs: `ts/src/app.ts` maintains an `id → handle` `Map<string, number>`. The Native Core never sees string IDs.
+- **v1:** `theme.ts` wraps theme handle lifecycle. `widget.ts` gains `animate()` method that handles f32→u32 bit-casting for opacity.
 
 ### 5.4 Build Pipeline
 
@@ -1056,17 +1387,18 @@ crossterm = "0.29"
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 bitflags = "2"
+unicode-width = "0.2"
 ```
 
 ### 5.5 Testing Strategy
 
 | Layer                | Tool                        | What It Tests                                                                                                                                                                            |
 | -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Rust unit**        | `cargo test`                | Each module in isolation. Tree operations, dirty propagation, style patching, buffer diffing, event classification, key code mapping, color encoding/decoding, Markdown span generation. |
-| **Rust integration** | `cargo test` (`tests/` dir) | Full pipeline with `MockBackend`. Create nodes → set properties → render → assert buffer contents. Event injection → assert event buffer output.                                         |
-| **FFI integration**  | `bun test`                  | Load `libkraken_tui.so` via `dlopen`. Call every FFI function. Assert return values, handle validity, layout results, event drain.                                                       |
-| **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map.                                                                                                                                          |
-| **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling.                                                                                                  |
+| **Rust unit**        | `cargo test`                | Each module in isolation. Tree operations, dirty propagation, style patching, buffer diffing, event classification, key code mapping, color encoding/decoding, Markdown span generation. v1: theme resolution, animation interpolation, easing functions, style mask behavior. |
+| **Rust integration** | `cargo test` (`tests/` dir) | Full pipeline with `MockBackend`. Create nodes → set properties → render → assert buffer contents. Event injection → assert event buffer output. v1: theme application → render → verify themed colors. Animation start → advance time → verify interpolated values. |
+| **FFI integration**  | `bun test`                  | Load `libkraken_tui.so` via `dlopen`. Call every FFI function. Assert return values, handle validity, layout results, event drain. v1: theme CRUD, theme application, animation start/cancel. |
+| **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map. v1: Theme class, f32 bit-casting for animation. |
+| **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling. v1: theme switching (dark/light), fade animations. |
 
 ### 5.6 Host Application Loop Pattern
 
@@ -1101,7 +1433,7 @@ while (running) {
 		}
 	}
 
-	app.render(); // Layout → diff → terminal I/O
+	app.render(); // Animation advancement → layout → diff → terminal I/O
 }
 
 app.shutdown();
@@ -1131,23 +1463,44 @@ loop:
 tui_shutdown()
 ```
 
+**v1 Theme + Animation example (FFI call sequence):**
+
+```
+tui_init()                              // Built-in themes created: dark=1, light=2
+// ... create nodes as above ...
+
+tui_switch_theme(1)                     // Apply dark theme globally
+tui_animate(2, 0, 0x3F000000, 500, 2)  // Fade text to opacity 0.5 over 500ms, ease-out
+                                        // (0x3F000000 = f32 bits of 0.5)
+
+loop:
+  tui_read_input(16)
+  while tui_next_event(&event) == 1:
+    if event == key 't':
+      tui_switch_theme(2)               // Switch to light theme
+  tui_render()                          // Advances animations + renders with active theme
+```
+
 ---
 
-## Appendix A: v1 Extension Points
+## Appendix A: v2 Extension Points
 
-The v0 implementation structure is designed to accommodate v1 additions (Animation, Theming) without architectural change:
+The v0+v1 implementation structure is designed to accommodate v2 additions without architectural change:
 
-| v1 Module            | File                      | Integration Point                                                                                                                                                                                                                                                                          |
-| -------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Theme Module**     | `native/src/theme.rs`     | Style Module gains a `resolve_with_theme(node, theme_bindings) → VisualStyle` path. New FFI functions: `tui_create_theme()`, `tui_set_theme_default()`, `tui_apply_theme()`, `tui_switch_theme()`. TuiContext gains `themes: HashMap<u32, Theme>` and `theme_bindings: HashMap<u32, u32>`. |
-| **Animation Module** | `native/src/animation.rs` | Render pipeline gains animation advancement step before layout resolution. New FFI: `tui_animate()`, `tui_cancel_animation()`. TuiContext gains `animations: Vec<Animation>` and `last_render_time: Instant`.                                                                              |
+| v2 Feature               | Integration Point                                                                                                                                                                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Position Animation**   | Add `AnimProp::PositionX = 4` and `AnimProp::PositionY = 5`. Animation Module applies visual offset via a new `render_offset: (f32, f32)` field on `TuiNode`. Render Module applies offset during buffer rendering. Layout is not affected. |
+| **Animation Chaining**   | Add `tui_animate_after(after_anim: u32, ...)` that creates a pending animation triggered by another's completion. Animation Module gains a `pending_animations: Vec<(u32, Animation)>` queue. No changes to existing FFI functions. |
+| **Per-NodeType Themes**  | Extend `Theme` struct with `HashMap<NodeType, VisualStyle>`. Resolution algorithm gains a NodeType lookup step between the node's explicit style and the global theme defaults. No changes to existing FFI functions; add `tui_set_theme_type_color(theme, node_type, prop, color)` etc. |
+| **Reactive Reconciler**  | Per ADR-004. v2 reconciler wraps the same FFI command protocol (Strangler Fig pattern per Fowler). No changes to the Native Core. |
+| **Additional Easings**   | Extend `Easing` enum with cubic, elastic, bounce variants. No FFI surface change — `tui_animate()` already accepts `u8` easing. |
 
 ## Appendix B: Upstream Consistency
 
 | Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
 | --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PRD.md          | v2.0 (Approved) | v0 scope (Epics 1–7). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead.                                                                                                                                                                        |
-| Architecture.md | v2.0 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation marked as v1). |
+| PRD.md          | v2.0 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9, with approved deviations: position animation and chaining deferred to v2). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
+| Architecture.md | v2.0 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). |
 | ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
 | ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
 | ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |
@@ -1159,3 +1512,7 @@ The v0 implementation structure is designed to accommodate v1 additions (Animati
 | ADR-T09         | Accepted        | Password masking support in Input widget.                                                                                                                                                                                                                                                      |
 | ADR-T10         | Accepted        | Full CRUD for Select widget (add, remove, clear options).                                                                                                                                                                                                                                    |
 | ADR-T11         | Accepted        | Select Change events carry index in data[0] to avoid FFI round-trip.                                                                                                                                                                                                                         |
+| ADR-T12         | Accepted        | Style property mask (`style_mask: u8`) for theme resolution. Explicit styles win over theme defaults.                                                                                                                                                                                        |
+| ADR-T13         | Accepted        | Delta-time animation model. `tui_render()` advances animations using elapsed wall-clock time.                                                                                                                                                                                                |
+| ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. Position and chaining deferred to v2.                                                                                                                                                                                  |
+| ADR-T15         | Accepted        | Built-in dark (handle 1) and light (handle 2) theme palettes. Created during `tui_init()`. Not applied by default.                                                                                                                                                                          |
