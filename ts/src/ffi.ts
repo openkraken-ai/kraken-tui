@@ -189,6 +189,38 @@ const symbols = {
 		returns: "i32" as const,
 	},
 
+	// Theme Management
+	tui_create_theme: { args: [] as FFIType[], returns: "u32" as const },
+	tui_destroy_theme: { args: ["u32"] as FFIType[], returns: "i32" as const },
+	tui_set_theme_color: {
+		args: ["u32", "u8", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_flag: {
+		args: ["u32", "u8", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_border: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_opacity: {
+		args: ["u32", "f32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_apply_theme: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_clear_theme: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_switch_theme: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
 	// Focus
 	tui_set_focusable: {
 		args: ["u32", "u8"] as FFIType[],

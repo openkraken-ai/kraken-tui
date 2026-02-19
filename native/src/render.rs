@@ -195,12 +195,13 @@ fn render_node(
     let h = layout.size.height as i32;
 
     let node_type = node.node_type;
-    let raw_fg = node.visual_style.fg_color;
-    let bg = node.visual_style.bg_color;
-    let opacity = node.visual_style.opacity;
+    let resolved = crate::style::resolve_style(handle, ctx);
+    let raw_fg = resolved.fg_color;
+    let bg = resolved.bg_color;
+    let opacity = resolved.opacity;
     let fg = blend_opacity(raw_fg, bg, opacity);
-    let attrs = node.visual_style.attrs;
-    let border_style = node.visual_style.border_style;
+    let attrs = resolved.attrs;
+    let border_style = resolved.border_style;
     let content = node.content.clone();
     let content_format = node.content_format;
     let scroll_x = node.scroll_x;

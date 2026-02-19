@@ -9,6 +9,7 @@ import { ffi } from "./ffi";
 import { checkResult } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
 import { Widget } from "./widget";
+import type { Theme } from "./theme";
 
 export class Kraken {
 	private idMap: Map<string, number> = new Map();
@@ -104,6 +105,14 @@ export class Kraken {
 	 */
 	focusPrev(): void {
 		checkResult(ffi.tui_focus_prev(), "focusPrev");
+	}
+
+	/**
+	 * Apply a theme to the current root.
+	 * Shorthand for theme.applyTo(root).
+	 */
+	switchTheme(theme: Theme): void {
+		checkResult(ffi.tui_switch_theme(theme.handle), "switchTheme");
 	}
 
 	/**

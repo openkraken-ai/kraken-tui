@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use crate::terminal::TerminalBackend;
+use crate::theme::Theme;
 use crate::types::{Buffer, TuiEvent, TuiNode};
 
 pub struct TuiContext {
@@ -27,6 +28,11 @@ pub struct TuiContext {
     // Text Module
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub theme_set: syntect::highlighting::ThemeSet,
+
+    // Theme Module
+    pub themes: HashMap<u32, Theme>,
+    pub theme_bindings: HashMap<u32, u32>, // node_handle -> theme_handle
+    pub next_theme_handle: u32,
 
     // Diagnostics
     pub last_error: String,
@@ -54,6 +60,14 @@ impl TuiContext {
 
             syntax_set: syntect::parsing::SyntaxSet::load_defaults_newlines(),
             theme_set: syntect::highlighting::ThemeSet::load_defaults(),
+
+            themes: {
+                let mut t = HashMap::new();
+                crate::theme::create_builtin_themes(&mut t);
+                t
+            },
+            theme_bindings: HashMap::new(),
+            next_theme_handle: crate::theme::FIRST_USER_THEME_HANDLE,
 
             last_error: String::new(),
             debug_mode: false,
