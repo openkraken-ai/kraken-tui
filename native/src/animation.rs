@@ -308,8 +308,16 @@ mod tests {
 
     #[test]
     fn test_easing_endpoints() {
-        for easing in [Easing::Linear, Easing::EaseIn, Easing::EaseOut, Easing::EaseInOut] {
-            assert!((apply_easing(easing, 0.0)).abs() < 0.001, "easing {easing:?} at t=0");
+        for easing in [
+            Easing::Linear,
+            Easing::EaseIn,
+            Easing::EaseOut,
+            Easing::EaseInOut,
+        ] {
+            assert!(
+                (apply_easing(easing, 0.0)).abs() < 0.001,
+                "easing {easing:?} at t=0"
+            );
             assert!(
                 (apply_easing(easing, 1.0) - 1.0).abs() < 0.001,
                 "easing {easing:?} at t=1"
@@ -503,12 +511,33 @@ mod tests {
         let h1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
         let h2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
 
-        start_animation(&mut ctx, h1, AnimProp::Opacity, 0.0f32.to_bits(), 1000, Easing::Linear)
-            .unwrap();
-        start_animation(&mut ctx, h1, AnimProp::FgColor, 0x01FF0000, 1000, Easing::Linear)
-            .unwrap();
-        start_animation(&mut ctx, h2, AnimProp::Opacity, 0.0f32.to_bits(), 1000, Easing::Linear)
-            .unwrap();
+        start_animation(
+            &mut ctx,
+            h1,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
+        start_animation(
+            &mut ctx,
+            h1,
+            AnimProp::FgColor,
+            0x01FF0000,
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
+        start_animation(
+            &mut ctx,
+            h2,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
 
         assert_eq!(ctx.animations.len(), 3);
 

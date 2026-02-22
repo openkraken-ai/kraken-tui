@@ -103,6 +103,10 @@ const lib = dlopen(LIB_PATH, {
 	tui_clear_theme:       { args: ["u32"] as FFIType[],                         returns: "i32" as const },
 	tui_switch_theme:      { args: ["u32"] as FFIType[],                         returns: "i32" as const },
 
+	// Animation (v1)
+	tui_animate:           { args: ["u32", "u8", "u32", "u32", "u8"] as FFIType[], returns: "u32" as const },
+	tui_cancel_animation:  { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+
 	// Rendering
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
 	tui_mark_dirty: { args: ["u32"] as FFIType[],                               returns: "i32" as const },
@@ -913,6 +917,122 @@ describe("FFI integration", () => {
 
 			ffi.tui_destroy_node(text);
 			ffi.tui_destroy_node(root);
+		});
+	});
+
+	// ── Animation (v1) ─────────────────────────────────────────────────────
+
+	describe("animation", () => {
+		test("tui_animate returns valid handle", () => {
+			const node = ffi.tui_create_node(0);
+			// Animate opacity to 0.5 over 300ms, linear easing
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 300, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid property returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			const animHandle = ffi.tui_animate(node, 99, 0, 300, 0);
+			expect(animHandle).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid easing returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 300, 99);
+			expect(animHandle).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid node returns 0", () => {
+			const animHandle = ffi.tui_animate(9999, 0, 0, 300, 0);
+			expect(animHandle).toBe(0);
+		});
+
+		test("tui_cancel_animation succeeds for active animation", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			expect(ffi.tui_cancel_animation(animHandle)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_cancel_animation for invalid handle returns -1", () => {
+			expect(ffi.tui_cancel_animation(9999)).toBe(-1);
+		});
+
+		test("destroy_node cancels its animations", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			// Destroy the node — should cancel its animation
+			ffi.tui_destroy_node(node);
+			// Cancelling the animation should now fail (already gone)
+			expect(ffi.tui_cancel_animation(animHandle)).toBe(-1);
+		});
+
+		test("render with active animations succeeds", () => {
+			const root = ffi.tui_create_node(0);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, text);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+			ffi.tui_set_layout_dimension(text, 0, 20, 1);
+			ffi.tui_set_layout_dimension(text, 1, 1, 1);
+			setContent(text, "Animating");
+
+			// Start opacity animation
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(text, 0, targetBits, 500, 2); // EaseOut
+			expect(animHandle).toBeGreaterThan(0);
+
+			// Render should succeed and advance the animation
+			expect(ffi.tui_render()).toBe(0);
+
+			ffi.tui_destroy_node(text);
+			ffi.tui_destroy_node(root);
+		});
+
+		test("animate all 4 property types", () => {
+			const node = ffi.tui_create_node(0);
+
+			// Opacity
+			const f32 = new Float32Array([0.5]);
+			const opBits = new Uint32Array(f32.buffer)[0]!;
+			expect(ffi.tui_animate(node, 0, opBits, 300, 0)).toBeGreaterThan(0);
+
+			// FgColor (RGB red)
+			expect(ffi.tui_animate(node, 1, 0x01FF0000, 300, 1)).toBeGreaterThan(0);
+
+			// BgColor (RGB blue)
+			expect(ffi.tui_animate(node, 2, 0x010000FF, 300, 2)).toBeGreaterThan(0);
+
+			// BorderColor (RGB green)
+			expect(ffi.tui_animate(node, 3, 0x0100FF00, 300, 3)).toBeGreaterThan(0);
+
+			ffi.tui_destroy_node(node);
+		});
+
+		test("perf counter 6 reports active animation count", () => {
+			const node = ffi.tui_create_node(0);
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			const after = Number(ffi.tui_get_perf_counter(6));
+			expect(after).toBe(before + 1);
+			ffi.tui_destroy_node(node);
 		});
 	});
 
