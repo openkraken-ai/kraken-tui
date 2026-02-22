@@ -126,7 +126,7 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
 
     // 0. Advance animations (ADR-T13: before layout resolution)
     let elapsed_ms = match ctx.last_render_time {
-        Some(last) => start.duration_since(last).as_millis() as f32,
+        Some(last) => (start.duration_since(last).as_secs_f64() * 1000.0) as f32,
         None => 0.0,
     };
     crate::animation::advance_animations(ctx, elapsed_ms);

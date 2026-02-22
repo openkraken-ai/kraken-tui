@@ -153,9 +153,18 @@ export abstract class Widget {
 		let targetBits: number;
 
 		if (options.property === "opacity") {
-			const f32 = new Float32Array([
-				typeof options.target === "number" ? options.target : 1.0,
-			]);
+			let opacityValue: number;
+			if (typeof options.target === "number") {
+				opacityValue = options.target;
+			} else {
+				opacityValue = parseFloat(options.target);
+				if (isNaN(opacityValue)) {
+					throw new TypeError(
+						`animate: opacity target must be a number or numeric string, got "${options.target}"`,
+					);
+				}
+			}
+			const f32 = new Float32Array([opacityValue]);
 			targetBits = new Uint32Array(f32.buffer)[0]!;
 		} else {
 			targetBits = parseColor(options.target);
