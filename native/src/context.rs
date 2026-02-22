@@ -4,7 +4,9 @@
 //! A single global instance is managed via `tui_init()` / `tui_shutdown()`.
 
 use std::collections::HashMap;
+use std::time::Instant;
 
+use crate::animation::Animation;
 use crate::terminal::TerminalBackend;
 use crate::theme::Theme;
 use crate::types::{Buffer, TuiEvent, TuiNode};
@@ -33,6 +35,11 @@ pub struct TuiContext {
     pub themes: HashMap<u32, Theme>,
     pub theme_bindings: HashMap<u32, u32>, // node_handle -> theme_handle
     pub next_theme_handle: u32,
+
+    // Animation Module (v1)
+    pub animations: Vec<Animation>,
+    pub next_anim_handle: u32,
+    pub last_render_time: Option<Instant>,
 
     // Diagnostics
     pub last_error: String,
@@ -68,6 +75,10 @@ impl TuiContext {
             },
             theme_bindings: HashMap::new(),
             next_theme_handle: crate::theme::FIRST_USER_THEME_HANDLE,
+
+            animations: Vec::new(),
+            next_anim_handle: 1,
+            last_render_time: None,
 
             last_error: String::new(),
             debug_mode: false,
