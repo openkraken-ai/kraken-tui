@@ -124,6 +124,64 @@ export abstract class Widget {
 		checkResult(ffi.tui_set_style_opacity(this.handle, value));
 	}
 
+	// --- Animation (v1) ---
+
+	/**
+	 * Animate a style property over time.
+	 * @returns Animation handle (for cancellation)
+	 */
+	animate(options: {
+		property: "opacity" | "fgColor" | "bgColor" | "borderColor";
+		target: number | string;
+		duration: number;
+		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+	}): number {
+		const propMap: Record<string, number> = {
+			opacity: 0,
+			fgColor: 1,
+			bgColor: 2,
+			borderColor: 3,
+		};
+		const easingMap: Record<string, number> = {
+			linear: 0,
+			easeIn: 1,
+			easeOut: 2,
+			easeInOut: 3,
+		};
+
+		const prop = propMap[options.property] ?? 0;
+		let targetBits: number;
+
+		if (options.property === "opacity") {
+			const f32 = new Float32Array([
+				typeof options.target === "number" ? options.target : 1.0,
+			]);
+			targetBits = new Uint32Array(f32.buffer)[0]!;
+		} else {
+			targetBits = parseColor(options.target);
+		}
+
+		const easing = easingMap[options.easing ?? "linear"] ?? 0;
+		const handle = ffi.tui_animate(
+			this.handle,
+			prop,
+			targetBits,
+			options.duration,
+			easing,
+		);
+		if (handle === 0) {
+			throw new Error("Failed to start animation");
+		}
+		return handle;
+	}
+
+	/**
+	 * Cancel an active animation. The property retains its current value.
+	 */
+	cancelAnimation(animHandle: number): void {
+		checkResult(ffi.tui_cancel_animation(animHandle));
+	}
+
 	// --- Focus ---
 
 	setFocusable(focusable: boolean): void {
