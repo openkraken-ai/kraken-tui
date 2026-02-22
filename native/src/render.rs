@@ -113,6 +113,7 @@ fn blend_opacity(fg: u32, bg: u32, opacity: f32) -> u32 {
 // ============================================================================
 
 /// Execute the full render pipeline:
+/// 0. Advance animations (ADR-T13: before layout resolution)
 /// 1. Compute layout (via Layout Module)
 /// 2. Clear front buffer
 /// 3. Traverse tree, render into front buffer
@@ -122,6 +123,14 @@ fn blend_opacity(fg: u32, bg: u32, opacity: f32) -> u32 {
 /// 7. Clear dirty flags
 pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     let start = std::time::Instant::now();
+
+    // 0. Advance animations (ADR-T13: before layout resolution)
+    let elapsed_ms = match ctx.last_render_time {
+        Some(last) => start.duration_since(last).as_millis() as f32,
+        None => 0.0,
+    };
+    crate::animation::advance_animations(ctx, elapsed_ms);
+    ctx.last_render_time = Some(start);
 
     // 1. Compute layout
     crate::layout::compute_layout(ctx)?;

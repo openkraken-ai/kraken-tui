@@ -157,6 +157,7 @@ pub extern "C" fn tui_destroy_node(handle: u32) -> i32 {
     ffi_wrap(|| {
         let ctx = context_mut()?;
         ctx.validate_handle(handle)?;
+        animation::cancel_all_for_node(ctx, handle);
         tree::destroy_node(ctx, handle)?;
         Ok(0)
     })
@@ -849,6 +850,38 @@ pub extern "C" fn tui_switch_theme(theme_handle: u32) -> i32 {
 }
 
 // ============================================================================
+// 4.16 Animation (v1)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_animate(
+    handle: u32,
+    property: u8,
+    target_bits: u32,
+    duration_ms: u32,
+    easing: u8,
+) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_mut()?;
+        ctx.validate_handle(handle)?;
+        let prop = types::AnimProp::from_u8(property)
+            .ok_or_else(|| format!("Invalid animation property: {property}"))?;
+        let ease = types::Easing::from_u8(easing)
+            .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
+        animation::start_animation(ctx, handle, prop, target_bits, duration_ms, ease)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_cancel_animation(anim_handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        animation::cancel_animation(ctx, anim_handle)?;
+        Ok(0)
+    })
+}
+
+// ============================================================================
 // 4.9 Focus Management
 // ============================================================================
 
@@ -1060,6 +1093,7 @@ pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
             3 => ctx.event_buffer.len() as u64,
             4 => ctx.nodes.len() as u64,
             5 => ctx.nodes.values().filter(|n| n.dirty).count() as u64,
+            6 => ctx.animations.len() as u64,
             _ => 0,
         }
     }))
