@@ -230,6 +230,22 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_start_spinner: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_start_progress: {
+		args: ["u32", "u32", "u8"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_start_pulse: {
+		args: ["u32", "u32", "u8"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_chain_animation: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 
 	// Focus
 	tui_set_focusable: {

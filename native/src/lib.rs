@@ -881,6 +881,46 @@ pub extern "C" fn tui_cancel_animation(anim_handle: u32) -> i32 {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn tui_start_spinner(handle: u32, interval_ms: u32) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_mut()?;
+        ctx.validate_handle(handle)?;
+        animation::start_spinner(ctx, handle, interval_ms)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_start_progress(handle: u32, duration_ms: u32, easing: u8) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_mut()?;
+        ctx.validate_handle(handle)?;
+        let ease = types::Easing::from_u8(easing)
+            .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
+        animation::start_progress(ctx, handle, duration_ms, ease)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_start_pulse(handle: u32, duration_ms: u32, easing: u8) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_mut()?;
+        ctx.validate_handle(handle)?;
+        let ease = types::Easing::from_u8(easing)
+            .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
+        animation::start_pulse(ctx, handle, duration_ms, ease)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_chain_animation(after_anim: u32, next_anim: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        animation::chain_animation(ctx, after_anim, next_anim)?;
+        Ok(0)
+    })
+}
+
 // ============================================================================
 // 4.9 Focus Management
 // ============================================================================
