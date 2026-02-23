@@ -15,5 +15,6 @@ export { ScrollBox } from "./widgets/scrollbox";
 export { Theme, DARK_THEME, LIGHT_THEME } from "./theme";
 export { KrakenError, checkResult } from "./errors";
 export { parseColor, parseDimension } from "./style";
+export { AnimProp, Easing } from "./animation-constants";
 export { EventType, KeyCode, Modifier, NodeType } from "./ffi/structs";
 export type { KrakenEvent, KrakenEventType } from "./events";

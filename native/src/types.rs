@@ -404,6 +404,52 @@ pub enum TerminalInputEvent {
 }
 
 // ============================================================================
+// Animation Enums (v1)
+// ============================================================================
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnimProp {
+    Opacity = 0,
+    FgColor = 1,
+    BgColor = 2,
+    BorderColor = 3,
+}
+
+impl AnimProp {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Opacity),
+            1 => Some(Self::FgColor),
+            2 => Some(Self::BgColor),
+            3 => Some(Self::BorderColor),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Easing {
+    Linear = 0,
+    EaseIn = 1,
+    EaseOut = 2,
+    EaseInOut = 3,
+}
+
+impl Easing {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Linear),
+            1 => Some(Self::EaseIn),
+            2 => Some(Self::EaseOut),
+            3 => Some(Self::EaseInOut),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================================
 // Styled Span (for Text Module output)
 // ============================================================================
 

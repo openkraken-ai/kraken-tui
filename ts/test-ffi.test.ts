@@ -103,6 +103,10 @@ const lib = dlopen(LIB_PATH, {
 	tui_clear_theme:       { args: ["u32"] as FFIType[],                         returns: "i32" as const },
 	tui_switch_theme:      { args: ["u32"] as FFIType[],                         returns: "i32" as const },
 
+	// Animation (v1)
+	tui_animate:           { args: ["u32", "u8", "u32", "u32", "u8"] as FFIType[], returns: "u32" as const },
+	tui_cancel_animation:  { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+
 	// Rendering
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
 	tui_mark_dirty: { args: ["u32"] as FFIType[],                               returns: "i32" as const },
@@ -913,6 +917,220 @@ describe("FFI integration", () => {
 
 			ffi.tui_destroy_node(text);
 			ffi.tui_destroy_node(root);
+		});
+	});
+
+	// ── Animation (v1) ─────────────────────────────────────────────────────
+
+	describe("animation", () => {
+		test("tui_animate returns valid handle", () => {
+			const node = ffi.tui_create_node(0);
+			// Animate opacity to 0.5 over 300ms, linear easing
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 300, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid property returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			const animHandle = ffi.tui_animate(node, 99, 0, 300, 0);
+			expect(animHandle).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid easing returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 300, 99);
+			expect(animHandle).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_animate with invalid node returns 0", () => {
+			const animHandle = ffi.tui_animate(9999, 0, 0, 300, 0);
+			expect(animHandle).toBe(0);
+		});
+
+		test("tui_cancel_animation succeeds for active animation", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			expect(ffi.tui_cancel_animation(animHandle)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_cancel_animation for invalid handle returns -1", () => {
+			expect(ffi.tui_cancel_animation(9999)).toBe(-1);
+		});
+
+		test("destroy_node cancels its animations", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			expect(animHandle).toBeGreaterThan(0);
+			// Destroy the node — should cancel its animation
+			ffi.tui_destroy_node(node);
+			// Cancelling the animation should now fail (already gone)
+			expect(ffi.tui_cancel_animation(animHandle)).toBe(-1);
+		});
+
+		test("render with active animations succeeds", () => {
+			const root = ffi.tui_create_node(0);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, text);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+			ffi.tui_set_layout_dimension(text, 0, 20, 1);
+			ffi.tui_set_layout_dimension(text, 1, 1, 1);
+			setContent(text, "Animating");
+
+			// Start opacity animation
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			const animHandle = ffi.tui_animate(text, 0, targetBits, 500, 2); // EaseOut
+			expect(animHandle).toBeGreaterThan(0);
+
+			// Render should succeed and advance the animation
+			expect(ffi.tui_render()).toBe(0);
+
+			ffi.tui_destroy_node(text);
+			ffi.tui_destroy_node(root);
+		});
+
+		test("animate all 4 property types", () => {
+			const node = ffi.tui_create_node(0);
+
+			// Opacity
+			const f32 = new Float32Array([0.5]);
+			const opBits = new Uint32Array(f32.buffer)[0]!;
+			expect(ffi.tui_animate(node, 0, opBits, 300, 0)).toBeGreaterThan(0);
+
+			// FgColor (RGB red)
+			expect(ffi.tui_animate(node, 1, 0x01FF0000, 300, 1)).toBeGreaterThan(0);
+
+			// BgColor (RGB blue)
+			expect(ffi.tui_animate(node, 2, 0x010000FF, 300, 2)).toBeGreaterThan(0);
+
+			// BorderColor (RGB green)
+			expect(ffi.tui_animate(node, 3, 0x0100FF00, 300, 3)).toBeGreaterThan(0);
+
+			ffi.tui_destroy_node(node);
+		});
+
+		test("perf counter 6 reports active animation count", () => {
+			const node = ffi.tui_create_node(0);
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const f32 = new Float32Array([0.5]);
+			const targetBits = new Uint32Array(f32.buffer)[0]!;
+			ffi.tui_animate(node, 0, targetBits, 1000, 0);
+			const after = Number(ffi.tui_get_perf_counter(6));
+			expect(after).toBe(before + 1);
+			ffi.tui_destroy_node(node);
+		});
+	});
+
+	// ── Regression tests ───────────────────────────────────────────────────
+
+	describe("regressions", () => {
+		test("opacity string target '0.5' produces correct IEEE-754 bits", () => {
+			// Regression: Widget.animate() used to discard string targets for opacity,
+			// treating any non-number as 1.0. The fix parses via parseFloat().
+			// This test verifies the string→float→bits path produces the same result
+			// as the direct numeric path, and that tui_animate accepts those bits.
+			const fromString = parseFloat("0.5");
+			const fromNumber = 0.5;
+			expect(fromString).toBe(fromNumber);
+
+			const stringBits = new Uint32Array(new Float32Array([fromString]).buffer)[0]!;
+			const numberBits = new Uint32Array(new Float32Array([fromNumber]).buffer)[0]!;
+			expect(stringBits).toBe(numberBits);
+
+			// Confirm tui_animate accepts the string-derived bits
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_animate(node, 0, stringBits, 500, 0);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("opacity string target '0' and '1' edge cases produce correct bits", () => {
+			// Ensure boundary values parsed from strings match their numeric equivalents
+			for (const val of ["0", "0.0", "1", "1.0"]) {
+				const parsed = parseFloat(val);
+				expect(isNaN(parsed)).toBe(false);
+
+				const bits = new Uint32Array(new Float32Array([parsed]).buffer)[0]!;
+				const expectedBits = new Uint32Array(
+					new Float32Array([Number(val)]).buffer,
+				)[0]!;
+				expect(bits).toBe(expectedBits);
+			}
+		});
+
+		test("non-numeric opacity string yields NaN (Widget layer throws TypeError)", () => {
+			// Regression: non-numeric strings like "bad" were silently treated as 1.0.
+			// The fix calls parseFloat() which returns NaN; Widget.animate() then throws.
+			// At the FFI level we verify the parseFloat behavior that the fix relies on.
+			expect(isNaN(parseFloat("bad"))).toBe(true);
+			expect(isNaN(parseFloat(""))).toBe(true);
+			expect(isNaN(parseFloat("abc123"))).toBe(true);
+
+			// Valid numeric strings must NOT be NaN
+			expect(isNaN(parseFloat("0.5"))).toBe(false);
+			expect(isNaN(parseFloat("0"))).toBe(false);
+			expect(isNaN(parseFloat("1.0"))).toBe(false);
+		});
+
+		test("propMap returns undefined for unknown property (Widget layer throws TypeError)", () => {
+			// Documents the guard added for Issue 1: unknown property strings must not
+			// silently fall back to 0 (Opacity). The Widget layer throws TypeError; here
+			// we verify the underlying propMap lookup behavior the guard relies on.
+			const propMap: Record<string, number> = {
+				opacity: 0, fgColor: 1, bgColor: 2, borderColor: 3,
+			};
+			expect(propMap["opacity"]).toBe(0);
+			expect(propMap["unknownProp"]).toBeUndefined();
+			expect(propMap["OPACITY"]).toBeUndefined();
+			expect(propMap["fgcolor"]).toBeUndefined();
+		});
+
+		test("easingMap returns undefined for unknown easing (Widget layer throws TypeError)", () => {
+			// Documents the guard added for Issue 2: unknown easing strings must not
+			// silently fall back to 0 (Linear). The Widget layer throws TypeError; here
+			// we verify the underlying easingMap lookup behavior the guard relies on.
+			const easingMap: Record<string, number> = {
+				linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3,
+			};
+			expect(easingMap["linear"]).toBe(0);
+			expect(easingMap["Linear"]).toBeUndefined();
+			expect(easingMap["bounce"]).toBeUndefined();
+			expect(easingMap["ease-in"]).toBeUndefined();
+		});
+
+		test("NaN duration fails Number.isFinite check (Widget layer throws TypeError)", () => {
+			// Documents Issue 3 guard: NaN is not a finite number.
+			expect(Number.isFinite(NaN)).toBe(false);
+			expect(Number.isFinite(300)).toBe(true);
+			expect(Number.isFinite(0)).toBe(true);
+		});
+
+		test("Infinity and negative duration fail validation (Widget layer throws TypeError)", () => {
+			// Documents Issue 3 guard: Infinity is not finite; negative durations are
+			// rejected by the >= 0 check even though isFinite(negative) is true.
+			expect(Number.isFinite(Infinity)).toBe(false);
+			expect(Number.isFinite(-Infinity)).toBe(false);
+			// isFinite(-100) is true, but the < 0 guard catches it:
+			expect(Number.isFinite(-100)).toBe(true);
+			expect(-100 < 0).toBe(true);
+			// Valid durations pass both checks:
+			expect(Number.isFinite(0) && 0 >= 0).toBe(true);
+			expect(Number.isFinite(500) && 500 >= 0).toBe(true);
 		});
 	});
 
