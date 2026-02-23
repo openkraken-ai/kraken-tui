@@ -2,8 +2,8 @@
 
 ## Kraken TUI
 
-**Version**: 2.0
-**Status**: Approved
+**Version**: 2.1
+**Status**: Approved (Experimental until public v1 GA)
 **Date**: February 2026
 
 ---
@@ -117,7 +117,7 @@
 
 ### Epic 8: Animation (P1 — v1)
 
-- A Developer can define timed transitions on Widget properties (opacity, position, color).
+- A Developer can define timed transitions on Widget properties (opacity, foreground/background/border color).
 - The system provides built-in animation primitives (spinner, progress bar, pulsing).
 - Animations are frame-budget-aware and degrade gracefully under load.
 - A Developer can cancel or chain animations programmatically.
@@ -142,7 +142,7 @@
 | **Foreign Function Overhead** | < 1ms per cross-boundary call                                                              | Must not be the bottleneck in the render loop                                           |
 | **Host-Language Bundle**      | < 50KB (TypeScript layer)                                                                  | Minimal overhead; the value is in the native core                                       |
 | **Time to Hello World**       | < 15 minutes for a competent TypeScript developer                                          | Core JTBD: ship faster                                                                  |
-| **API Stability**             | Semantic versioning from v1.0. No breaking changes without major version bump.             | Community-driven OSS demands trust in API contracts                                     |
+| **API Stability**             | Semantic versioning guarantees begin at public v1.0 GA. Pre-GA releases may include breaking changes. | Community-driven OSS demands trust in API contracts                                     |
 | **Contributor Experience**    | Clear module boundaries, documented architecture decisions, reproducible build environment | Portfolio + community viability depends on contribution accessibility                   |
 | **Accessibility**             | Not a v0/v1 hard constraint. Tracked as a v2 commitment.                                   | Acknowledged as important; deferred to avoid scope creep in MVP                         |
 
@@ -164,7 +164,7 @@
 - Cross-platform terminal abstraction.
 - Scrollable regions.
 
-**v1 — Stable:**
+**v1 — Internal Stable Milestone (Experimental until public v1 GA):**
 
 - Animation system (timed transitions, built-in primitives, frame-budget-aware).
 - Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
@@ -284,7 +284,7 @@ classDiagram
 | Version | Epics                                | Summary                                                                                                       |
 | ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | **v0**  | 1, 2, 3, 4, 5, 6, 7                  | Widget composition, layout, styling, input (keyboard + mouse), scrolling, cross-platform, rich text rendering |
-| **v1**  | 8, 9 (foundation)                    | Animation system, theming foundation (built-in themes, runtime switching)                                     |
+| **v1**  | 8, 9 (foundation)                    | Animation system (timed transitions, primitives, chaining), theming foundation (built-in themes, runtime switching) |
 | **v2**  | 9 (completion), declarative bindings | Theme inheritance, reconciler layer (Solid.js, then React)                                                    |
 
 ## Appendix B: Operator Preferences

@@ -2,13 +2,14 @@
 
 ## Kraken TUI
 
-**Version**: 3.0
-**Status**: Draft
+**Version**: 3.1
+**Status**: Draft (Experimental until public v1 GA)
 **Date**: February 2026
-**Source of Truth**: [Architecture.md](./Architecture.md) v2.0, [PRD.md](./PRD.md) v2.0
+**Source of Truth**: [Architecture.md](./Architecture.md) v2.1, [PRD.md](./PRD.md) v2.1
 
 **Changelog**:
-- v3.0 — Added Theme Module (ADR-T12, ADR-T15), Animation Module (ADR-T13, ADR-T14). 11 new FFI functions (73 total). Style mask for theme resolution. Built-in dark/light themes.
+- v3.1 — Aligned v1 scope with PRD: animation primitives and chaining are in v1 scope. Canonicalized Theme TS API contract (`new Theme()`, `Theme.DARK`, `Theme.LIGHT`) and `Kraken.switchTheme(theme: Theme)`. Marked headless init as testing utility excluded from public FFI symbol count.
+- v3.0 — Added Theme Module (ADR-T12, ADR-T15), Animation Module (ADR-T13, ADR-T14). 11 new public FFI functions (73 total). Style mask for theme resolution. Built-in dark/light themes.
 - v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
 
 ---
@@ -215,7 +216,7 @@ pub trait TerminalBackend {
 
 **Context:** Multi-line text editing (textarea) requires a two-dimensional cursor model (row, col) and significantly more complexity: line wrapping, vertical cursor movement, scroll position management. The PRD JTBD emphasizes "ship polished terminal UIs in hours, not days."
 
-**Decision:** v0 Input widget is **single-line only**. This satisfies the PRD Epic 4 requirement ("End User can type text into input Widgets") without the complexity of full text editor functionality. Multi-line input (textarea) is deferred to v1.
+**Decision:** v0/v1 Input widget is **single-line only**. This satisfies the PRD Epic 4 requirement ("End User can type text into input Widgets") without the complexity of full text editor functionality. Multi-line input (textarea) is deferred to v2.
 
 **Rationale:**
 
@@ -235,7 +236,7 @@ This is 5-10x the implementation complexity of single-line input.
 - Password masking support (ADR-T09)
 - Optional max length constraint
 
-**v1 Roadmap Addition:** MultiLineInput widget or TextArea mode.
+**v2 Roadmap Addition:** MultiLineInput widget or TextArea mode.
 
 **Consequences:**
 
@@ -366,11 +367,11 @@ Animation advancement occurs **before** layout resolution in the render pipeline
 
 ### ADR-T14: Animatable Property Scope (v1)
 
-**Context:** PRD Epic 8 lists "opacity, position, color" as animatable properties. Position animation in a Flexbox system requires either (a) bypassing Taffy with a visual-only pixel offset — a new render concern with no home in the current module graph, or (b) mutating Taffy layout constraint values — which breaks the Animation Module's bounded context (Architecture dependency graph: Animation → Tree, Style; no arrow to Layout).
+**Context:** PRD Epic 8 requires timed property transitions, built-in animation primitives, and programmable chaining. The architecture still enforces module boundaries: Animation touches Tree/Style, not Layout.
 
-**Investigation:** tachyonfx (ratatui) animates buffer cells post-render rather than widget properties — a fundamentally different approach. Bubbletea/Harmonica animate widget state (e.g., progress percentage) with spring physics. Neither framework provides position animation within a flexbox layout system. Position animation in retained-mode TUI frameworks is uncharted territory.
+**Investigation:** tachyonfx (ratatui) animates buffer cells post-render rather than widget properties. Bubbletea/Harmonica animate widget state (e.g., progress percentage) with spring physics. We adopt property transitions in the core, and model primitives/chaining as higher-level orchestration over the same engine.
 
-**Decision:** v1 animatable properties are: `opacity`, `fg_color`, `bg_color`, `border_color`. Position animation is deferred to v2. Animation chaining (triggering animation B when A completes) is deferred to v2.
+**Decision:** v1 animatable properties are: `opacity`, `fg_color`, `bg_color`, `border_color`. Animation chaining (triggering animation B when A completes) is in v1 scope. Position animation remains deferred to v2 to preserve bounded-context separation with Layout.
 
 **Animatable property encoding:**
 
@@ -403,8 +404,8 @@ tachyonfx supports 32 easing variants. Four quadratic variants cover the primary
 - (+) Clean bounded context: Animation touches only Style (VisualStyle) and Tree (dirty flags)
 - (+) 4 animatable properties cover the primary use cases (fade-in/out, color transitions, border highlights)
 - (+) Simple interpolation logic (lerp for f32, per-channel lerp for RGB)
-- (-) No position animation in v1 (PRD deviation — approved by developer)
-- (-) No animation chaining in v1 (PRD deviation — approved by developer)
+- (+) Primitives/chaining reuse one engine, avoiding parallel animation subsystems
+- (-) No position animation in v1
 - (migration) Position animation in v2 can be implemented as visual-only render offset without changing the Animation Module's FFI surface
 
 ### ADR-T15: Built-in Theme Palettes
@@ -1015,7 +1016,7 @@ Widget-specific properties for Input and Select nodes.
 | `tui_input_set_mask`      | `(u32 handle, u32 mask_char) -> i32`                             | 0 / -1             | Set password mask character. 0 = no masking, else display mask_char instead of actual input. |
 | `tui_input_get_mask`      | `(u32 handle) -> i32`                                            | Mask char / 0 / -1 | Get current mask character. 0 = no masking.               |
 
-**Input Widget Scope (v0):** Single-line text input only. Cursor position is a single `u32` (0 to content length). For multi-line text entry, wrap multiple Input widgets or wait for v1 TextArea widget. See ADR-T08.
+**Input Widget Scope (v0/v1):** Single-line text input only. Cursor position is a single `u32` (0 to content length). For multi-line text entry, wrap multiple Input widgets or wait for a v2 TextArea widget. See ADR-T08.
 
 | **Select Widget**         |                                                                  |                    |                                                           |
 | `tui_select_add_option`   | `(u32 handle, *const u8 ptr, u32 len) -> i32`                    | 0 / -1             | Add an option to Select widget.                           |
@@ -1125,7 +1126,7 @@ Visual properties are routed to the Style Module. They control appearance withou
 
 **ScrollBox Behavior:**
 
-- **v0 Limitation — Single Child:** ScrollBox accepts exactly one child. To scroll multiple widgets, wrap them in a Box container. Multi-child scrolling planned for v1.
+- **v0/v1 Limitation — Single Child:** ScrollBox accepts exactly one child. To scroll multiple widgets, wrap them in a Box container. Multi-child scrolling is deferred to v2.
 - **Overflow detection:** When content dimensions exceed the ScrollBox's computed layout dimensions, scrolling is enabled.
 - **Scrollbar rendering:** The Native Core does not render scrollbars by default. The Host Layer may render them based on scroll position if desired.
 - **Child wrapper:** The ScrollBox node's single child content is clipped to the ScrollBox's bounds during rendering.
@@ -1220,6 +1221,10 @@ The `tui_render()` pipeline with animation support:
 | ------------------------ | ----------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
 | `tui_animate`            | `(u32 handle, u8 property, u32 target_bits, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start animation on a widget property. `property`: see `AnimProp` enum. `target_bits`: target value encoded as u32 (f32 bit-cast for opacity, color encoding for colors). `duration_ms`: animation duration. `easing`: see `Easing` enum. Captures current value as start. Returns animation handle. |
 | `tui_cancel_animation`   | `(u32 anim_handle) -> i32`                                              | 0 / -1         | Cancel an active animation. The property retains its current interpolated value. Returns -1 if animation not found (already completed or invalid handle). |
+| `tui_chain_animation` *(planned for v1 GA)* | `(u32 after_anim, u32 next_anim) -> i32` | 0 / -1 | Chain animations so `next_anim` starts when `after_anim` completes. |
+| `tui_start_spinner` *(planned for v1 GA)* | `(u32 handle, u32 interval_ms) -> u32` | Anim handle / 0 | Start built-in spinner primitive on a widget subtree. |
+| `tui_start_progress` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in progress-bar primitive on a widget subtree. |
+| `tui_start_pulse` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
 
 **Animation behavior:**
 
@@ -1228,6 +1233,8 @@ The `tui_render()` pipeline with animation support:
 - **Cancellation:** `tui_cancel_animation()` removes the animation immediately. The property retains whatever interpolated value it had at the last render. The node is NOT marked dirty — it remains at its current visual state.
 - **Node destruction:** `tui_destroy_node()` automatically cancels all animations targeting the destroyed node.
 - **Zero duration:** `duration_ms = 0` immediately applies the end value (no interpolation). The function still returns a valid animation handle, but the animation completes on the next `tui_render()`.
+- **Chaining:** `tui_chain_animation()` links two animation handles so completion of A schedules B in the next render cycle.
+- **Primitives:** spinner/progress/pulse are thin native presets built on top of the same animation registry and easing/interpolation paths.
 
 **Host Layer usage example (TypeScript):**
 
@@ -1246,11 +1253,11 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 
 ### 4.17 Complete FFI Symbol Count
 
-**Total: 73 functions** (v0 + v1 scope)
+**Current implemented public surface: 73 functions** (v0 + current v1 progress)
 
 | Category | Count | Note |
 |----------|-------|------|
-| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities |
+| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities *(excludes test-only `tui_init_headless`)* |
 | Node | 6 | create, destroy, type, visibility |
 | Tree | 6 | root, append/remove child, parent queries |
 | Content | 6 | text content, format, code language |
@@ -1265,6 +1272,8 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 | **Animation** | **2** | **animate, cancel_animation** |
 
 **Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+2 = **73**
+
+**Planned additions for public v1 GA:** +4 animation helper symbols (`chain_animation`, `start_spinner`, `start_progress`, `start_pulse`) for a target public surface of **77**.
 
 ---
 
@@ -1307,7 +1316,7 @@ kraken-tui/
 │       │   └── scrollbox.ts
 │       ├── events.ts              # Event types, drain loop, dispatch
 │       ├── style.ts               # Color parsing, style helpers
-│       ├── theme.ts               # Theme class (v1: create, configure, apply, switch)
+│       ├── theme.ts               # Theme class (v1: constructor + built-in constants, configure, apply, switch)
 │       └── errors.ts              # KrakenError, error code mapping
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
@@ -1354,7 +1363,7 @@ kraken-tui/
 - Widget classes hold a `handle: number` and call FFI functions through the bindings in `ffi.ts` and `ffi/structs.ts`.
 - Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → `0x02000001`) happens in TypeScript (`style.ts`).
 - Developer-assigned IDs: `ts/src/app.ts` maintains an `id → handle` `Map<string, number>`. The Native Core never sees string IDs.
-- **v1:** `theme.ts` wraps theme handle lifecycle. `widget.ts` gains `animate()` method that handles f32→u32 bit-casting for opacity.
+- **v1:** `theme.ts` uses `new Theme()` for custom theme allocation and static built-in constants `Theme.DARK`/`Theme.LIGHT`. `Kraken.switchTheme(theme: Theme)` applies a root theme. `widget.ts` provides `animate()` and `cancelAnimation()` APIs, plus primitive helpers (`spinner`, `progress`, `pulse`) as ergonomic wrappers.
 
 ### 5.4 Build Pipeline
 
@@ -1397,7 +1406,7 @@ unicode-width = "0.2"
 | **Rust unit**        | `cargo test`                | Each module in isolation. Tree operations, dirty propagation, style patching, buffer diffing, event classification, key code mapping, color encoding/decoding, Markdown span generation. v1: theme resolution, animation interpolation, easing functions, style mask behavior. |
 | **Rust integration** | `cargo test` (`tests/` dir) | Full pipeline with `MockBackend`. Create nodes → set properties → render → assert buffer contents. Event injection → assert event buffer output. v1: theme application → render → verify themed colors. Animation start → advance time → verify interpolated values. |
 | **FFI integration**  | `bun test`                  | Load `libkraken_tui.so` via `dlopen`. Call every FFI function. Assert return values, handle validity, layout results, event drain. v1: theme CRUD, theme application, animation start/cancel. |
-| **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map. v1: Theme class, f32 bit-casting for animation. |
+| **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map. v1: Theme constructor/constants API, f32 bit-casting for animation, primitive helper wrappers. |
 | **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling. v1: theme switching (dark/light), fade animations. |
 
 ### 5.6 Host Application Loop Pattern
@@ -1490,7 +1499,7 @@ The v0+v1 implementation structure is designed to accommodate v2 additions witho
 | v2 Feature               | Integration Point                                                                                                                                                                                                                |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Position Animation**   | Add `AnimProp::PositionX = 4` and `AnimProp::PositionY = 5`. Animation Module applies visual offset via a new `render_offset: (f32, f32)` field on `TuiNode`. Render Module applies offset during buffer rendering. Layout is not affected. |
-| **Animation Chaining**   | Add `tui_animate_after(after_anim: u32, ...)` that creates a pending animation triggered by another's completion. Animation Module gains a `pending_animations: Vec<(u32, Animation)>` queue. No changes to existing FFI functions. |
+| **Animation Choreography** | Extend chaining and sequencing beyond pairwise links (fan-in/fan-out timelines, cancellation groups). |
 | **Per-NodeType Themes**  | Extend `Theme` struct with `HashMap<NodeType, VisualStyle>`. Resolution algorithm gains a NodeType lookup step between the node's explicit style and the global theme defaults. No changes to existing FFI functions; add `tui_set_theme_type_color(theme, node_type, prop, color)` etc. |
 | **Reactive Reconciler**  | Per ADR-004. v2 reconciler wraps the same FFI command protocol (Strangler Fig pattern per Fowler). No changes to the Native Core. |
 | **Additional Easings**   | Extend `Easing` enum with cubic, elastic, bounce variants. No FFI surface change — `tui_animate()` already accepts `u8` easing. |
@@ -1499,8 +1508,8 @@ The v0+v1 implementation structure is designed to accommodate v2 additions witho
 
 | Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
 | --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PRD.md          | v2.0 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9, with approved deviations: position animation and chaining deferred to v2). 5 widget types. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
-| Architecture.md | v2.0 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). |
+| PRD.md          | v2.1 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9) includes timed transitions, animation primitives, and chaining; theming foundation with built-in light/dark and runtime switching. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
+| Architecture.md | v2.1 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). |
 | ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
 | ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
 | ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |
@@ -1508,11 +1517,11 @@ The v0+v1 implementation structure is designed to accommodate v2 additions witho
 | ADR-005         | Accepted        | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation.                                                                                                                                                                                                                               |
 | ADR-T06         | Accepted        | Custom minimal FFI struct handling (no external libraries).                                                                                                                                                                                                                                           |
 | ADR-T07         | Accepted        | Text measurement via unicode-width crate for CJK/emoji width calculation.                                                                                                                                                                                                                          |
-| ADR-T08         | Accepted        | Single-line Input only for v0. Multi-line deferred to v1.                                                                                                                                                                                                                                      |
+| ADR-T08         | Accepted        | Single-line Input only for v0/v1. Multi-line deferred to v2.                                                                                                                                                                                                                                      |
 | ADR-T09         | Accepted        | Password masking support in Input widget.                                                                                                                                                                                                                                                      |
 | ADR-T10         | Accepted        | Full CRUD for Select widget (add, remove, clear options).                                                                                                                                                                                                                                    |
 | ADR-T11         | Accepted        | Select Change events carry index in data[0] to avoid FFI round-trip.                                                                                                                                                                                                                         |
 | ADR-T12         | Accepted        | Style property mask (`style_mask: u8`) for theme resolution. Explicit styles win over theme defaults.                                                                                                                                                                                        |
 | ADR-T13         | Accepted        | Delta-time animation model. `tui_render()` advances animations using elapsed wall-clock time.                                                                                                                                                                                                |
-| ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. Position and chaining deferred to v2.                                                                                                                                                                                  |
+| ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. Chaining is in v1 scope; position remains deferred to v2.                                                                                                                                                              |
 | ADR-T15         | Accepted        | Built-in dark (handle 1) and light (handle 2) theme palettes. Created during `tui_init()`. Not applied by default.                                                                                                                                                                          |

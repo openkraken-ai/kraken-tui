@@ -2,10 +2,10 @@
 
 ## Kraken TUI
 
-**Version**: 2.0
-**Status**: Active
+**Version**: 2.1
+**Status**: Active (Experimental until public v1 GA)
 **Date**: February 2026
-**Source of Truth**: [TechSpec.md](./TechSpec.md) v3.0, [Architecture.md](./Architecture.md) v2.0
+**Source of Truth**: [TechSpec.md](./TechSpec.md) v3.1, [Architecture.md](./Architecture.md) v2.1
 
 ---
 
@@ -13,13 +13,14 @@
 
 **v0 Delivered:** 34 Story Points across 17 tickets. All 63 FFI functions implemented. 70 Rust unit tests, 54 FFI integration tests. Zero clippy errors, zero rustfmt violations. Full render pipeline (ScrollBox clipping, opacity, cursor, Select rendering). Working example application. See Section 5 for archived ticket table.
 
-**v1 Total Estimation:** 34 Story Points (Fibonacci scale: 1, 2, 3, 5, 8)
+**v1 Total Estimation:** 45 Story Points (Fibonacci scale: 1, 2, 3, 5, 8)
+**v1 Remaining Estimation (Epic H):** 11 Story Points
 
 **v1 Critical Path:**
 
-`TASK-F1‖TASK-F2` → `TASK-F3‖TASK-F4` → `TASK-F5‖TASK-F6` → `TASK-G1` → `TASK-G2‖TASK-G3` → `TASK-G4‖TASK-G5`
+`TASK-F1‖TASK-F2` → `TASK-F3‖TASK-F4` → `TASK-F5‖TASK-F6` → `TASK-G1` → `TASK-G2‖TASK-G3` → `TASK-G4‖TASK-G5` → `TASK-H1` → `TASK-H2` → `TASK-H3`
 
-The longest sequential chain is: `F2(3) → F4(3) → F6(3) → G1(5) → G3(3) → G5(3)` = **20 SP** on the critical path. F1 and F2 can run in parallel as they touch different files. Within each epic, foundation tasks unblock implementation tasks which unblock tests.
+The longest sequential chain is: `F2(3) → F4(3) → F6(3) → G1(5) → G3(3) → H1(5) → H2(3) → H3(3)` = **28 SP** on the critical path. F1 and F2 can run in parallel as they touch different files. Within each epic, foundation tasks unblock implementation tasks which unblock tests.
 
 ---
 
@@ -37,17 +38,24 @@ All Phase 1 outcomes delivered:
 6. ✅ Full render + event + FFI integration test coverage (124 tests total)
 7. ✅ Working `examples/demo.ts` demonstrating all five widget types
 
-### Phase 2 — v1 Stable: IN PROGRESS
+### Phase 2 — v1 Internal Stable Milestone (Experimental until public v1 GA): IN PROGRESS
 
 Functional outcomes targeted for v1:
 
 1. **Theme Module** — Developer can create named themes, configure color/border/opacity defaults, and bind them to subtrees. Built-in dark and light themes available after `tui_init()`.
 2. **Animation Module** — Developer can animate `opacity`, `fg_color`, `bg_color`, and `border_color` with timed transitions and 4 easing functions. Animations advance automatically on each `tui_render()` call via delta-time.
+3. **Animation Primitives** — Built-in spinner, progress bar, and pulse helpers are available without requiring manual animation choreography.
+4. **Animation Chaining** — Developer can chain animations programmatically so animation B starts after animation A completes.
+
+Execution status:
+
+- ✅ Epic F (Theme Module) is considered closed.
+- ✅ Epic G (Animation Core Module) is considered closed.
+- 🔄 Epic H (Post-audit v1 elevation) is the active scope to reach public-v1-quality readiness.
 
 Explicitly deferred to v2 (per TechSpec ADR-T14 and developer approval):
 
 - Position animation (requires Layout Module involvement — architecture boundary violation)
-- Animation chaining (trigger B when A completes)
 - Per-NodeType theme defaults (requires selector engine)
 - Multi-line Input / TextArea widget
 - Scrollbar rendering
@@ -76,6 +84,12 @@ flowchart LR
         G5[TASK-G5<br/>Animation<br/>tests]
     end
 
+    subgraph "Epic H: v1 Elevation"
+        H1[TASK-H1<br/>Animation primitives<br/>spinner/progress/pulse]
+        H2[TASK-H2<br/>Animation chaining<br/>API + runtime]
+        H3[TASK-H3<br/>Behavioral verification<br/>theme+animation]
+    end
+
     F1 --> F3
     F1 --> F4
     F2 --> F3
@@ -90,6 +104,12 @@ flowchart LR
     G2 --> G5
     G3 --> G5
     G4 --> G5
+    G1 --> H1
+    G4 --> H1
+    G2 --> H2
+    H1 --> H2
+    G5 --> H3
+    H2 --> H3
     F6 --> G1
 ```
 
@@ -98,7 +118,7 @@ flowchart LR
 1. **Foundation before FFI.** `style_mask` (F1) and the Theme data model (F2) must exist in `TuiContext` before any FFI functions can delegate to the Theme Module. The `theme.rs` module depends on both.
 2. **Resolution before tests.** Theme resolution in the Style Module (F4) is the most complex piece — it must be complete and correct before integration tests can make meaningful assertions. Tests that run against incomplete resolution logic produce false confidence.
 3. **Theme before Animation.** Animation writes interpolated values directly into `VisualStyle` and marks nodes dirty. The render pipeline then reads `VisualStyle` through the theme-aware resolution path (F4). If F4 is absent, animated styles bypass theme resolution, producing incorrect rendering.
-4. **Animation engine before FFI.** `animation.rs` (G1) defines the `Animation` struct, the `AnimProp`/`Easing` enums, and the interpolation logic. The FFI entry points (G2) and render integration (G3) both delegate to it — they cannot exist without it.
+4. **Animation engine before extension work.** `animation.rs` (G1) defines the `Animation` struct, the `AnimProp`/`Easing` enums, and the interpolation logic. The FFI entry points (G2), render integration (G3), and Epic H extension tickets all delegate to it.
 
 ---
 
@@ -229,7 +249,7 @@ Then the nearest theme (node's own binding) is used, not the parent's
 - **Type:** Feature
 - **Effort:** 2 SP
 - **Dependencies:** [TASK-F3, TASK-F4]
-- **Description:** Create `ts/src/theme.ts`. Define a `Theme` class that wraps the theme handle. Constructor: calls `tui_create_theme()` and stores the handle. Methods: `setColor(prop, color)`, `setFlag(prop, value)`, `setBorder(style)`, `setOpacity(value)` — each delegates to the corresponding FFI function. `apply(widget)`: calls `tui_apply_theme(this.handle, widget.handle)`. `clear(widget)`: calls `tui_clear_theme(widget.handle)`. `destroy()`: calls `tui_destroy_theme(this.handle)`. Add static constants: `Theme.DARK = 1`, `Theme.LIGHT = 2`. Add the 9 new symbol declarations to `ts/src/ffi.ts`. Export `Theme` from `ts/src/index.ts`. Update `Kraken` class in `app.ts` to add `switchTheme(theme: Theme | number)` convenience method.
+- **Description:** Create `ts/src/theme.ts`. Define a `Theme` class that wraps the theme handle. Public constructor: allocates a custom theme via `tui_create_theme()` and stores the handle. Built-in handles are exposed as static constants: `Theme.DARK = 1`, `Theme.LIGHT = 2`. Methods: `setColor(prop, color)`, `setFlag(prop, value)`, `setBorder(style)`, `setOpacity(value)` — each delegates to the corresponding FFI function. `apply(widget)`: calls `tui_apply_theme(this.handle, widget.handle)`. `clear(widget)`: calls `tui_clear_theme(widget.handle)`. `destroy()`: calls `tui_destroy_theme(this.handle)`. Add the 9 new symbol declarations to `ts/src/ffi.ts`. Export `Theme` from `ts/src/index.ts`. Update `Kraken` class in `app.ts` to provide `switchTheme(theme: Theme)` convenience method.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given import { Theme } from "kraken-tui"
@@ -243,8 +263,8 @@ Given const t = new Theme(); t.setColor(0, 0x01FF0000)
 When t.apply(someWidget) is called
 Then tui_apply_theme is called with t.handle and someWidget.handle
 
-Given app.switchTheme(Theme.DARK) is called after tui_init
-Then tui_switch_theme(1) is called
+Given app.switchTheme(theme) is called after tui_init
+Then tui_switch_theme(theme.handle) is called
 ```
 
 ---
@@ -416,26 +436,106 @@ And widget.animate() correctly encodes color strings
 
 ---
 
+### Epic H: v1 Elevation (Post-Audit)
+
+> **Justification:** Per Goldratt (_The Goal_), once a prior constraint is resolved, the system constraint moves. With Epics F and G closed, the new constraint is product-level readiness: missing v1 capabilities (primitives/chaining) and behavioral proof. Epic H isolates this final-mile work without reopening closed foundation epics.
+
+---
+
+**[TASK-H1] Built-in animation primitives (spinner, progress, pulse)**
+- **Type:** Feature
+- **Effort:** 5 SP
+- **Dependencies:** [TASK-G5]
+- **Description:** Implement built-in animation primitives required by PRD Epic 8. Add native helper entry points for `tui_start_spinner`, `tui_start_progress`, and `tui_start_pulse` that compose existing animation registry behavior. Add TS wrappers on `Widget` (`spinner()`, `progress()`, `pulse()`) with ergonomic defaults and explicit cancellation handles.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given a widget handle
+When widget.spinner({ interval: 80 }) is called
+Then a non-zero animation handle is returned
+And repeated renders visibly advance the spinner state
+
+Given a widget handle
+When widget.progress({ duration: 1000, easing: "linear" }) is called
+Then a non-zero animation handle is returned
+And progress reaches 100% after the duration elapses
+
+Given a widget handle
+When widget.pulse({ duration: 600, easing: "easeInOut" }) is called
+Then a non-zero animation handle is returned
+And the pulsing cycle updates across consecutive renders
+```
+
+---
+
+**[TASK-H2] Animation chaining API and runtime scheduling**
+- **Type:** Feature
+- **Effort:** 3 SP
+- **Dependencies:** [TASK-H1]
+- **Description:** Implement chaining so animation B starts automatically after animation A completes. Add `tui_chain_animation(after_anim, next_anim)` and runtime queueing in `animation.rs` for pending links. Ensure cancellation semantics are explicit: cancelling the parent prevents automatic scheduling of chained successors.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given animation A and animation B
+When tui_chain_animation(A, B) is called
+Then it returns 0
+And B does not start before A completes
+
+Given chained animations A -> B
+When A completes during tui_render()
+Then B is activated on the next render cycle
+
+Given chained animations A -> B
+When tui_cancel_animation(A) is called before completion
+Then B is not auto-started
+```
+
+---
+
+**[TASK-H3] Behavioral verification for themed render output and animation progression**
+- **Type:** Chore
+- **Effort:** 3 SP
+- **Dependencies:** [TASK-H2]
+- **Description:** Add executable behavior assertions (not status-code-only checks) for v1 done criteria: themed color resolution in rendered buffers, animation progression in rendered buffers over elapsed time, primitive behavior over frame progression, and chaining order guarantees. Expand both Rust render integration tests and TS FFI tests.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given a text node with no explicit fg/bg
+And a dark theme applied at root
+When tui_render() is called
+Then rendered cells use theme fg/bg values
+
+Given an opacity animation from 1.0 to 0.0 over 500ms
+When two renders occur around the midpoint
+Then rendered output reflects intermediate opacity before final value
+
+Given chained animations A -> B
+When renders advance past A completion
+Then B starts only after A completion and in-order
+```
+
+---
+
 ## 5. SUMMARY TABLES
 
 ### v1 Tickets
 
-| ID | Title | Type | SP | Dependencies |
-|----|-------|------|----|--------------|
-| TASK-F1 | Add `style_mask` to VisualStyle + update style setters | Chore | 3 | None |
-| TASK-F2 | Implement `theme.rs` — data model + context + built-in themes | Feature | 3 | None |
-| TASK-F3 | Theme FFI — 9 new `extern "C"` entry points | Feature | 5 | F1, F2 |
-| TASK-F4 | Theme-aware style resolution in Style + Render Modules | Feature | 3 | F1, F2 |
-| TASK-F5 | TypeScript `Theme` class and FFI bindings | Feature | 2 | F3, F4 |
-| TASK-F6 | Theme integration tests (Rust unit + FFI) | Chore | 3 | F4, F5 |
-| TASK-G1 | Implement `animation.rs` — engine + lifecycle | Feature | 5 | F6 |
-| TASK-G2 | Animation FFI — 2 new `extern "C"` entry points | Feature | 2 | G1 |
-| TASK-G3 | Animation advancement in `tui_render()` pipeline | Feature | 3 | G1 |
-| TASK-G4 | TypeScript animation bindings in `ffi.ts` + `widget.ts` | Feature | 2 | G2 |
-| TASK-G5 | Animation integration tests (Rust unit + FFI + TS) | Chore | 3 | G3, G4 |
-| | **v1 TOTAL** | | **34** | |
+| ID | Title | Type | SP | Dependencies | Status |
+|----|-------|------|----|--------------|--------|
+| TASK-F1 | Add `style_mask` to VisualStyle + update style setters | Chore | 3 | None | ✅ Closed |
+| TASK-F2 | Implement `theme.rs` — data model + context + built-in themes | Feature | 3 | None | ✅ Closed |
+| TASK-F3 | Theme FFI — 9 new `extern "C"` entry points | Feature | 5 | F1, F2 | ✅ Closed |
+| TASK-F4 | Theme-aware style resolution in Style + Render Modules | Feature | 3 | F1, F2 | ✅ Closed |
+| TASK-F5 | TypeScript `Theme` class and FFI bindings | Feature | 2 | F3, F4 | ✅ Closed |
+| TASK-F6 | Theme integration tests (Rust unit + FFI) | Chore | 3 | F4, F5 | ✅ Closed |
+| TASK-G1 | Implement `animation.rs` — engine + lifecycle | Feature | 5 | F6 | ✅ Closed |
+| TASK-G2 | Animation FFI — 2 new `extern "C"` entry points | Feature | 2 | G1 | ✅ Closed |
+| TASK-G3 | Animation advancement in `tui_render()` pipeline | Feature | 3 | G1 | ✅ Closed |
+| TASK-G4 | TypeScript animation bindings in `ffi.ts` + `widget.ts` | Feature | 2 | G2 | ✅ Closed |
+| TASK-G5 | Animation integration tests (Rust unit + FFI + TS) | Chore | 3 | G3, G4 | ✅ Closed |
+| TASK-H1 | Built-in animation primitives (spinner, progress, pulse) | Feature | 5 | G5 | 🔄 Active |
+| TASK-H2 | Animation chaining API and runtime scheduling | Feature | 3 | H1 | ⏳ Pending |
+| TASK-H3 | Behavioral verification for themed output + animation progression | Chore | 3 | H2 | ⏳ Pending |
+| | **v1 TOTAL** | | **45** | | |
 
-**Parallelization opportunities:** TASK-F1 and TASK-F2 have no dependencies and can be executed simultaneously (F1 touches `style.rs`, F2 touches `theme.rs` and `context.rs` — no file conflicts). TASK-F3 and TASK-F4 can begin in parallel once F1 and F2 are done. TASK-G2 and TASK-G3 can begin in parallel once G1 is done.
+**Parallelization opportunities:** Historical v1 opportunities remain: TASK-F1 and TASK-F2 can execute in parallel; TASK-F3 and TASK-F4 can begin in parallel once F1/F2 are complete; TASK-G2 and TASK-G3 can begin in parallel once G1 is complete. Current active Epic H runs mostly sequentially by design to preserve behavioral determinism.
 
 ### v0 Archive (All Complete)
 

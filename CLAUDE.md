@@ -9,12 +9,13 @@ These instructions guide you to focus on project-specific architecture and comma
 
 **Kraken TUI** is a Rust-powered terminal UI library with TypeScript/Bun bindings via FFI. Rust handles all performance-critical work (layout, rendering, events); TypeScript is a thin client with no rendering logic, no layout computation, and no event state.
 
-The specification (TechSpec v2.1) defines the full v0 scope of 62 FFI functions. All modules are fully implemented with 70 Rust unit tests and 54 FFI integration tests.
+The constitutional documents define v0 as delivered and v1 as an internal stable milestone that remains experimental until public v1 GA. Current native exports are 74 symbols total, with 73 in the public production surface (excluding test-only `tui_init_headless`).
 
 **Authority documents** (read in this order for any design questions):
-1. [PRD.md](./docs/PRD.md) (v2.0) — What we're building and why
-2. [TechSpec.md](./docs/TechSpec.md) (v2.1) — **The authoritative specification** (62 FFI functions, data model, ADRs T01–T11)
-3. [Architecture.md](./docs/Architecture.md) (v2.0) — System design and module boundaries
+1. [PRD.md](./docs/PRD.md) (v2.1) — What we're building and why
+2. [Architecture.md](./docs/Architecture.md) (v2.1) — System design and module boundaries
+3. [TechSpec.md](./docs/TechSpec.md) (v3.1) — Technical contracts (FFI/data model/ADRs)
+4. [Tasks.md](./docs/Tasks.md) (v2.1) — Ticket decomposition and execution status
 
 ---
 
@@ -41,7 +42,7 @@ Output: `native/target/release/libkraken_tui.so` (Linux) / `.dylib` (macOS) / `.
 ### Test
 
 ```bash
-# Rust unit tests (70 tests across all modules)
+# Rust unit tests
 cargo test --manifest-path native/Cargo.toml
 
 # Single test by name
@@ -50,7 +51,7 @@ cargo test --manifest-path native/Cargo.toml test_create_and_destroy -- --exact
 # Tests with stdout
 cargo test --manifest-path native/Cargo.toml -- --nocapture
 
-# FFI integration tests (54 tests, requires release build first)
+# FFI integration tests (requires release build first)
 cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts
 
 # FFI benchmarks
@@ -77,7 +78,7 @@ cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path nati
 
 ```
 TypeScript/Bun (thin command client)
-  ↓ 62 C ABI functions via bun:ffi dlopen
+  ↓ 73 public C ABI functions via bun:ffi dlopen (74 exports including test-only headless init)
 Rust cdylib (native performance engine)
   ├─ Tree       — node CRUD, hierarchy, dirty propagation
   ├─ Layout     — Taffy flexbox integration
@@ -127,7 +128,7 @@ pub extern "C" fn tui_something(args...) -> i32 {
 
 | File | Role |
 |------|------|
-| `ffi.ts` | `dlopen` bindings for all 62 native symbols |
+| `ffi.ts` | `dlopen` bindings for the current native symbol surface |
 | `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (ADR-T06, no external FFI library) |
 | `app.ts` | `Kraken` class — lifecycle (init, shutdown, setRoot, readInput, drainEvents, render) |
 | `widget.ts` | Base `Widget` class — layout/style property setters, child management |
@@ -166,7 +167,7 @@ All widgets are identified by opaque `u32` handles. Handle 0 is reserved as inva
 ### Before Implementing Any FFI Function
 
 1. Read its contract in TechSpec Section 4
-2. Read the relevant ADR (T01–T11)
+2. Read the relevant ADR in TechSpec (including v1 additions such as Theme/Animation ADRs)
 3. Read the data model in TechSpec Section 3
 4. Implement module logic in the appropriate `native/src/*.rs` file
 5. Add the `extern "C"` entry point in `lib.rs` using `ffi_wrap()`
@@ -187,4 +188,4 @@ All widgets are identified by opaque `u32` handles. Handle 0 is reserved as inva
 | Scroll | ✅ Complete | Per-node viewport state, max-scroll clamping, scroll_by with bounds |
 | Content | ✅ Complete | set/get text, format (plain/markdown/code), code language |
 
-All 62 FFI functions from TechSpec Section 4 are implemented in `lib.rs`.
+The implemented FFI surface in `native/src/lib.rs` is ahead of v0 baseline and continues through the current v1 experimental milestone.

@@ -2,10 +2,10 @@
 
 ## Kraken TUI
 
-**Version**: 2.0
-**Status**: Draft
+**Version**: 2.1
+**Status**: Draft (Experimental until public v1 GA)
 **Date**: February 2026
-**Source of Truth**: [PRD.md](./PRD.md) v2.0
+**Source of Truth**: [PRD.md](./PRD.md) v2.1
 **Upstream Decisions**: [ADR-001 through ADR-005](./architecture/)
 
 ---
@@ -435,6 +435,7 @@ The following decisions were made during this Architecture phase. They extend (n
 | **Theme Architecture**        | Separate Theme Module as a bounded context within the Native Core. Theme Module owns definitions and subtree bindings. Style Module queries Theme Module during style resolution, merging theme defaults with explicit styles (explicit wins). | Per Eric Evans (DDD), theming operates on the aggregate of styles across subtrees — a distinct concern from applying a single style to a single node. The v2 theme inheritance model (constraint-based, nested subtrees) will add resolution complexity; isolating it now prevents the Style Module from accumulating unrelated responsibilities.                                          |
 | **Developer-Assigned IDs**    | Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core is unaware of developer-assigned identifiers. No FFI surface change.                                                                             | Developer IDs are an ergonomic convenience for the Host Layer API. The Native Core operates on Handles for layout, rendering, and event processing. Adding string-based lookups to the Native Core would introduce state that serves no computational purpose — violating the core invariant (Rust is the performance engine).                                                             |
 | **String Interning**          | Implementation-time optimization, not an architectural decision. May be applied within the Tree or Text Module for high-frequency identical strings. No FFI surface change.                                                                    | Interning is an internal memory optimization invisible to the Host Layer. Premature specification at the architecture level would over-constrain implementation. Deferred to profiling data.                                                                                                                                                                                               |
+| **Headless Runtime Path**     | Headless initialization/backends are test utilities, not part of the production lifecycle contract.                                                                                                                                        | Keeps the architecture's production contract centered on real terminal lifecycle management while preserving deterministic CI/testing harnesses.                                                                                                                                                                                                                                           |
 
 ## Appendix C: Resolved Open Questions
 
