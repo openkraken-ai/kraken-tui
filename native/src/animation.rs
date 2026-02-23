@@ -625,4 +625,48 @@ mod tests {
         assert!(ctx.animations.is_empty());
         assert_eq!(ctx.nodes[&h].visual_style.opacity, 0.0);
     }
+
+    /// Regression: sub-millisecond elapsed values must advance animations.
+    /// Before the fix, render.rs truncated via `.as_millis()` → 0 for tight loops,
+    /// causing `advance_animations` to no-op on the `elapsed_ms <= 0.0` guard.
+    #[test]
+    fn test_advance_sub_millisecond_elapsed() {
+        let mut ctx = test_ctx();
+        let h = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        // Opacity starts at 1.0 (default); animate to 0.0 over 1000ms
+        start_animation(
+            &mut ctx,
+            h,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        // Advance by 0.5ms — sub-millisecond but non-zero
+        advance_animations(&mut ctx, 0.5);
+
+        // The animation must have progressed, not been skipped
+        assert_eq!(ctx.animations.len(), 1);
+        assert!(
+            ctx.animations[0].elapsed_ms > 0.0,
+            "sub-ms elapsed was dropped: {}",
+            ctx.animations[0].elapsed_ms,
+        );
+        assert!(
+            (ctx.animations[0].elapsed_ms - 0.5).abs() < f32::EPSILON,
+            "elapsed should be 0.5, got {}",
+            ctx.animations[0].elapsed_ms,
+        );
+
+        // Opacity should have moved slightly from 1.0 toward 0.0
+        let opacity = ctx.nodes[&h].visual_style.opacity;
+        assert!(
+            opacity < 1.0,
+            "opacity should have decreased from 1.0, got {}",
+            opacity,
+        );
+    }
 }

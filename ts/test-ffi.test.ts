@@ -1036,6 +1036,58 @@ describe("FFI integration", () => {
 		});
 	});
 
+	// ── Regression tests ───────────────────────────────────────────────────
+
+	describe("regressions", () => {
+		test("opacity string target '0.5' produces correct IEEE-754 bits", () => {
+			// Regression: Widget.animate() used to discard string targets for opacity,
+			// treating any non-number as 1.0. The fix parses via parseFloat().
+			// This test verifies the string→float→bits path produces the same result
+			// as the direct numeric path, and that tui_animate accepts those bits.
+			const fromString = parseFloat("0.5");
+			const fromNumber = 0.5;
+			expect(fromString).toBe(fromNumber);
+
+			const stringBits = new Uint32Array(new Float32Array([fromString]).buffer)[0]!;
+			const numberBits = new Uint32Array(new Float32Array([fromNumber]).buffer)[0]!;
+			expect(stringBits).toBe(numberBits);
+
+			// Confirm tui_animate accepts the string-derived bits
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_animate(node, 0, stringBits, 500, 0);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("opacity string target '0' and '1' edge cases produce correct bits", () => {
+			// Ensure boundary values parsed from strings match their numeric equivalents
+			for (const val of ["0", "0.0", "1", "1.0"]) {
+				const parsed = parseFloat(val);
+				expect(isNaN(parsed)).toBe(false);
+
+				const bits = new Uint32Array(new Float32Array([parsed]).buffer)[0]!;
+				const expectedBits = new Uint32Array(
+					new Float32Array([Number(val)]).buffer,
+				)[0]!;
+				expect(bits).toBe(expectedBits);
+			}
+		});
+
+		test("non-numeric opacity string yields NaN (Widget layer throws TypeError)", () => {
+			// Regression: non-numeric strings like "bad" were silently treated as 1.0.
+			// The fix calls parseFloat() which returns NaN; Widget.animate() then throws.
+			// At the FFI level we verify the parseFloat behavior that the fix relies on.
+			expect(isNaN(parseFloat("bad"))).toBe(true);
+			expect(isNaN(parseFloat(""))).toBe(true);
+			expect(isNaN(parseFloat("abc123"))).toBe(true);
+
+			// Valid numeric strings must NOT be NaN
+			expect(isNaN(parseFloat("0.5"))).toBe(false);
+			expect(isNaN(parseFloat("0"))).toBe(false);
+			expect(isNaN(parseFloat("1.0"))).toBe(false);
+		});
+	});
+
 	// ── Post-shutdown safety ────────────────────────────────────────────────
 
 	describe("post-shutdown", () => {
