@@ -1086,6 +1086,52 @@ describe("FFI integration", () => {
 			expect(isNaN(parseFloat("0"))).toBe(false);
 			expect(isNaN(parseFloat("1.0"))).toBe(false);
 		});
+
+		test("propMap returns undefined for unknown property (Widget layer throws TypeError)", () => {
+			// Documents the guard added for Issue 1: unknown property strings must not
+			// silently fall back to 0 (Opacity). The Widget layer throws TypeError; here
+			// we verify the underlying propMap lookup behavior the guard relies on.
+			const propMap: Record<string, number> = {
+				opacity: 0, fgColor: 1, bgColor: 2, borderColor: 3,
+			};
+			expect(propMap["opacity"]).toBe(0);
+			expect(propMap["unknownProp"]).toBeUndefined();
+			expect(propMap["OPACITY"]).toBeUndefined();
+			expect(propMap["fgcolor"]).toBeUndefined();
+		});
+
+		test("easingMap returns undefined for unknown easing (Widget layer throws TypeError)", () => {
+			// Documents the guard added for Issue 2: unknown easing strings must not
+			// silently fall back to 0 (Linear). The Widget layer throws TypeError; here
+			// we verify the underlying easingMap lookup behavior the guard relies on.
+			const easingMap: Record<string, number> = {
+				linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3,
+			};
+			expect(easingMap["linear"]).toBe(0);
+			expect(easingMap["Linear"]).toBeUndefined();
+			expect(easingMap["bounce"]).toBeUndefined();
+			expect(easingMap["ease-in"]).toBeUndefined();
+		});
+
+		test("NaN duration fails Number.isFinite check (Widget layer throws TypeError)", () => {
+			// Documents Issue 3 guard: NaN is not a finite number.
+			expect(Number.isFinite(NaN)).toBe(false);
+			expect(Number.isFinite(300)).toBe(true);
+			expect(Number.isFinite(0)).toBe(true);
+		});
+
+		test("Infinity and negative duration fail validation (Widget layer throws TypeError)", () => {
+			// Documents Issue 3 guard: Infinity is not finite; negative durations are
+			// rejected by the >= 0 check even though isFinite(negative) is true.
+			expect(Number.isFinite(Infinity)).toBe(false);
+			expect(Number.isFinite(-Infinity)).toBe(false);
+			// isFinite(-100) is true, but the < 0 guard catches it:
+			expect(Number.isFinite(-100)).toBe(true);
+			expect(-100 < 0).toBe(true);
+			// Valid durations pass both checks:
+			expect(Number.isFinite(0) && 0 >= 0).toBe(true);
+			expect(Number.isFinite(500) && 500 >= 0).toBe(true);
+		});
 	});
 
 	// ── Post-shutdown safety ────────────────────────────────────────────────

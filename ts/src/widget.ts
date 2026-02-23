@@ -149,7 +149,13 @@ export abstract class Widget {
 			easeInOut: 3,
 		};
 
-		const prop = propMap[options.property] ?? 0;
+		const prop = propMap[options.property];
+		if (prop === undefined) {
+			throw new TypeError(
+				`animate: invalid property "${options.property}". ` +
+					`Expected one of: opacity, fgColor, bgColor, borderColor`,
+			);
+		}
 		let targetBits: number;
 
 		if (options.property === "opacity") {
@@ -170,7 +176,21 @@ export abstract class Widget {
 			targetBits = parseColor(options.target);
 		}
 
-		const easing = easingMap[options.easing ?? "linear"] ?? 0;
+		const easingKey = options.easing ?? "linear";
+		const easing = easingMap[easingKey];
+		if (easing === undefined) {
+			throw new TypeError(
+				`animate: invalid easing "${easingKey}". ` +
+					`Expected one of: linear, easeIn, easeOut, easeInOut`,
+			);
+		}
+
+		if (!Number.isFinite(options.duration) || options.duration < 0) {
+			throw new TypeError(
+				`animate: duration must be a non-negative finite number, got ${options.duration}`,
+			);
+		}
+
 		const handle = ffi.tui_animate(
 			this.handle,
 			prop,
