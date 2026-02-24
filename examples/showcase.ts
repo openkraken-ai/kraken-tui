@@ -471,10 +471,9 @@ function buildAnimPage(): Box {
 	// Pulse (built-in, oscillates indefinitely)
 	pulseBody.pulse({ duration: 1500, easing: "easeInOut" });
 
-	// Color fade: accent → purple → orange, chained so they run in sequence
-	const hCol1 = colorBody.animate({ property: "fgColor", target: C.purple, duration: 1200, easing: "easeInOut" });
-	const hCol2 = colorBody.animate({ property: "fgColor", target: C.orange, duration: 1200, easing: "easeInOut" });
-	app.chainAnimation(hCol1, hCol2);
+	// Color fade: single animation accent → purple (chaining two calls on the
+	// same property cancels the first handle, making chainAnimation() throw)
+	colorBody.animate({ property: "fgColor", target: C.purple, duration: 2400, easing: "easeInOut" });
 
 	// Staggered progress chain
 	startProgressChain();

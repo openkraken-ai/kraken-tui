@@ -45,6 +45,7 @@ impl CrosstermBackend {
 impl TerminalBackend for CrosstermBackend {
     fn init(&mut self) -> Result<(), String> {
         use crossterm::{
+            cursor,
             event::EnableMouseCapture,
             terminal::{enable_raw_mode, EnterAlternateScreen},
             ExecutableCommand,
@@ -58,6 +59,14 @@ impl TerminalBackend for CrosstermBackend {
         stdout
             .execute(EnableMouseCapture)
             .map_err(|e| format!("mouse capture: {e}"))?;
+        // Hide the terminal cursor for the entire TUI session.
+        // Input widget cursors are rendered as inverted cells in the buffer
+        // (render.rs render_input_cursor), so the OS cursor is not needed and
+        // leaving it visible causes it to bleed onto arbitrary cells after
+        // each write_diff pass (the OS cursor lands on the last written cell).
+        stdout
+            .execute(cursor::Hide)
+            .map_err(|e| format!("hide cursor: {e}"))?;
 
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
         self.width = w;
@@ -68,12 +77,18 @@ impl TerminalBackend for CrosstermBackend {
 
     fn shutdown(&mut self) -> Result<(), String> {
         use crossterm::{
+            cursor,
             event::DisableMouseCapture,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
             ExecutableCommand,
         };
 
         let mut stdout = std::io::stdout();
+        // Restore the OS cursor before leaving so the shell prompt renders
+        // correctly after the TUI exits.
+        stdout
+            .execute(cursor::Show)
+            .map_err(|e| format!("show cursor: {e}"))?;
         stdout
             .execute(DisableMouseCapture)
             .map_err(|e| format!("disable mouse: {e}"))?;
