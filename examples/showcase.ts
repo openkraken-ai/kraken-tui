@@ -448,8 +448,14 @@ function buildAnimPage(): Box {
 	chainRow.setHeight(1);
 
 	chainLabelA = new Text({ content: "Phase A", fg: C.green, bold: true });
+	chainLabelA.setWidth(7);
+	chainLabelA.setHeight(1);
 	const chainArrow = new Text({ content: "  →  ", fg: C.fgMuted });
+	chainArrow.setWidth(5);
+	chainArrow.setHeight(1);
 	chainLabelB = new Text({ content: "Phase B", fg: C.purple, bold: true });
+	chainLabelB.setWidth(7);
+	chainLabelB.setHeight(1);
 	chainLabelA.setOpacity(0);
 	chainLabelB.setOpacity(0);
 
