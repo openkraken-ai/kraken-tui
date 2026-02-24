@@ -180,7 +180,11 @@ pub(crate) fn start_animation(
         };
         let alpha = apply_easing(existing.easing, t);
         let current = interpolate(property, existing.start_bits, existing.end_bits, alpha);
+        let existing_id = existing.id;
         ctx.animations.remove(idx);
+        ctx.animation_chains.remove(&existing_id);
+        ctx.animation_chains
+            .retain(|_, next_id| *next_id != existing_id);
         current
     } else {
         let node = ctx
@@ -1221,7 +1225,10 @@ mod tests {
         // Advance to completion + a bit past: animation reverses
         advance_animations(&mut ctx, 600.0);
         // Still in the animation registry (looping, not removed)
-        assert!(!ctx.animations.is_empty(), "looping animation must not be removed");
+        assert!(
+            !ctx.animations.is_empty(),
+            "looping animation must not be removed"
+        );
         // After reversal, end_bits should be the original start_bits (accent)
         let anim = ctx.animations.iter().find(|a| a.id == anim_id).unwrap();
         assert_eq!(
@@ -1245,9 +1252,25 @@ mod tests {
         crate::style::set_opacity(&mut ctx, label_b, 0.0).unwrap();
 
         // Animate A: opacity 0 → 1 over 500ms
-        let ha = start_animation(&mut ctx, label_a, AnimProp::Opacity, 1.0f32.to_bits(), 500, Easing::Linear).unwrap();
+        let ha = start_animation(
+            &mut ctx,
+            label_a,
+            AnimProp::Opacity,
+            1.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
         // Animate B: opacity 0 → 1 over 500ms (pending until A completes)
-        let hb = start_animation(&mut ctx, label_b, AnimProp::Opacity, 1.0f32.to_bits(), 500, Easing::Linear).unwrap();
+        let hb = start_animation(
+            &mut ctx,
+            label_b,
+            AnimProp::Opacity,
+            1.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
         chain_animation(&mut ctx, ha, hb).unwrap();
 
         // B should be pending

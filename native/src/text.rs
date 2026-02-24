@@ -65,23 +65,22 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
     };
 
     // Build current CellAttrs from flags
-    let make_attrs =
-        |bold: bool, italic: bool, strikethrough: bool, in_link: bool| -> CellAttrs {
-            let mut a = CellAttrs::empty();
-            if bold {
-                a |= CellAttrs::BOLD;
-            }
-            if italic {
-                a |= CellAttrs::ITALIC;
-            }
-            if strikethrough {
-                a |= CellAttrs::STRIKETHROUGH;
-            }
-            if in_link {
-                a |= CellAttrs::UNDERLINE;
-            }
-            a
-        };
+    let make_attrs = |bold: bool, italic: bool, strikethrough: bool, in_link: bool| -> CellAttrs {
+        let mut a = CellAttrs::empty();
+        if bold {
+            a |= CellAttrs::BOLD;
+        }
+        if italic {
+            a |= CellAttrs::ITALIC;
+        }
+        if strikethrough {
+            a |= CellAttrs::STRIKETHROUGH;
+        }
+        if in_link {
+            a |= CellAttrs::UNDERLINE;
+        }
+        a
+    };
 
     let push = |spans: &mut Vec<StyledSpan>, text: &str, attrs: CellAttrs, fg: u32| {
         spans.push(StyledSpan {
@@ -194,7 +193,8 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
 
             // ── Inline content ────────────────────────────────────────────
             Event::Text(text) => {
-                let attrs = make_attrs(bold, italic || blockquote_depth > 0, strikethrough, in_link);
+                let attrs =
+                    make_attrs(bold, italic || blockquote_depth > 0, strikethrough, in_link);
                 let fg = if in_link {
                     0x0158a6ff // accent blue for links
                 } else if in_code_block {

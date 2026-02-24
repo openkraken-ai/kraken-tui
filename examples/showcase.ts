@@ -170,7 +170,7 @@ function buildGalleryPage(): Box {
 			"**Bold**, *italic*, `code`, ~~strike~~",
 			"",
 			"- Flexbox layout via Taffy 0.9",
-			"- Double-buffered rendering",
+			"* Double-buffered rendering",
 			"- 73 public FFI symbols",
 		].join("\n"),
 		format: "markdown",
@@ -577,11 +577,11 @@ function buildSyntaxPage(): Box {
 			"## Unordered List",
 			"",
 			"- **Tree** — handle-based node CRUD",
-			"- **Layout** — Taffy 0.9 flexbox engine",
+			"* **Layout** — Taffy 0.9 flexbox engine",
 			"- **Render** — double-buffered cell grid",
-			"  - dirty diffing for minimal redraws",
+			"  * dirty diffing for minimal redraws",
 			"  - opacity blending per cell",
-			"- **Event** — focus state machine",
+			"* **Event** — focus state machine",
 			"- **Animation** — property interpolation",
 			"",
 			"## Ordered List",
@@ -933,7 +933,7 @@ function updateLiveOutput() {
 	const name = liveNameInput.getValue() || "stranger";
 	const passLen = livePassInput.getValue().length;
 	const styleIdx = liveStyleSelect.getSelected();
-	const styleName = liveStyleSelect.getOption(styleIdx);
+	const styleName = styleIdx >= 0 ? liveStyleSelect.getOption(styleIdx) : liveStyleSelect.getOption(0);
 	const greetFn = GREETINGS[styleName];
 	const greeting = greetFn ? greetFn(name) : `Hello, ${name}!`;
 
