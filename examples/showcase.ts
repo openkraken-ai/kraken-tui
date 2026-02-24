@@ -169,9 +169,11 @@ function buildGalleryPage(): Box {
 			"",
 			"**Bold**, *italic*, `code`, ~~strike~~",
 			"",
-			"- Flexbox layout via Taffy 0.9",
-			"- Double-buffered rendering",
-			"- 73 public FFI symbols",
+			"• Flexbox layout via Taffy 0.9",
+			"",
+			"• Double-buffered rendering",
+			"",
+			"• 73 public FFI symbols",
 		].join("\n"),
 		format: "markdown",
 		fg: C.fg,
@@ -320,7 +322,7 @@ function buildAnimPage(): Box {
 
 	const row1 = new Box({ width: "100%", flexDirection: "row", gap: 2 });
 
-	// Card helper
+	// Card helper — stretch alignment so children fill the width
 	function makeCard(widthPct: string, borderColor: string): Box {
 		const card = new Box({
 			height: 6,
@@ -329,7 +331,6 @@ function buildAnimPage(): Box {
 			bg: C.bgCard,
 			padding: 1,
 			flexDirection: "column",
-			alignItems: "center",
 			justifyContent: "center",
 		});
 		card.setWidth(widthPct);
@@ -340,10 +341,13 @@ function buildAnimPage(): Box {
 	const spinCard = makeCard("33%", C.cyan);
 	const spinHead = new Text({ content: "Spinner", fg: C.fgMuted, bold: true });
 	spinHead.setHeight(1);
+	spinHead.setWidth("100%");
 	const spinBody = new Text({ content: "◌", fg: C.cyan, bold: true });
 	spinBody.setHeight(1);
-	const spinFoot = new Text({ content: "Braille · 80 ms/frame · ∞", fg: C.fgMuted });
+	spinBody.setWidth("100%");
+	const spinFoot = new Text({ content: "Braille · 80ms/frame · ∞", fg: C.fgMuted });
 	spinFoot.setHeight(1);
+	spinFoot.setWidth("100%");
 	spinCard.append(spinHead);
 	spinCard.append(spinBody);
 	spinCard.append(spinFoot);
@@ -352,10 +356,13 @@ function buildAnimPage(): Box {
 	const pulseCard = makeCard("33%", C.purple);
 	const pulseHead = new Text({ content: "Pulse", fg: C.fgMuted, bold: true });
 	pulseHead.setHeight(1);
+	pulseHead.setWidth("100%");
 	const pulseBody = new Text({ content: "◈  opacity oscillates  ◈", fg: C.purple, bold: true });
 	pulseBody.setHeight(1);
-	const pulseFoot = new Text({ content: "easeInOut · 1 500 ms · ∞", fg: C.fgMuted });
+	pulseBody.setWidth("100%");
+	const pulseFoot = new Text({ content: "easeInOut · 1500ms · ∞", fg: C.fgMuted });
 	pulseFoot.setHeight(1);
+	pulseFoot.setWidth("100%");
 	pulseCard.append(pulseHead);
 	pulseCard.append(pulseBody);
 	pulseCard.append(pulseFoot);
@@ -364,10 +371,13 @@ function buildAnimPage(): Box {
 	const colorCard = makeCard("33%", C.orange);
 	const colorHead = new Text({ content: "Color Transition", fg: C.fgMuted, bold: true });
 	colorHead.setHeight(1);
+	colorHead.setWidth("100%");
 	const colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.accent, bold: true });
 	colorBody.setHeight(1);
-	const colorFoot = new Text({ content: "fgColor · easeInOut · 1 200 ms", fg: C.fgMuted });
+	colorBody.setWidth("100%");
+	const colorFoot = new Text({ content: "fgColor · easeInOut · 1200ms", fg: C.fgMuted });
 	colorFoot.setHeight(1);
+	colorFoot.setWidth("100%");
 	colorCard.append(colorHead);
 	colorCard.append(colorBody);
 	colorCard.append(colorFoot);
@@ -531,14 +541,21 @@ function buildSyntaxPage(): Box {
 			"",
 			"## Module Surface",
 			"",
-			"- **Tree** — handle-based node CRUD",
-			"- **Layout** — Taffy 0.9 flexbox engine",
-			"- **Render** — double-buffered cell grid",
-			"- **Event** — focus state machine",
-			"- **Scroll** — per-node viewport state",
-			"- **Text** — markdown + syntax highlight",
-			"- **Animation** — property interpolation",
-			"- **Theme** — cascading style defaults",
+			"• **Tree** — handle-based node CRUD",
+			"",
+			"• **Layout** — Taffy 0.9 flexbox engine",
+			"",
+			"• **Render** — double-buffered cell grid",
+			"",
+			"• **Event** — focus state machine",
+			"",
+			"• **Scroll** — per-node viewport state",
+			"",
+			"• **Text** — markdown + syntax highlight",
+			"",
+			"• **Animation** — property interpolation",
+			"",
+			"• **Theme** — cascading style defaults",
 			"",
 			"## Design Constraints",
 			"",
@@ -822,9 +839,11 @@ function buildThemePage(): Box {
 			"",
 			"## What changes",
 			"",
-			"- Background and foreground",
-			"- Accent and border colors",
-			"- Applied via direct style setters",
+			"• Background and foreground",
+			"",
+			"• Accent and border colors",
+			"",
+			"• Applied via direct style setters",
 			"",
 			"The v1 Theme API also supports",
 			"*cascading defaults* via `Theme.create()`",
@@ -922,36 +941,31 @@ function buildLivePage(): Box {
 
 	const cols = new Box({ width: "100%", flexDirection: "row", gap: 2 });
 
-	// ── Left: form fields ─────────────────────────────────────────────────────
+	// ── Left: form fields (column layout per field — avoids flex width fight) ─────
 
 	const formCol = new Box({ flexDirection: "column", gap: 1 });
 	formCol.setWidth("52%");
 
-	// Name row
-	const nameRow = new Box({ flexDirection: "row", alignItems: "center", gap: 1 });
-	nameRow.setHeight(3);
-	const nameLabel = new Text({ content: "Name:  ", fg: C.green, bold: true });
-	nameLabel.setWidth(8);
+	// Name field (label above input)
+	const nameLabel = new Text({ content: "Name:", fg: C.green, bold: true });
+	nameLabel.setHeight(1);
+	nameLabel.setWidth("100%");
 	const nameInput = new Input({ width: "100%", height: 3, border: "rounded", fg: C.fg, bg: C.bgCard, maxLength: 32 });
 	nameInput.setFocusable(true);
 	liveNameInput = nameInput;
-	nameRow.append(nameLabel);
-	nameRow.append(nameInput);
 
-	// Password row
-	const passRow = new Box({ flexDirection: "row", alignItems: "center", gap: 1 });
-	passRow.setHeight(3);
-	const passLabel = new Text({ content: "Pass:  ", fg: C.yellow, bold: true });
-	passLabel.setWidth(8);
+	// Password field (label above input)
+	const passLabel = new Text({ content: "Password:  (masked with ●)", fg: C.yellow, bold: true });
+	passLabel.setHeight(1);
+	passLabel.setWidth("100%");
 	const passInput = new Input({ width: "100%", height: 3, border: "rounded", fg: C.fg, bg: C.bgCard, maxLength: 32, mask: "●" });
 	passInput.setFocusable(true);
 	livePassInput = passInput;
-	passRow.append(passLabel);
-	passRow.append(passInput);
 
-	// Greeting style row
-	const styleCaption = new Text({ content: "Greeting style:", fg: C.fgMuted, bold: true });
+	// Greeting style select
+	const styleCaption = new Text({ content: "Greeting style:", fg: C.purple, bold: true });
 	styleCaption.setHeight(1);
+	styleCaption.setWidth("100%");
 
 	const styleSelect = new Select({
 		options: Object.keys(GREETINGS),
@@ -964,8 +978,10 @@ function buildLivePage(): Box {
 	styleSelect.setFocusable(true);
 	liveStyleSelect = styleSelect;
 
-	formCol.append(nameRow);
-	formCol.append(passRow);
+	formCol.append(nameLabel);
+	formCol.append(nameInput);
+	formCol.append(passLabel);
+	formCol.append(passInput);
 	formCol.append(styleCaption);
 	formCol.append(styleSelect);
 
