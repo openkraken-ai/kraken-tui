@@ -135,6 +135,8 @@ export abstract class Widget {
 		target: number | string;
 		duration: number;
 		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+		/** If true, the animation reverses and repeats indefinitely (oscillates). */
+		loop?: boolean;
 	}): number {
 		const propMap: Record<string, number> = {
 			opacity: 0,
@@ -200,6 +202,9 @@ export abstract class Widget {
 		);
 		if (handle === 0) {
 			throw new Error("Failed to start animation");
+		}
+		if (options.loop) {
+			ffi.tui_set_animation_looping(handle);
 		}
 		return handle;
 	}

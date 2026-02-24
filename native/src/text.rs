@@ -28,56 +28,201 @@ pub(crate) fn parse_content(
 }
 
 /// Parse Markdown into styled spans.
+///
+/// Supported structures: headings H1-H4 (coloured), bold, italic, strikethrough,
+/// inline code, fenced code blocks, blockquotes, unordered/ordered lists,
+/// links (underlined accent), horizontal rules.
 fn parse_markdown(content: &str) -> Vec<StyledSpan> {
-    use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+    use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
-    let parser = Parser::new(content);
-    let mut spans = Vec::new();
-    let mut attrs = CellAttrs::empty();
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let parser = Parser::new_ext(content, options);
+    let mut spans: Vec<StyledSpan> = Vec::new();
+
+    // Inline formatting state
+    let mut bold = false;
+    let mut italic = false;
+    let mut strikethrough = false;
+    let mut in_link = false;
+
+    // Block context
+    let mut heading_level: u8 = 0;
+    let mut blockquote_depth: usize = 0;
+    let mut in_code_block = false;
+
+    // List tracking: None = unordered, Some(n) = ordered starting at n
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
+    let mut item_counters: Vec<u64> = Vec::new();
+
+    // Heading foreground colours
+    let heading_fg = |level: u8| -> u32 {
+        match level {
+            1 => 0x0158a6ff, // accent blue
+            2 => 0x013fb950, // green
+            3 => 0x01d29922, // yellow
+            _ => 0x01bc8cff, // purple
+        }
+    };
+
+    // Build current CellAttrs from flags
+    let make_attrs = |bold: bool, italic: bool, strikethrough: bool, in_link: bool| -> CellAttrs {
+        let mut a = CellAttrs::empty();
+        if bold {
+            a |= CellAttrs::BOLD;
+        }
+        if italic {
+            a |= CellAttrs::ITALIC;
+        }
+        if strikethrough {
+            a |= CellAttrs::STRIKETHROUGH;
+        }
+        if in_link {
+            a |= CellAttrs::UNDERLINE;
+        }
+        a
+    };
+
+    let push = |spans: &mut Vec<StyledSpan>, text: &str, attrs: CellAttrs, fg: u32| {
+        spans.push(StyledSpan {
+            text: text.to_string(),
+            attrs,
+            fg,
+            bg: 0,
+        });
+    };
 
     for event in parser {
         match event {
+            // ── Block opens ───────────────────────────────────────────────
             Event::Start(tag) => match tag {
-                Tag::Strong => attrs |= CellAttrs::BOLD,
-                Tag::Emphasis => attrs |= CellAttrs::ITALIC,
-                _ => {}
-            },
-            Event::End(tag_end) => match tag_end {
-                TagEnd::Strong => attrs.remove(CellAttrs::BOLD),
-                TagEnd::Emphasis => attrs.remove(CellAttrs::ITALIC),
-                TagEnd::Heading(_) | TagEnd::Paragraph => {
-                    spans.push(StyledSpan {
-                        text: "\n".to_string(),
-                        attrs,
-                        fg: 0,
-                        bg: 0,
-                    });
+                Tag::Heading { level, .. } => {
+                    heading_level = match level {
+                        HeadingLevel::H1 => 1,
+                        HeadingLevel::H2 => 2,
+                        HeadingLevel::H3 => 3,
+                        _ => 4,
+                    };
+                    bold = true;
+                    // Emit the glyph prefix so headings are visually distinct
+                    let prefix = match heading_level {
+                        1 => "# ",
+                        2 => "## ",
+                        3 => "### ",
+                        _ => "#### ",
+                    };
+                    push(
+                        &mut spans,
+                        prefix,
+                        CellAttrs::BOLD,
+                        heading_fg(heading_level),
+                    );
                 }
+                Tag::Paragraph => {
+                    // Inside blockquotes, prefix each paragraph with a bar glyph
+                    if blockquote_depth > 0 {
+                        let bar = "▎ ".repeat(blockquote_depth);
+                        push(&mut spans, &bar, CellAttrs::BOLD, 0x018b949e);
+                    }
+                }
+                Tag::Strong => bold = true,
+                Tag::Emphasis => italic = true,
+                Tag::Strikethrough => strikethrough = true,
+                Tag::BlockQuote(_) => blockquote_depth += 1,
+                Tag::CodeBlock(_kind) => in_code_block = true,
+                Tag::List(first_num) => {
+                    list_stack.push(first_num);
+                    item_counters.push(first_num.unwrap_or(1));
+                }
+                Tag::Item => {
+                    let is_ordered = matches!(list_stack.last(), Some(Some(_)));
+                    let prefix = if is_ordered {
+                        let n = item_counters.last_mut().unwrap();
+                        let s = format!(" {}. ", n);
+                        *n += 1;
+                        s
+                    } else {
+                        let indent = "  ".repeat(list_stack.len().saturating_sub(1));
+                        format!("{indent} • ")
+                    };
+                    push(&mut spans, &prefix, CellAttrs::BOLD, 0x013fb950);
+                }
+                Tag::Link { .. } => in_link = true,
                 _ => {}
             },
+
+            // ── Block closes ──────────────────────────────────────────────
+            Event::End(tag_end) => match tag_end {
+                TagEnd::Heading(_) => {
+                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    if heading_level <= 2 {
+                        // Extra blank line under major headings
+                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    }
+                    heading_level = 0;
+                    bold = false;
+                }
+                TagEnd::Paragraph => {
+                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                }
+                TagEnd::Strong => bold = false,
+                TagEnd::Emphasis => italic = false,
+                TagEnd::Strikethrough => strikethrough = false,
+                TagEnd::BlockQuote(_) => {
+                    blockquote_depth = blockquote_depth.saturating_sub(1);
+                    if blockquote_depth == 0 {
+                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    }
+                }
+                TagEnd::CodeBlock => {
+                    in_code_block = false;
+                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                }
+                TagEnd::List(_) => {
+                    list_stack.pop();
+                    item_counters.pop();
+                    if list_stack.is_empty() {
+                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    }
+                }
+                TagEnd::Item => {
+                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                }
+                TagEnd::Link => in_link = false,
+                _ => {}
+            },
+
+            // ── Inline content ────────────────────────────────────────────
             Event::Text(text) => {
-                spans.push(StyledSpan {
-                    text: text.to_string(),
-                    attrs,
-                    fg: 0,
-                    bg: 0,
-                });
+                let attrs =
+                    make_attrs(bold, italic || blockquote_depth > 0, strikethrough, in_link);
+                let fg = if in_link {
+                    0x0158a6ff // accent blue for links
+                } else if in_code_block {
+                    0x01aaaaaa // code grey
+                } else if blockquote_depth > 0 {
+                    0x018b949e // muted for blockquotes
+                } else if heading_level > 0 {
+                    heading_fg(heading_level)
+                } else {
+                    0 // node default
+                };
+                push(&mut spans, &text, attrs, fg);
             }
             Event::Code(code) => {
-                spans.push(StyledSpan {
-                    text: code.to_string(),
-                    attrs: CellAttrs::BOLD,
-                    fg: 0x01AAAAAA, // light grey for inline code
-                    bg: 0,
-                });
+                // Inline code: monospace-style with light-grey colour
+                push(&mut spans, &code, CellAttrs::BOLD, 0x01aaaaaa);
+            }
+            Event::Rule => {
+                // Horizontal rule: a line of ─ glyphs
+                push(
+                    &mut spans,
+                    "──────────────────────────────────────────\n",
+                    CellAttrs::empty(),
+                    0x01586e75,
+                );
             }
             Event::SoftBreak | Event::HardBreak => {
-                spans.push(StyledSpan {
-                    text: "\n".to_string(),
-                    attrs,
-                    fg: 0,
-                    bg: 0,
-                });
+                push(&mut spans, "\n", CellAttrs::empty(), 0);
             }
             _ => {}
         }

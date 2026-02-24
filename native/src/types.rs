@@ -116,9 +116,10 @@ bitflags! {
     #[repr(transparent)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct CellAttrs: u8 {
-        const BOLD      = 0b0000_0001;
-        const ITALIC    = 0b0000_0010;
-        const UNDERLINE = 0b0000_0100;
+        const BOLD          = 0b0000_0001;
+        const ITALIC        = 0b0000_0010;
+        const UNDERLINE     = 0b0000_0100;
+        const STRIKETHROUGH = 0b0000_1000;
     }
 }
 

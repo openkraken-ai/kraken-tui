@@ -246,6 +246,10 @@ const symbols = {
 		args: ["u32", "u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_set_animation_looping: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 
 	// Focus
 	tui_set_focusable: {
