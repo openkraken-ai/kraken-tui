@@ -169,11 +169,9 @@ function buildGalleryPage(): Box {
 			"",
 			"**Bold**, *italic*, `code`, ~~strike~~",
 			"",
-			"• Flexbox layout via Taffy 0.9",
-			"",
-			"• Double-buffered rendering",
-			"",
-			"• 73 public FFI symbols",
+			"- Flexbox layout via Taffy 0.9",
+			"- Double-buffered rendering",
+			"- 73 public FFI symbols",
 		].join("\n"),
 		format: "markdown",
 		fg: C.fg,
@@ -401,7 +399,7 @@ function buildAnimPage(): Box {
 		justifyContent: "center",
 		gap: 1,
 	});
-	progCard.setWidth("65%");
+	progCard.setWidth("66%");
 
 	const progHead = new Text({ content: "Chained Progress  —  each block fades in sequentially via chainAnimation()", fg: C.fgMuted, bold: true });
 	progHead.setHeight(1);
@@ -473,9 +471,10 @@ function buildAnimPage(): Box {
 	// Pulse (built-in, oscillates indefinitely)
 	pulseBody.pulse({ duration: 1500, easing: "easeInOut" });
 
-	// Color fade: accent → purple → orange → back
-	colorBody.animate({ property: "fgColor", target: C.purple,  duration: 1200, easing: "easeInOut" });
-	colorBody.animate({ property: "fgColor", target: C.orange,  duration: 1200, easing: "easeInOut" });
+	// Color fade: accent → purple → orange, chained so they run in sequence
+	const hCol1 = colorBody.animate({ property: "fgColor", target: C.purple, duration: 1200, easing: "easeInOut" });
+	const hCol2 = colorBody.animate({ property: "fgColor", target: C.orange, duration: 1200, easing: "easeInOut" });
+	app.chainAnimation(hCol1, hCol2);
 
 	// Staggered progress chain
 	startProgressChain();
@@ -541,21 +540,14 @@ function buildSyntaxPage(): Box {
 			"",
 			"## Module Surface",
 			"",
-			"• **Tree** — handle-based node CRUD",
-			"",
-			"• **Layout** — Taffy 0.9 flexbox engine",
-			"",
-			"• **Render** — double-buffered cell grid",
-			"",
-			"• **Event** — focus state machine",
-			"",
-			"• **Scroll** — per-node viewport state",
-			"",
-			"• **Text** — markdown + syntax highlight",
-			"",
-			"• **Animation** — property interpolation",
-			"",
-			"• **Theme** — cascading style defaults",
+			"- **Tree** — handle-based node CRUD",
+			"- **Layout** — Taffy 0.9 flexbox engine",
+			"- **Render** — double-buffered cell grid",
+			"- **Event** — focus state machine",
+			"- **Scroll** — per-node viewport state",
+			"- **Text** — markdown + syntax highlight",
+			"- **Animation** — property interpolation",
+			"- **Theme** — cascading style defaults",
 			"",
 			"## Design Constraints",
 			"",
@@ -800,11 +792,11 @@ function buildThemePage(): Box {
 	swatchRow.append(swAcc);
 
 	const hintText = new Text({
-		content: "↑↓ arrows navigate\nEnter confirms\nColors update live",
+		content: "↑↓ arrows update live\nTab moves focus",
 		format: "plain",
 		fg: C.fgMuted,
 	});
-	hintText.setHeight(3);
+	hintText.setHeight(2);
 
 	leftCol.append(selCaption);
 	leftCol.append(themeSelect);
@@ -839,11 +831,9 @@ function buildThemePage(): Box {
 			"",
 			"## What changes",
 			"",
-			"• Background and foreground",
-			"",
-			"• Accent and border colors",
-			"",
-			"• Applied via direct style setters",
+			"- Background and foreground",
+			"- Accent and border colors",
+			"- Applied via direct style setters",
 			"",
 			"The v1 Theme API also supports",
 			"*cascading defaults* via `Theme.create()`",
