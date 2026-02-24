@@ -374,10 +374,10 @@ function buildAnimPage(): Box {
 	const colorHead = new Text({ content: "Color Transition", fg: C.fgMuted, bold: true });
 	colorHead.setHeight(1);
 	colorHead.setWidth("100%");
-	colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.accent, bold: true });
+	colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.green, bold: true });
 	colorBody.setHeight(1);
 	colorBody.setWidth("100%");
-	const colorFoot = new Text({ content: "fgColor · easeInOut · loop:true · ∞", fg: C.fgMuted });
+	const colorFoot = new Text({ content: "fgColor · green→red · easeInOut · ∞", fg: C.fgMuted });
 	colorFoot.setHeight(1);
 	colorFoot.setWidth("100%");
 	colorCard.append(colorHead);
@@ -502,11 +502,11 @@ function restartAnimPageAnimations() {
 	if (colorAnimHandle > 0) {
 		try { colorBody.cancelAnimation(colorAnimHandle); } catch (_) { /* already done */ }
 	}
-	colorBody.setForeground(C.accent);
+	colorBody.setForeground(C.green);
 	colorAnimHandle = colorBody.animate({
 		property: "fgColor",
-		target: C.purple,
-		duration: 1800,
+		target: C.red,
+		duration: 1200,
 		easing: "easeInOut",
 		loop: true,
 	});
