@@ -211,6 +211,55 @@ export abstract class Widget {
 		checkResult(ffi.tui_cancel_animation(animHandle));
 	}
 
+	/**
+	 * Start a built-in spinner animation that cycles through braille frames.
+	 * @returns Animation handle (for cancellation)
+	 */
+	spinner(options: { interval?: number } = {}): number {
+		const interval = options.interval ?? 80;
+		const handle = ffi.tui_start_spinner(this.handle, interval);
+		if (handle === 0) {
+			throw new Error("Failed to start spinner animation");
+		}
+		return handle;
+	}
+
+	/**
+	 * Start a built-in progress animation (opacity 0→1 over the given duration).
+	 * @returns Animation handle (for cancellation)
+	 */
+	progress(options: {
+		duration: number;
+		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+	}): number {
+		const easingMap = { linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3 } as const;
+		const easingKey = options.easing ?? "linear";
+		const easing = easingMap[easingKey] ?? 0;
+		const handle = ffi.tui_start_progress(this.handle, options.duration, easing);
+		if (handle === 0) {
+			throw new Error("Failed to start progress animation");
+		}
+		return handle;
+	}
+
+	/**
+	 * Start a built-in pulse animation (opacity oscillates indefinitely).
+	 * @returns Animation handle (for cancellation)
+	 */
+	pulse(options: {
+		duration: number;
+		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+	}): number {
+		const easingMap = { linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3 } as const;
+		const easingKey = options.easing ?? "easeInOut";
+		const easing = easingMap[easingKey] ?? 3;
+		const handle = ffi.tui_start_pulse(this.handle, options.duration, easing);
+		if (handle === 0) {
+			throw new Error("Failed to start pulse animation");
+		}
+		return handle;
+	}
+
 	// --- Focus ---
 
 	setFocusable(focusable: boolean): void {

@@ -38,6 +38,7 @@ pub struct TuiContext {
 
     // Animation Module (v1)
     pub animations: Vec<Animation>,
+    pub animation_chains: HashMap<u32, u32>, // after_anim_id → next_anim_id
     pub next_anim_handle: u32,
     pub last_render_time: Option<Instant>,
 
@@ -77,6 +78,7 @@ impl TuiContext {
             next_theme_handle: crate::theme::FIRST_USER_THEME_HANDLE,
 
             animations: Vec::new(),
+            animation_chains: HashMap::new(),
             next_anim_handle: 1,
             last_render_time: None,
 

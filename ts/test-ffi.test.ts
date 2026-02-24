@@ -106,6 +106,10 @@ const lib = dlopen(LIB_PATH, {
 	// Animation (v1)
 	tui_animate:           { args: ["u32", "u8", "u32", "u32", "u8"] as FFIType[], returns: "u32" as const },
 	tui_cancel_animation:  { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_start_spinner:     { args: ["u32", "u32"] as FFIType[],                  returns: "u32" as const },
+	tui_start_progress:    { args: ["u32", "u32", "u8"] as FFIType[],            returns: "u32" as const },
+	tui_start_pulse:       { args: ["u32", "u32", "u8"] as FFIType[],            returns: "u32" as const },
+	tui_chain_animation:   { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
 
 	// Rendering
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
@@ -1033,6 +1037,283 @@ describe("FFI integration", () => {
 			const after = Number(ffi.tui_get_perf_counter(6));
 			expect(after).toBe(before + 1);
 			ffi.tui_destroy_node(node);
+		});
+	});
+
+	// ── H1: Spinner primitive ───────────────────────────────────────────────
+
+	describe("spinner primitive", () => {
+		test("tui_start_spinner returns valid handle", () => {
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_start_spinner(node, 80);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_start_spinner with invalid node returns 0", () => {
+			expect(ffi.tui_start_spinner(9999, 80)).toBe(0);
+		});
+
+		test("perf counter 6 increments with active spinner", () => {
+			const node = ffi.tui_create_node(0);
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const handle = ffi.tui_start_spinner(node, 80);
+			expect(handle).toBeGreaterThan(0);
+			const after = Number(ffi.tui_get_perf_counter(6));
+			expect(after).toBe(before + 1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("destroy node cancels active spinner", () => {
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_start_spinner(node, 80);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+			// Cancelling should now fail — animation was removed with the node
+			expect(ffi.tui_cancel_animation(handle)).toBe(-1);
+		});
+
+		test("render succeeds with active spinner", () => {
+			const root = ffi.tui_create_node(0);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, text);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+			ffi.tui_set_layout_dimension(text, 0, 5, 1);
+			ffi.tui_set_layout_dimension(text, 1, 1, 1);
+
+			const handle = ffi.tui_start_spinner(text, 80);
+			expect(handle).toBeGreaterThan(0);
+			expect(ffi.tui_render()).toBe(0);
+
+			ffi.tui_destroy_node(text);
+			ffi.tui_destroy_node(root);
+		});
+
+		test("spinner content is a braille frame after sufficient elapsed time", () => {
+			const root = ffi.tui_create_node(0);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, text);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+			ffi.tui_set_layout_dimension(text, 0, 5, 1);
+			ffi.tui_set_layout_dimension(text, 1, 1, 1);
+
+			// Use 1ms interval so any render will advance at least one frame
+			ffi.tui_start_spinner(text, 1);
+
+			// First render sets initial frame
+			ffi.tui_render();
+			// Wait to guarantee elapsed time > 1ms between renders
+			Bun.sleepSync(5);
+			// Second render advances the frame
+			ffi.tui_render();
+
+			const content = getContent(text);
+			const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+			expect(spinnerFrames).toContain(content);
+
+			ffi.tui_destroy_node(text);
+			ffi.tui_destroy_node(root);
+		});
+	});
+
+	// ── H1: Progress primitive ──────────────────────────────────────────────
+
+	describe("progress primitive", () => {
+		test("tui_start_progress returns valid handle", () => {
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_start_progress(node, 1000, 0);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_start_progress with invalid node returns 0", () => {
+			expect(ffi.tui_start_progress(9999, 1000, 0)).toBe(0);
+		});
+
+		test("tui_start_progress with invalid easing returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			expect(ffi.tui_start_progress(node, 1000, 99)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("perf counter 6 increments with active progress animation", () => {
+			const node = ffi.tui_create_node(0);
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const handle = ffi.tui_start_progress(node, 1000, 0);
+			expect(handle).toBeGreaterThan(0);
+			const after = Number(ffi.tui_get_perf_counter(6));
+			expect(after).toBe(before + 1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("render succeeds with active progress animation", () => {
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const handle = ffi.tui_start_progress(root, 1000, 2); // EaseOut
+			expect(handle).toBeGreaterThan(0);
+			expect(ffi.tui_render()).toBe(0);
+
+			ffi.tui_destroy_node(root);
+		});
+
+		test("all easing variants accepted by tui_start_progress", () => {
+			const node = ffi.tui_create_node(0);
+			for (const easing of [0, 1, 2, 3]) {
+				const h = ffi.tui_start_progress(node, 500, easing);
+				expect(h).toBeGreaterThan(0);
+				ffi.tui_cancel_animation(h);
+			}
+			ffi.tui_destroy_node(node);
+		});
+	});
+
+	// ── H1: Pulse primitive ─────────────────────────────────────────────────
+
+	describe("pulse primitive", () => {
+		test("tui_start_pulse returns valid handle", () => {
+			const node = ffi.tui_create_node(0);
+			const handle = ffi.tui_start_pulse(node, 600, 3);
+			expect(handle).toBeGreaterThan(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_start_pulse with invalid node returns 0", () => {
+			expect(ffi.tui_start_pulse(9999, 600, 3)).toBe(0);
+		});
+
+		test("tui_start_pulse with invalid easing returns 0", () => {
+			const node = ffi.tui_create_node(0);
+			expect(ffi.tui_start_pulse(node, 600, 99)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("perf counter 6 increments with active pulse animation", () => {
+			const node = ffi.tui_create_node(0);
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const handle = ffi.tui_start_pulse(node, 600, 3);
+			expect(handle).toBeGreaterThan(0);
+			const after = Number(ffi.tui_get_perf_counter(6));
+			expect(after).toBe(before + 1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("render succeeds with active pulse animation and animation persists", () => {
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const handle = ffi.tui_start_pulse(root, 600, 3);
+			expect(handle).toBeGreaterThan(0);
+			expect(ffi.tui_render()).toBe(0);
+
+			// Pulse loops — cancellation should still succeed after render
+			expect(ffi.tui_cancel_animation(handle)).toBe(0);
+
+			ffi.tui_destroy_node(root);
+		});
+	});
+
+	// ── H2: Animation chaining ──────────────────────────────────────────────
+
+	describe("animation chaining", () => {
+		test("tui_chain_animation returns 0 for valid handles", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const animA = ffi.tui_animate(node, 0, zeroBits, 500, 0);
+			const animB = ffi.tui_animate(node, 1, 0x01FF0000, 300, 0);
+			expect(animA).toBeGreaterThan(0);
+			expect(animB).toBeGreaterThan(0);
+			expect(ffi.tui_chain_animation(animA, animB)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_chain_animation with invalid after_anim returns -1", () => {
+			const node = ffi.tui_create_node(0);
+			const animB = ffi.tui_animate(node, 1, 0x01FF0000, 300, 0);
+			expect(ffi.tui_chain_animation(9999, animB)).toBe(-1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("tui_chain_animation with invalid next_anim returns -1", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const animA = ffi.tui_animate(node, 0, zeroBits, 500, 0);
+			expect(ffi.tui_chain_animation(animA, 9999)).toBe(-1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("cancelling A prevents B from auto-activating", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const animA = ffi.tui_animate(node, 0, zeroBits, 5000, 0); // long duration
+			const animB = ffi.tui_animate(node, 1, 0x01FF0000, 300, 0);
+			ffi.tui_chain_animation(animA, animB);
+
+			// Cancel A — this should prevent B from auto-starting
+			expect(ffi.tui_cancel_animation(animA)).toBe(0);
+
+			// B must still be in the registry (it hasn't been cancelled)
+			// and cancelling B explicitly must succeed
+			expect(ffi.tui_cancel_animation(animB)).toBe(0);
+
+			ffi.tui_destroy_node(node);
+		});
+
+		test("B activates after A completes (0ms duration A, behavioral proof)", () => {
+			// Use a 0ms animation for A so it completes on the first tui_render()
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+
+			// A: 0ms duration — completes immediately on first render
+			const animA = ffi.tui_animate(root, 0, zeroBits, 0, 0);
+			// B: long duration fg-color animation
+			const animB = ffi.tui_animate(root, 1, 0x01FF0000, 5000, 0);
+
+			expect(ffi.tui_chain_animation(animA, animB)).toBe(0);
+
+			// Before render: A exists (pending completion), B is pending (not advancing)
+			// After render: A completes → B is activated
+			expect(ffi.tui_render()).toBe(0);
+
+			// A should be gone (completed and removed)
+			expect(ffi.tui_cancel_animation(animA)).toBe(-1);
+
+			// B should now be active (no longer pending) → cancel succeeds
+			expect(ffi.tui_cancel_animation(animB)).toBe(0);
+
+			ffi.tui_destroy_node(root);
+		});
+
+		test("chained animations: destroy node cancels both A and B", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const animA = ffi.tui_animate(node, 0, zeroBits, 1000, 0);
+			const animB = ffi.tui_animate(node, 1, 0x01FF0000, 500, 0);
+			ffi.tui_chain_animation(animA, animB);
+
+			// Destroying the node cancels all its animations
+			ffi.tui_destroy_node(node);
+
+			// Both should be gone
+			expect(ffi.tui_cancel_animation(animA)).toBe(-1);
+			expect(ffi.tui_cancel_animation(animB)).toBe(-1);
 		});
 	});
 

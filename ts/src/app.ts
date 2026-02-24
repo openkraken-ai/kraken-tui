@@ -135,4 +135,12 @@ export class Kraken {
 	getNodeCount(): number {
 		return ffi.tui_get_node_count();
 	}
+
+	/**
+	 * Chain animation B to start when animation A completes.
+	 * Cancelling A prevents B from auto-starting.
+	 */
+	chainAnimation(afterAnim: number, nextAnim: number): void {
+		checkResult(ffi.tui_chain_animation(afterAnim, nextAnim), "chainAnimation");
+	}
 }
