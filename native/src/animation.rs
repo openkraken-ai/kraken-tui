@@ -452,6 +452,20 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
     ctx.animations.retain(|a| !completed_ids.contains(&a.id));
 }
 
+/// Mark a running animation as looping (bidirectional oscillation).
+///
+/// When looping is true, the animation reverses direction and repeats on
+/// completion instead of being removed. Works for any property animation;
+/// used to make color transitions and opacity animations oscillate.
+pub(crate) fn set_animation_looping(ctx: &mut TuiContext, anim_id: u32) -> Result<(), String> {
+    if let Some(anim) = ctx.animations.iter_mut().find(|a| a.id == anim_id) {
+        anim.looping = true;
+        Ok(())
+    } else {
+        Err(format!("Animation not found: {anim_id}"))
+    }
+}
+
 /// Cancel an animation by its handle. Returns error if not found.
 ///
 /// The property retains its current interpolated value.

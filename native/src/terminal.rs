@@ -165,6 +165,11 @@ impl TerminalBackend for CrosstermBackend {
                     .queue(SetAttribute(Attribute::Underlined))
                     .map_err(|e| format!("underline: {e}"))?;
             }
+            if update.cell.attrs.contains(CellAttrs::STRIKETHROUGH) {
+                stdout
+                    .queue(SetAttribute(Attribute::CrossedOut))
+                    .map_err(|e| format!("strikethrough: {e}"))?;
+            }
 
             stdout
                 .queue(Print(update.cell.ch))

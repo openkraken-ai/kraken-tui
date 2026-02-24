@@ -913,6 +913,15 @@ pub extern "C" fn tui_start_pulse(handle: u32, duration_ms: u32, easing: u8) -> 
 }
 
 #[no_mangle]
+pub extern "C" fn tui_set_animation_looping(anim_id: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_mut()?;
+        animation::set_animation_looping(ctx, anim_id)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_chain_animation(after_anim: u32, next_anim: u32) -> i32 {
     ffi_wrap(|| {
         let ctx = context_mut()?;

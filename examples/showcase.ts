@@ -373,7 +373,7 @@ function buildAnimPage(): Box {
 	const colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.accent, bold: true });
 	colorBody.setHeight(1);
 	colorBody.setWidth("100%");
-	const colorFoot = new Text({ content: "fgColor · easeInOut · 1200ms", fg: C.fgMuted });
+	const colorFoot = new Text({ content: "fgColor · easeInOut · loop:true · ∞", fg: C.fgMuted });
 	colorFoot.setHeight(1);
 	colorFoot.setWidth("100%");
 	colorCard.append(colorHead);
@@ -471,9 +471,8 @@ function buildAnimPage(): Box {
 	// Pulse (built-in, oscillates indefinitely)
 	pulseBody.pulse({ duration: 1500, easing: "easeInOut" });
 
-	// Color fade: single animation accent → purple (chaining two calls on the
-	// same property cancels the first handle, making chainAnimation() throw)
-	colorBody.animate({ property: "fgColor", target: C.purple, duration: 2400, easing: "easeInOut" });
+	// Color fade: oscillates accent ↔ purple indefinitely with loop:true
+	colorBody.animate({ property: "fgColor", target: C.purple, duration: 1800, easing: "easeInOut", loop: true });
 
 	// Staggered progress chain
 	startProgressChain();
@@ -519,7 +518,7 @@ function buildSyntaxPage(): Box {
 	const leftCol = new Box({ flexDirection: "column", gap: 1 });
 	leftCol.setWidth("48%");
 
-	const mdCaption = new Text({ content: "Markdown  (headers, bold, italic, lists, HR)", fg: C.fgMuted, bold: true });
+	const mdCaption = new Text({ content: "Markdown  (H1-H4, bold, italic, strike, lists, blockquote, code, HR)", fg: C.fgMuted, bold: true });
 	mdCaption.setHeight(1);
 
 	const mdScroll = new ScrollBox({
@@ -534,48 +533,63 @@ function buildSyntaxPage(): Box {
 		content: [
 			"# Kraken TUI v1",
 			"",
-			"A **Rust-powered** terminal UI library with",
-			"*TypeScript* bindings via Bun FFI.",
+			"A **Rust-powered** terminal UI library with *TypeScript*",
+			"bindings via Bun FFI — 73 public C ABI symbols.",
 			"",
-			"## Module Surface",
+			"## Inline Styles",
+			"",
+			"**bold**, *italic*, `inline code`, ~~strikethrough~~,",
+			"and [links are underlined](https://example.com).",
+			"",
+			"## Unordered List",
 			"",
 			"- **Tree** — handle-based node CRUD",
 			"- **Layout** — Taffy 0.9 flexbox engine",
 			"- **Render** — double-buffered cell grid",
+			"  - dirty diffing for minimal redraws",
+			"  - opacity blending per cell",
 			"- **Event** — focus state machine",
-			"- **Scroll** — per-node viewport state",
-			"- **Text** — markdown + syntax highlight",
 			"- **Animation** — property interpolation",
-			"- **Theme** — cascading style defaults",
 			"",
-			"## Design Constraints",
+			"## Ordered List",
 			"",
-			"TypeScript is a *thin client* with zero",
-			"rendering logic and zero event state.",
-			"Rust owns all mutable state; TS holds",
-			"opaque `u32` handles.",
+			"1. Rust `cdylib` is compiled to a `.so`",
+			"2. Bun loads it via `dlopen` at runtime",
+			"3. TypeScript calls the 73 C ABI exports",
+			"4. Rust owns all mutable state",
+			"",
+			"## Blockquote",
+			"",
+			"> *All layout and rendering happens in the Rust cdylib —*",
+			"> *never in TypeScript. TS holds opaque `u32` handles.*",
+			"",
+			"## Code Block",
+			"",
+			"```rust",
+			"pub extern \"C\" fn tui_animate(",
+			"    handle: u32, prop: u32,",
+			"    target: u32, dur: f32,",
+			") -> u32 { … }",
+			"```",
 			"",
 			"---",
 			"",
 			"## Performance",
 			"",
-			"| Metric          | Value         |",
-			"|-----------------|---------------|",
-			"| FFI call        | ~0.085 μs     |",
-			"| 300 mutations   | 0.183 ms      |",
-			"| Target budget   | 16.7 ms/frame |",
+			"FFI round-trip: **~0.085 μs** · 300 mutations: **0.183 ms**",
+			"Frame budget: *16.7 ms at 60 fps* — well within target.",
 			"",
 			"---",
 			"",
-			"> *All layout and rendering happens in*",
-			"> *the Rust cdylib — never in TS.*",
+			"> **Design rule:** TypeScript is a *thin command client.*",
+			"> Rust owns the state. Zero TS layout logic.",
 		].join("\n"),
 		format: "markdown",
 		fg: C.fg,
 		bg: C.bgCard,
 	});
 	mdContent.setWidth("100%");
-	mdContent.setHeight(50);
+	mdContent.setHeight(70);
 
 	mdScroll.append(mdContent);
 	leftCol.append(mdCaption);
