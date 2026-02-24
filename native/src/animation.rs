@@ -1175,4 +1175,105 @@ mod tests {
         // Invalid next_anim
         assert!(chain_animation(&mut ctx, anim_a, 9999).is_err());
     }
+
+    #[test]
+    fn test_looping_fgcolor_oscillates() {
+        let mut ctx = test_ctx();
+        let h = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        // Set fg_color to accent (#58a6ff = 0x0158a6ff)
+        {
+            let node = ctx.nodes.get_mut(&h).unwrap();
+            node.visual_style.fg_color = 0x0158a6ff;
+            node.visual_style.style_mask |= crate::types::VisualStyle::MASK_FG_COLOR;
+        }
+
+        // Start fgColor animation to purple (#bc8cff = 0x01bc8cff)
+        let anim_id = start_animation(
+            &mut ctx,
+            h,
+            AnimProp::FgColor,
+            0x01bc8cff,
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        // Enable looping
+        set_animation_looping(&mut ctx, anim_id).unwrap();
+
+        // Verify looping is set
+        assert!(
+            ctx.animations.iter().any(|a| a.id == anim_id && a.looping),
+            "animation should be looping"
+        );
+
+        // Advance halfway: color should be between accent and purple
+        advance_animations(&mut ctx, 500.0);
+        let mid_fg = ctx.nodes[&h].visual_style.fg_color;
+        let mid_r = (mid_fg >> 16) & 0xFF;
+        // R: 0x58 + (0xbc - 0x58) * 0.5 = 88 + 50 = 138 = 0x8a
+        assert!(
+            mid_r > 0x58 && mid_r < 0xbc,
+            "midpoint R channel should be between 0x58 and 0xbc, got {mid_r:#04x}"
+        );
+
+        // Advance to completion + a bit past: animation reverses
+        advance_animations(&mut ctx, 600.0);
+        // Still in the animation registry (looping, not removed)
+        assert!(!ctx.animations.is_empty(), "looping animation must not be removed");
+        // After reversal, end_bits should be the original start_bits (accent)
+        let anim = ctx.animations.iter().find(|a| a.id == anim_id).unwrap();
+        assert_eq!(
+            anim.end_bits, 0x0158a6ff,
+            "after first reversal, end_bits should be accent"
+        );
+    }
+
+    #[test]
+    fn test_chain_opacity_labels_fade_in_sequence() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let label_a = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let label_b = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        tree::append_child(&mut ctx, root, label_a).unwrap();
+        tree::append_child(&mut ctx, root, label_b).unwrap();
+        ctx.root = Some(root);
+
+        // Start both at opacity 0
+        crate::style::set_opacity(&mut ctx, label_a, 0.0).unwrap();
+        crate::style::set_opacity(&mut ctx, label_b, 0.0).unwrap();
+
+        // Animate A: opacity 0 → 1 over 500ms
+        let ha = start_animation(&mut ctx, label_a, AnimProp::Opacity, 1.0f32.to_bits(), 500, Easing::Linear).unwrap();
+        // Animate B: opacity 0 → 1 over 500ms (pending until A completes)
+        let hb = start_animation(&mut ctx, label_b, AnimProp::Opacity, 1.0f32.to_bits(), 500, Easing::Linear).unwrap();
+        chain_animation(&mut ctx, ha, hb).unwrap();
+
+        // B should be pending
+        assert!(ctx.animations.iter().find(|a| a.id == hb).unwrap().pending);
+
+        // Advance halfway through A
+        advance_animations(&mut ctx, 250.0);
+        let opacity_a = ctx.nodes[&label_a].visual_style.opacity;
+        assert!(
+            opacity_a > 0.0 && opacity_a < 1.0,
+            "A should be partially visible, got {opacity_a}"
+        );
+        assert_eq!(ctx.nodes[&label_b].visual_style.opacity, 0.0, "B still 0");
+
+        // Complete A → B should activate
+        advance_animations(&mut ctx, 300.0);
+        assert_eq!(ctx.nodes[&label_a].visual_style.opacity, 1.0, "A full");
+        let b_anim = ctx.animations.iter().find(|a| a.id == hb).unwrap();
+        assert!(!b_anim.pending, "B should now be active");
+
+        // Advance B halfway
+        advance_animations(&mut ctx, 250.0);
+        let opacity_b = ctx.nodes[&label_b].visual_style.opacity;
+        assert!(
+            opacity_b > 0.0 && opacity_b < 1.0,
+            "B should be partially visible, got {opacity_b}"
+        );
+    }
 }

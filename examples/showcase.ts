@@ -271,13 +271,17 @@ function buildGalleryPage(): Box {
 // PAGE 2 — Animation Gallery
 // ══════════════════════════════════════════════════════════════════════════════
 
+// Module-level refs so switchPage() can restart demos on every visit
+let colorBody: Text | null = null;
+let colorAnimHandle = 0;
+let chainLabelA: Text | null = null;
+let chainLabelB: Text | null = null;
+
 // Keep track so we can restart the progress chain when revisiting the page
 let progressBlocks: Text[] = [];
 let progressAnimHandles: number[] = [];
-let progressChainStarted = false;
 
 function startProgressChain() {
-	progressChainStarted = true;
 	const colors = [C.red, C.orange, C.yellow, C.green, C.cyan, C.accent, C.purple, C.pink];
 
 	let prev: number | null = null;
@@ -370,7 +374,7 @@ function buildAnimPage(): Box {
 	const colorHead = new Text({ content: "Color Transition", fg: C.fgMuted, bold: true });
 	colorHead.setHeight(1);
 	colorHead.setWidth("100%");
-	const colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.accent, bold: true });
+	colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.accent, bold: true });
 	colorBody.setHeight(1);
 	colorBody.setWidth("100%");
 	const colorFoot = new Text({ content: "fgColor · easeInOut · loop:true · ∞", fg: C.fgMuted });
@@ -417,7 +421,7 @@ function buildAnimPage(): Box {
 		progBarRow.append(block);
 	}
 
-	const progFoot = new Text({ content: "36 blocks · 180 ms each · easeOut  — press R to replay", fg: C.fgMuted });
+	const progFoot = new Text({ content: "36 blocks · 180 ms each · easeOut  — press R to replay all", fg: C.fgMuted });
 	progFoot.setHeight(1);
 
 	progCard.append(progHead);
@@ -443,9 +447,9 @@ function buildAnimPage(): Box {
 	const chainRow = new Box({ flexDirection: "row", gap: 1, alignItems: "center" });
 	chainRow.setHeight(1);
 
-	const chainLabelA = new Text({ content: "Phase A", fg: C.green, bold: true });
+	chainLabelA = new Text({ content: "Phase A", fg: C.green, bold: true });
 	const chainArrow = new Text({ content: "  →  ", fg: C.fgMuted });
-	const chainLabelB = new Text({ content: "Phase B", fg: C.purple, bold: true });
+	chainLabelB = new Text({ content: "Phase B", fg: C.purple, bold: true });
 	chainLabelA.setOpacity(0);
 	chainLabelB.setOpacity(0);
 
@@ -463,7 +467,7 @@ function buildAnimPage(): Box {
 	row2.append(progCard);
 	row2.append(chainCard);
 
-	// ── Start animations ──────────────────────────────────────────────────────
+	// ── Start built-in infinite animations (run from page-build time) ─────────
 
 	// Spinner (built-in, runs indefinitely)
 	spinBody.spinner({ interval: 80 });
@@ -471,22 +475,45 @@ function buildAnimPage(): Box {
 	// Pulse (built-in, oscillates indefinitely)
 	pulseBody.pulse({ duration: 1500, easing: "easeInOut" });
 
-	// Color fade: oscillates accent ↔ purple indefinitely with loop:true
-	colorBody.animate({ property: "fgColor", target: C.purple, duration: 1800, easing: "easeInOut", loop: true });
-
-	// Staggered progress chain
-	startProgressChain();
-
-	// Chain A → B
-	const hA = chainLabelA.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeOut" });
-	const hB = chainLabelB.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeInOut" });
-	app.chainAnimation(hA, hB);
+	// Color transition, progress chain, and A→B chain are started (or restarted)
+	// in restartAnimPageAnimations(), called every time the user navigates to this page.
 
 	page.append(title);
 	page.append(row1);
 	page.append(row2);
 
 	return page;
+}
+
+/// Restart all time-sensitive animation page demos.
+///
+/// Called every time the user navigates to the animation page so they always
+/// see fresh transitions — not stale state from before they arrived.
+function restartAnimPageAnimations() {
+	if (!colorBody || !chainLabelA || !chainLabelB) return;
+
+	// ── Color transition: cancel any running loop, reset to accent, start fresh ──
+	if (colorAnimHandle > 0) {
+		try { colorBody.cancelAnimation(colorAnimHandle); } catch (_) { /* already done */ }
+	}
+	colorBody.setForeground(C.accent);
+	colorAnimHandle = colorBody.animate({
+		property: "fgColor",
+		target: C.purple,
+		duration: 1800,
+		easing: "easeInOut",
+		loop: true,
+	});
+
+	// ── Staggered progress chain ───────────────────────────────────────────────
+	startProgressChain();
+
+	// ── Animation chaining (A → B) ────────────────────────────────────────────
+	chainLabelA.setOpacity(0);
+	chainLabelB.setOpacity(0);
+	const hA = chainLabelA.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeOut" });
+	const hB = chainLabelB.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeInOut" });
+	app.chainAnimation(hA, hB);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1033,7 +1060,7 @@ function buildLivePage(): Box {
 
 const PAGE_HINTS = [
 	"[Tab] Focus  [↑↓] Navigate  [Enter] Submit",
-	"[Tab] Focus  [R] Replay progress chain",
+	"[Tab] Focus  [R] Replay all demos",
 	"[Tab] Focus  [Scroll] Read markdown",
 	"[Tab] Focus  [↑↓] Switch theme  — live preview",
 	"[Tab] Cycle  [Enter] Submit  — try each greeting style!",
@@ -1072,6 +1099,10 @@ function switchPage(idx: number) {
 	statusHint.setContent(`[1-5] Switch  [Tab] Focus  [Q] Quit   ${PAGE_HINTS[currentPage] ?? ""}`);
 	// Move focus into new page
 	app.focusNext();
+	// Restart animation demos so user always sees them play from the beginning
+	if (idx === 1) {
+		restartAnimPageAnimations();
+	}
 }
 
 // Initialise with page 0
@@ -1110,9 +1141,9 @@ while (running) {
 				continue;
 			}
 
-			// Animation page: R to replay progress chain
+			// Animation page: R to replay all animation demos
 			if (currentPage === 1 && (cp === 0x72 /* r */ || cp === 0x52 /* R */)) {
-				startProgressChain();
+				restartAnimPageAnimations();
 				continue;
 			}
 
