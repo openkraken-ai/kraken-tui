@@ -34,7 +34,7 @@ cargo clippy --manifest-path native/Cargo.toml             # Lint
 | `text.rs` | Markdown: `pulldown_cmark::Parser` → `Vec<StyledSpan>`. Code: `syntect` highlighter → `Vec<StyledSpan>`. |
 | `terminal.rs` | `TerminalBackend` trait + `CrosstermBackend` (production) + `HeadlessBackend` (testing). |
 | `theme.rs` | v1: `Theme` storage (HashMap), built-in dark=1/light=2, theme-to-subtree bindings, nearest-ancestor resolution. |
-| `animation.rs` | v1: Animation registry (Vec), delta-time advancement per `tui_render()`, property interpolation (f32 lerp / per-channel RGB lerp), 4 easing functions. |
+| `animation.rs` | v1: Animation registry (Vec), delta-time advancement per `tui_render()`, property interpolation (f32 lerp / per-channel RGB lerp), 4 easing functions, built-in primitives (spinner, progress, pulse), animation chaining. |
 
 ---
 
@@ -85,8 +85,7 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on
 
 ## Current State
 
-- 74 total exports (73 public + `tui_init_headless` test-only)
-- 4 planned for v1 GA: `tui_chain_animation`, `tui_start_spinner`, `tui_start_progress`, `tui_start_pulse`
+- 79 total exports (78 public + `tui_init_headless` test-only)
 - Handles: monotonic u32, never recycled. Handle 0 = invalid sentinel.
 - `tui_free_string`: currently a no-op stub
 - `static mut CONTEXT` with `#[allow(static_mut_refs)]` — acknowledged deprecated pattern, single-threaded invariant enforced by design

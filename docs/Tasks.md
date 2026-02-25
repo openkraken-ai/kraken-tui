@@ -3,9 +3,9 @@
 ## Kraken TUI
 
 **Version**: 2.1
-**Status**: Active (Experimental until public v1 GA)
+**Status**: v1 Complete
 **Date**: February 2026
-**Source of Truth**: [TechSpec.md](./TechSpec.md) v3.2, [Architecture.md](./Architecture.md) v2.2
+**Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md)
 
 ---
 
@@ -14,7 +14,7 @@
 **v0 Delivered:** 34 Story Points across 17 tickets. All 63 FFI functions implemented. 70 Rust unit tests, 54 FFI integration tests. Zero clippy errors, zero rustfmt violations. Full render pipeline (ScrollBox clipping, opacity, cursor, Select rendering). Working example application. See Section 5 for archived ticket table.
 
 **v1 Total Estimation:** 45 Story Points (Fibonacci scale: 1, 2, 3, 5, 8)
-**v1 Remaining Estimation (Epic H):** 11 Story Points
+**v1 Remaining Estimation:** 0 Story Points (all epics closed)
 
 **v1 Critical Path:**
 
@@ -38,7 +38,7 @@ All Phase 1 outcomes delivered:
 6. ✅ Full render + event + FFI integration test coverage (124 tests total)
 7. ✅ Working `examples/demo.ts` demonstrating all five widget types
 
-### Phase 2 — v1 Internal Stable Milestone (Experimental until public v1 GA): IN PROGRESS
+### Phase 2 — v1 Internal Stable Milestone: COMPLETE
 
 Functional outcomes targeted for v1:
 
@@ -49,9 +49,9 @@ Functional outcomes targeted for v1:
 
 Execution status:
 
-- ✅ Epic F (Theme Module) is considered closed.
-- ✅ Epic G (Animation Core Module) is considered closed.
-- 🔄 Epic H (Post-audit v1 elevation) is the active scope to reach public-v1-quality readiness.
+- ✅ Epic F (Theme Module) is closed.
+- ✅ Epic G (Animation Core Module) is closed.
+- ✅ Epic H (Post-audit v1 elevation) is closed.
 
 Explicitly deferred to v2 (per TechSpec ADR-T14 and developer approval):
 
@@ -530,9 +530,9 @@ Then B starts only after A completion and in-order
 | TASK-G3 | Animation advancement in `tui_render()` pipeline | Feature | 3 | G1 | ✅ Closed |
 | TASK-G4 | TypeScript animation bindings in `ffi.ts` + `widget.ts` | Feature | 2 | G2 | ✅ Closed |
 | TASK-G5 | Animation integration tests (Rust unit + FFI + TS) | Chore | 3 | G3, G4 | ✅ Closed |
-| TASK-H1 | Built-in animation primitives (spinner, progress, pulse) | Feature | 5 | G5 | 🔄 Active |
-| TASK-H2 | Animation chaining API and runtime scheduling | Feature | 3 | H1 | ⏳ Pending |
-| TASK-H3 | Behavioral verification for themed output + animation progression | Chore | 3 | H2 | ⏳ Pending |
+| TASK-H1 | Built-in animation primitives (spinner, progress, pulse) | Feature | 5 | G5 | ✅ Closed |
+| TASK-H2 | Animation chaining API and runtime scheduling | Feature | 3 | H1 | ✅ Closed |
+| TASK-H3 | Behavioral verification for themed output + animation progression | Chore | 3 | H2 | ✅ Closed |
 | | **v1 TOTAL** | | **45** | | |
 
 **Parallelization opportunities:** Historical v1 opportunities remain: TASK-F1 and TASK-F2 can execute in parallel; TASK-F3 and TASK-F4 can begin in parallel once F1/F2 are complete; TASK-G2 and TASK-G3 can begin in parallel once G1 is complete. Current active Epic H runs mostly sequentially by design to preserve behavioral determinism.

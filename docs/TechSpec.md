@@ -3,9 +3,9 @@
 ## Kraken TUI
 
 **Version**: 3.2
-**Status**: Draft (Experimental until public v1 GA)
+**Status**: Draft
 **Date**: February 2026
-**Source of Truth**: [Architecture.md](./Architecture.md) v2.2, [PRD.md](./PRD.md) v2.1
+**Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
 **Changelog**:
 - v3.2 — Absorbed Performance Budgets from Architecture.md (was out of Architecture's boundary scope) into §5.5. Renumbered §5.6–§5.7.
@@ -1222,10 +1222,11 @@ The `tui_render()` pipeline with animation support:
 | ------------------------ | ----------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
 | `tui_animate`            | `(u32 handle, u8 property, u32 target_bits, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start animation on a widget property. `property`: see `AnimProp` enum. `target_bits`: target value encoded as u32 (f32 bit-cast for opacity, color encoding for colors). `duration_ms`: animation duration. `easing`: see `Easing` enum. Captures current value as start. Returns animation handle. |
 | `tui_cancel_animation`   | `(u32 anim_handle) -> i32`                                              | 0 / -1         | Cancel an active animation. The property retains its current interpolated value. Returns -1 if animation not found (already completed or invalid handle). |
-| `tui_chain_animation` *(planned for v1 GA)* | `(u32 after_anim, u32 next_anim) -> i32` | 0 / -1 | Chain animations so `next_anim` starts when `after_anim` completes. |
-| `tui_start_spinner` *(planned for v1 GA)* | `(u32 handle, u32 interval_ms) -> u32` | Anim handle / 0 | Start built-in spinner primitive on a widget subtree. |
-| `tui_start_progress` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in progress-bar primitive on a widget subtree. |
-| `tui_start_pulse` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
+| `tui_chain_animation` | `(u32 after_anim, u32 next_anim) -> i32` | 0 / -1 | Chain animations so `next_anim` starts when `after_anim` completes. |
+| `tui_start_spinner` | `(u32 handle, u32 interval_ms) -> u32` | Anim handle / 0 | Start built-in spinner primitive on a widget subtree. |
+| `tui_start_progress` | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in progress-bar primitive on a widget subtree. |
+| `tui_start_pulse` | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
+| `tui_set_animation_looping` | `(u32 anim_id) -> i32` | 0 / -1 | Enable looping (reverse-on-completion) for an animation. Used internally by pulse primitive. |
 
 **Animation behavior:**
 
@@ -1254,11 +1255,11 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 
 ### 4.17 Complete FFI Symbol Count
 
-**Current implemented public surface: 73 functions** (v0 + current v1 progress)
+**Public FFI surface: 78 functions** *(excludes test-only `tui_init_headless`)*
 
 | Category | Count | Note |
 |----------|-------|------|
-| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities *(excludes test-only `tui_init_headless`)* |
+| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities |
 | Node | 6 | create, destroy, type, visibility |
 | Tree | 6 | root, append/remove child, parent queries |
 | Content | 6 | text content, format, code language |
@@ -1269,12 +1270,10 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 | Scroll | 3 | scroll position and delta |
 | Input/Render | 4 | read_input, next_event, render, mark_dirty |
 | Diagnostics | 5 | errors, debug, perf, free_string |
-| **Theme** | **9** | **create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch** |
-| **Animation** | **2** | **animate, cancel_animation** |
+| Theme | 9 | create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch |
+| Animation | 7 | animate, cancel_animation, start_spinner, start_progress, start_pulse, set_animation_looping, chain_animation |
 
-**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+2 = **73**
-
-**Planned additions for public v1 GA:** +4 animation helper symbols (`chain_animation`, `start_spinner`, `start_progress`, `start_pulse`) for a target public surface of **77**.
+**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+7 = **78**
 
 ---
 
@@ -1542,8 +1541,8 @@ The v0+v1 implementation structure is designed to accommodate v2 additions witho
 
 | Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
 | --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PRD.md          | v2.1 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9) includes timed transitions, animation primitives, and chaining; theming foundation with built-in light/dark and runtime switching. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
-| Architecture.md | v2.2 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). Performance budgets moved to TechSpec §5.5 in v2.2. |
+| PRD.md          | Approved | v0 scope (Epics 1–7). v1 scope (Epics 8–9) includes timed transitions, animation primitives, and chaining; theming foundation with built-in light/dark and runtime switching. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
+| Architecture.md | Draft    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). Performance budgets moved to TechSpec §5.5. |
 | ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
 | ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
 | ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |

@@ -26,7 +26,7 @@ bun run examples/demo.ts
 
 | File | Responsibility |
 |------|----------------|
-| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 73+ FFI functions. |
+| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 78 public FFI functions. |
 | `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes, `#[repr(C)]`). Manual byte layout — no external FFI library (ADR-T06). |
 | `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`. Maintains `id → handle` map for developer-assigned IDs. |
 | `widget.ts` | Base `Widget` class — layout/style property setters, child management. Holds `handle: number`. v1: `animate()`, `cancelAnimation()`, primitive helpers. |

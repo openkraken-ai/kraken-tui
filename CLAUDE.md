@@ -10,13 +10,13 @@ Guidance for AI Agents working in this repository. Domain-specific details are i
 
 **Core invariant:** Rust owns all mutable state. TypeScript holds opaque `u32` handles. Unidirectional: TS calls Rust; Rust never calls back.
 
-**Status:** v0 delivered. v1 experimental (Theme + Animation modules). Public v1 GA pending.
+**Status:** v0 and v1 delivered. v2 next.
 
 **Authority documents** (read in order for design questions):
-1. [PRD.md](./docs/PRD.md) (v2.1) — What and why
-2. [Architecture.md](./docs/Architecture.md) (v2.2) — System design and module boundaries
-3. [TechSpec.md](./docs/TechSpec.md) (v3.2) — Technical contracts, FFI surface, ADRs, data model
-4. [Tasks.md](./docs/Tasks.md) (v2.1) — Ticket decomposition and execution status
+1. [PRD.md](./docs/PRD.md) — What and why
+2. [Architecture.md](./docs/Architecture.md) — System design and module boundaries
+3. [TechSpec.md](./docs/TechSpec.md) — Technical contracts, FFI surface, ADRs, data model
+4. [Tasks.md](./docs/Tasks.md) — Ticket decomposition and execution status
 
 **Info flow:** PRD > Architecture > TechSpec > Tasks. Each doc owns its boundary per its output standard.
 
@@ -48,7 +48,7 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo
 
 ```
 TypeScript/Bun (thin command client)
-  ↓ 73 public C ABI functions via bun:ffi dlopen
+  ↓ 78 public C ABI functions via bun:ffi dlopen
 Rust cdylib (native performance engine)
   ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal (v0)
   ├─ Theme (v1) — named style defaults, subtree binding, built-in dark/light

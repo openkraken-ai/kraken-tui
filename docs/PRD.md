@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 2.1
-**Status**: Approved (Experimental until public v1 GA)
+**Status**: Approved
 **Date**: February 2026
 
 ---
@@ -164,7 +164,7 @@
 - Cross-platform terminal abstraction.
 - Scrollable regions.
 
-**v1 — Internal Stable Milestone (Experimental until public v1 GA):**
+**v1 — Delivered:**
 
 - Animation system (timed transitions, built-in primitives, frame-budget-aware).
 - Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
