@@ -2,13 +2,14 @@
 
 ## Kraken TUI
 
-**Version**: 2.2
+**Version**: 2.3
 **Status**: Draft
 **Date**: February 2026
 **Source of Truth**: [PRD.md](./PRD.md)
 **Upstream Decisions**: [ADR-001 through ADR-005](./architecture/)
 
 **Changelog**:
+- v2.3 — Added v2 scope: Tree Module operations (subtree destruction, indexed insertion), v2 module additions (Reconciler Layer), new Appendix B decisions for v2. Resolved Risk 1 with safe concurrency primitives. Added Risk 7 (background render thread — explicitly descoped to v3). Updated Appendix A with ADR-004 amendment.
 - v2.2 — Removed §6 Performance Budgets (implementation-level detail; migrated to TechSpec §5.5). Removed stale `lrsa-320` marker. Fixed duplicate §6 numbering — Logical Risks & Technical Debt is now the sole §6 per the Architecture output standard.
 
 ---
@@ -59,11 +60,11 @@ These are not independently deployable containers but are architecturally signif
 
 | Module               | Responsibility                                                                                                                                                                                                                                                                                  | Key Dependencies                  |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| **Tree Module**      | Composition Tree CRUD operations. Handle allocation (per ADR-003). Parent-child relationships. Dirty-flag propagation.                                                                                                                                                                          | None (foundational)               |
+| **Tree Module**      | Composition Tree CRUD operations. Handle allocation (per ADR-003). Parent-child relationships. Dirty-flag propagation. v2: cascading subtree destruction, indexed child insertion.                                                                                                                                                                          | None (foundational)               |
 | **Layout Module**    | Flexbox constraint resolution (per ADR-002). Resize handling. Caches computed positions and dimensions. Provides hit-test geometry.                                                                                                                                                             | Tree Module                       |
-| **Theme Module**     | _(v1)_ Owns named theme definitions (collections of style defaults). Maintains theme-to-subtree bindings. Resolves applicable theme per node via ancestry traversal. Provides built-in light and dark themes.                                                           | Tree Module                       |
+| **Theme Module**     | _(v1)_ Owns named theme definitions (collections of style defaults). Maintains theme-to-subtree bindings. Resolves applicable theme per node via ancestry traversal. Provides built-in light and dark themes. v2: constraint-based inheritance for nested subtrees, per-NodeType style defaults. | Tree Module                       |
 | **Style Module**     | Color resolution (named, hex, 256-palette). Text decoration (bold, italic, underline). Border computation. v0: explicit styles only. v1: merges with Theme defaults (explicit styles win). | Tree Module (v0); Tree, Theme Modules (v1) |
-| **Animation Module** | _(v1)_ Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). Built-in primitives (spinner, progress, pulse) and animation chaining. | Tree, Style Modules               |
+| **Animation Module** | _(v1)_ Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). Built-in primitives (spinner, progress, pulse) and animation chaining. v2: position animation (visual-only render offsets), fan-in/fan-out choreography timelines, additional easing functions. | Tree, Style Modules               |
 | **Text Module**      | Rich text parsing: Markdown → styled spans, syntax highlighting. Built-in parsers are native. Custom formats are pre-processed in the Host Layer and arrive as styled span descriptors.                                                                                                         | Style Module                      |
 | **Render Module**    | Double-buffered cell grid. Dirty-flag diffing (per ADR-001). Minimal terminal I/O via escape sequences. Terminal capability detection and graceful degradation.                                                                                                                                 | Tree, Layout, Style, Text Modules |
 | **Event Module**     | Terminal input capture. Event classification (key, mouse, resize, focus). Event buffer for poll-drain model. Hit-testing (mouse → widget routing using Layout geometry). Focus state machine (depth-first, DOM order traversal order, focus/blur lifecycle).                                    | Tree, Layout Modules              |
@@ -337,9 +338,10 @@ Not applicable. Kraken TUI is a local, in-process library with no network commun
 
 ### Risk 1: Single-Threaded Native Core
 
-**Description:** Per ADR-003, the Native Core is single-threaded. The `TuiContext` is accessed without synchronization.
-**Impact:** Acceptable for v0/v1 where all interaction is synchronous. Becomes a constraint in v2 if the reactive reconciler generates high-frequency mutations from concurrent signal sources.
-**Mitigation path:** The command protocol design (all mutations are discrete, serializable operations) naturally supports a future migration to a command queue drained by a dedicated thread. This is an implementation change within the Tree Module, not an architectural change. The Host Layer and FFI surface remain unchanged.
+**Description:** Per ADR-003, the Native Core is single-threaded. The v0/v1 `TuiContext` is accessed via `static mut` without synchronization.
+**Impact:** Acceptable for v0/v1 where all interaction is synchronous. Becomes a constraint in v2 where the reconciler generates high-frequency mutations and async event loops may access state from multiple code paths.
+**v2 Resolution:** Replace `static mut CONTEXT` with `OnceLock<RwLock<TuiContext>>` (or `thread_local!` if background threading is not needed). This provides safe concurrency boundaries while preserving the single-threaded execution model. The command protocol design (all mutations are discrete, serializable operations) remains unchanged. See TechSpec ADR-T16.
+**Note:** A background render thread (shifting layout/rendering to a dedicated thread) was considered but explicitly descoped to v3 — it contradicts the batched-synchronous pipeline, host-driven animation model, and immediate-mutation state ownership. See Risk 7.
 
 ### Risk 2: Rich Text Pre-Processing Hook Latency
 
@@ -365,13 +367,24 @@ Not applicable. Kraken TUI is a local, in-process library with no network commun
 **Impact:** For typical dashboards (10–100 widgets), sub-millisecond. For stress cases (1,000+ deeply nested widgets), layout may approach the 16ms frame budget.
 **Mitigation:** The Layout Module caches computed results and only recomputes dirty subtrees. Dirty flags propagate up (invalidation), recomputation propagates down (resolution). Cost is bounded to the changed subtree, not the full tree. The layout library's built-in caching further reduces redundant computation.
 
-### Risk 6: Unproven cdylib + Bun FFI Architecture
+### Risk 6: Unproven cdylib + Bun FFI Architecture (v0)
 
 **Description:** The architecture of a Rust cdylib consumed via Bun FFI from TypeScript is novel and unproven at scale. Most Rust TUI applications link ratatui directly; most Bun FFI usage involves simpler bindings. This architecture may face unknown runtime or maintenance challenges.
 
 **Impact:** Potential hidden complexities in FFI boundary performance, memory management across the language boundary, or ecosystem maturity. No large-scale production precedent exists for this specific stack.
 
 **Mitigation:** Implement thorough FFI integration tests. Monitor FFI call overhead in profiling. Maintain clean abstraction boundaries so alternative backends (e.g., NAPI-RS) could be swapped if needed. Engage with Bun and Rust FFI communities for edge case discovery.
+
+### Risk 7: Background Render Thread (Explicitly Descoped)
+
+**Description:** A proposal to shift layout computation and rendering to a dedicated Rust background thread fed by a lock-free command queue was evaluated for v2. This would prevent complex UI recalculations from blocking Bun's single-threaded event loop.
+
+**Assessment:** The proposal contradicts three core architectural decisions:
+1. **Render Pipeline Topology** (Appendix B): "Batched-synchronous — explicit `render()` call triggers the full pipeline in one native execution." A background thread makes render asynchronous.
+2. **Animation Tick Model** (Appendix B): "Host-driven — the Host Layer controls the render loop cadence." A background thread takes cadence control away from the host.
+3. **State Ownership** (Appendix B): Mutations would be enqueued rather than applied immediately, creating a temporal gap where reads may not reflect the latest writes.
+
+**Decision:** Descoped to v3. The batched-synchronous model is correct for TUI workloads where layout complexity is bounded (typical dashboards: 10–100 widgets). If profiling reveals that synchronous rendering blocks the host event loop for real applications, the command queue approach can be revisited with an explicit ADR.
 
 ---
 
@@ -384,7 +397,7 @@ This Architecture Document is consistent with and builds upon the following acce
 | ADR-001 | Retained-mode with dirty-flag diffing        | Render Module: double-buffered cell grid, dirty propagation, minimal diff output                               |
 | ADR-002 | Layout via Rust-native Flexbox library       | Layout Module: Flexbox constraint resolution, cached computed layout, resize recomputation                     |
 | ADR-003 | Opaque handle model, Rust-owned allocations  | Tree Module: HashMap<u32, Node>, sequential allocation, explicit destroy, copy semantics at boundary           |
-| ADR-004 | Imperative API first, reactive reconciler v2 | Host Layer: command-issuing thin client. v2 reconciler wraps the same command protocol (Strangler Fig pattern) |
+| ADR-004 | Imperative API first, reactive reconciler v2 | Host Layer: command-issuing thin client. v2 reconciler wraps the same command protocol (Strangler Fig pattern). v2 approach: lightweight JSX factory + `@preact/signals-core` (see Appendix B: Reconciler Strategy). |
 | ADR-005 | Terminal backend (crossterm)                 | Render + Event Modules: terminal I/O via crossterm, behind internal trait for future substitution              |
 
 ## Appendix B: New Architectural Decisions
@@ -403,6 +416,17 @@ The following decisions were made during this Architecture phase. They extend (n
 | **Developer-Assigned IDs**    | Host Layer concern. The Host Language Bindings maintain an `id → Handle` map. The Native Core is unaware of developer-assigned identifiers. No FFI surface change.                                                                             | Developer IDs are an ergonomic convenience for the Host Layer API. The Native Core operates on Handles for layout, rendering, and event processing. Adding string-based lookups to the Native Core would introduce state that serves no computational purpose — violating the core invariant (Rust is the performance engine).                                                             |
 | **String Interning**          | Implementation-time optimization, not an architectural decision. May be applied within the Tree or Text Module for high-frequency identical strings. No FFI surface change.                                                                    | Interning is an internal memory optimization invisible to the Host Layer. Premature specification at the architecture level would over-constrain implementation. Deferred to profiling data.                                                                                                                                                                                               |
 | **Headless Runtime Path**     | Headless initialization/backends are test utilities, not part of the production lifecycle contract.                                                                                                                                        | Keeps the architecture's production contract centered on real terminal lifecycle management while preserving deterministic CI/testing harnesses.                                                                                                                                                                                                                                           |
+
+### v2 Architectural Decisions
+
+| Decision                      | Choice                                                                                                                                                                                                                                         | Rationale                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Safe Global State**         | Replace `static mut CONTEXT` with `OnceLock<RwLock<TuiContext>>`. All FFI entry points acquire locks explicitly. Single-threaded execution model preserved — RwLock provides safety, not concurrency. | The `static mut` pattern is deprecated in Rust. `OnceLock<RwLock>` satisfies Rust safety requirements without changing the execution model. If a background render thread is ever added (v3), the RwLock is already in place. `thread_local!` was considered but rejected as it prevents future multi-threaded access. See TechSpec ADR-T16. |
+| **Cascading Subtree Destruction** | `tui_destroy_subtree(handle)` recursively destroys a node and all its descendants in a single FFI call. Cancels all animations targeting destroyed nodes. | Required for the declarative reconciler (unmounting a component must clean up the entire subtree). The current `tui_destroy_node()` orphans children, requiring the Host Layer to walk the tree — O(n) FFI calls for a subtree of n nodes. Native recursive destruction is O(n) Rust operations in a single FFI call. See TechSpec ADR-T17. |
+| **Indexed Child Insertion**   | `tui_insert_child(parent, child, index)` inserts a child at a specific position in the parent's child list. | Hard prerequisite for efficient keyed-list diffing in the reconciler. Without it, reordering children requires remove-all + re-append. This is the standard DOM operation (`insertBefore`) that every reconciler depends on. See TechSpec ADR-T18. |
+| **Reconciler Strategy**       | Lightweight runtime JSX factory that instantiates standard Widget classes, paired with `@preact/signals-core` for granular reactivity. Updates pushed directly to FFI via signal effects. No Virtual DOM. | Per ADR-004, the v2 reconciler wraps the imperative command protocol (Strangler Fig). A custom JSX factory avoids heavy framework dependencies (React/Preact) while providing familiar DX. Signals provide fine-grained reactivity without diffing overhead. The core `kraken-tui` package stays under 50KB; an optional `effect` package provides advanced concurrency. See TechSpec ADR-T20. |
+| **FinalizationRegistry Policy** | FinalizationRegistry may be used as a **safety net** (leak detector) in the Host Layer, but `destroy()` remains the primary lifecycle API. Non-deterministic GC-driven destruction is not the lifecycle contract. | ts/CLAUDE.md previously banned FinalizationRegistry. The ban is relaxed to allow safety-net usage: if a Widget is GC'd without `destroy()`, the FinalizationRegistry logs a warning and cleans up the native handle. This prevents leaks in long-running applications without relying on GC timing for correctness. |
+| **Background Render Thread**  | Explicitly descoped to v3. The batched-synchronous render pipeline is retained for v2. | See Risk 7 (§6). The proposal contradicts three core decisions (pipeline topology, animation tick model, state ownership). TUI workloads do not generate enough layout complexity to warrant the architectural upheaval. Revisit if profiling data proves otherwise. |
 
 ## Appendix C: Resolved Open Questions
 

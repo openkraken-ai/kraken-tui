@@ -2,8 +2,8 @@
 
 ## Kraken TUI
 
-**Version**: 2.1
-**Status**: v1 Complete
+**Version**: 3.0
+**Status**: v1 Complete, v2 Planned
 **Date**: February 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md)
 
@@ -53,13 +53,23 @@ Execution status:
 - ✅ Epic G (Animation Core Module) is closed.
 - ✅ Epic H (Post-audit v1 elevation) is closed.
 
-Explicitly deferred to v2 (per TechSpec ADR-T14 and developer approval):
+### Phase 3 — v2 Expansion: PLANNED
 
-- Position animation (requires Layout Module involvement — architecture boundary violation)
-- Per-NodeType theme defaults (requires selector engine)
-- Multi-line Input / TextArea widget
-- Scrollbar rendering
-- Reactive reconciler
+v2 scope is specified in TechSpec v4.0 (ADRs T16–T22). Organized into 5 epics:
+
+**Epic I: Core Hardening** — Safe global state (ADR-T16), graceful error propagation audit, syntect memory budget enforcement.
+
+**Epic J: Tree Operations for Reconciler** — Cascading subtree destruction (ADR-T17), indexed child insertion (ADR-T18). Hard prerequisites for Epic L.
+
+**Epic K: Feature Expansions** — Theme inheritance with per-NodeType defaults (ADR-T21), TextArea widget (ADR-T19), position animation via render offsets (ADR-T22), additional easing functions, animation choreography APIs.
+
+**Epic L: Declarative Reconciler** — JSX factory + signal reactivity (ADR-T20), package split (core + optional effect), async event loop pattern.
+
+**Epic M: Accessibility Foundation** — ARIA-like roles on TuiNode, screen reader output, foundational a11y FFI surface. (Requires dedicated ADR — not yet fully specified.)
+
+**v2 Critical Path:** `I (hardening)` → `J (tree ops)` → `K (features) ‖ L (reconciler)` → `M (a11y)`
+
+Ticket decomposition for v2 epics will be done incrementally as each epic begins.
 
 ---
 

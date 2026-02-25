@@ -14,6 +14,7 @@ TUI library: Rust (layout/rendering) + TypeScript/Bun (API).
 - **Testing**: Rust unit/integration + TypeScript FFI test suites
 - **Performance**: FFI overhead ~0.085μs, 300 mutations @ 0.183ms/frame
 - **v1 Complete**: Theme + Animation (primitives, chaining, easing) fully implemented
+- **v2 Planned**: Core hardening, TextArea, position animation, theme inheritance, JSX reconciler, accessibility
 - **Production Ready**: No
 
 ### Available Widgets
