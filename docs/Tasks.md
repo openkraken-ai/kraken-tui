@@ -5,7 +5,7 @@
 **Version**: 2.1
 **Status**: Active (Experimental until public v1 GA)
 **Date**: February 2026
-**Source of Truth**: [TechSpec.md](./TechSpec.md) v3.1, [Architecture.md](./Architecture.md) v2.1
+**Source of Truth**: [TechSpec.md](./TechSpec.md) v3.2, [Architecture.md](./Architecture.md) v2.2
 
 ---
 

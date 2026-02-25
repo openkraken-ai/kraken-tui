@@ -2,11 +2,14 @@
 
 ## Kraken TUI
 
-**Version**: 2.1
+**Version**: 2.2
 **Status**: Draft (Experimental until public v1 GA)
 **Date**: February 2026
 **Source of Truth**: [PRD.md](./PRD.md) v2.1
 **Upstream Decisions**: [ADR-001 through ADR-005](./architecture/)
+
+**Changelog**:
+- v2.2 — Removed §6 Performance Budgets (implementation-level detail; migrated to TechSpec §5.5). Removed stale `lrsa-320` marker. Fixed duplicate §6 numbering — Logical Risks & Technical Debt is now the sole §6 per the Architecture output standard.
 
 ---
 
@@ -329,42 +332,6 @@ The FFI boundary is the most safety-critical interface in the system. The follow
 ### 5.4 Identity & Authentication
 
 Not applicable. Kraken TUI is a local, in-process library with no network communication, user sessions, or authentication concerns.
-
-lrsa-320
-
-## 6. PERFORMANCE BUDGETS
-
-Per PRD Section 5 (Non-Functional Constraints), the following budgets govern implementation decisions:
-
-### 6.1 FFI Overhead Budget (< 1ms per call)
-
-**Allocation:**
-- **Target:** < 500μs per FFI crossing (50% of budget for safety margin)
-- **Measured via:** `tui_get_perf_counter(6)` [reserved for FFI latency tracking]
-
-**Strategy:**
-- Batch mutations in Host Layer before FFI calls
-- Minimize call frequency: `render()` triggers full pipeline in one native execution
-- Event drain uses repeated single-call pattern (ADR-T01) — acceptable due to low event volume
-
-### 6.2 Host Bundle Budget (< 50KB)
-
-**Allocation:**
-| Component | Budget | Rationale |
-|-----------|--------|-----------|
-| FFI bindings | ~10KB | `dlopen`, symbol definitions, struct packing |
-| Widget classes | ~20KB | 5 widget types × ~4KB each |
-| Style helpers | ~5KB | Color parsing, style merging |
-| Event handling | ~8KB | Event types, drain loop, dispatch |
-| Error handling | ~4KB | Error classes, code mapping |
-| **Buffer** | ~3KB | Safety margin |
-
-**Strategy:**
-- Zero runtime dependencies beyond `bun:ffi` (built-in)
-- No external struct libraries (ADR-T06: custom minimal implementation)
-- Tree-shakeable widget imports
-
----
 
 ## 6. LOGICAL RISKS & TECHNICAL DEBT
 

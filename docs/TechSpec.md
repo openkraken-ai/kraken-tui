@@ -2,12 +2,13 @@
 
 ## Kraken TUI
 
-**Version**: 3.1
+**Version**: 3.2
 **Status**: Draft (Experimental until public v1 GA)
 **Date**: February 2026
-**Source of Truth**: [Architecture.md](./Architecture.md) v2.1, [PRD.md](./PRD.md) v2.1
+**Source of Truth**: [Architecture.md](./Architecture.md) v2.2, [PRD.md](./PRD.md) v2.1
 
 **Changelog**:
+- v3.2 — Absorbed Performance Budgets from Architecture.md (was out of Architecture's boundary scope) into §5.5. Renumbered §5.6–§5.7.
 - v3.1 — Aligned v1 scope with PRD: animation primitives and chaining are in v1 scope. Canonicalized Theme TS API contract (`new Theme()`, `Theme.DARK`, `Theme.LIGHT`) and `Kraken.switchTheme(theme: Theme)`. Marked headless init as testing utility excluded from public FFI symbol count.
 - v3.0 — Added Theme Module (ADR-T12, ADR-T15), Animation Module (ADR-T13, ADR-T14). 11 new public FFI functions (73 total). Style mask for theme resolution. Built-in dark/light themes.
 - v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
@@ -1399,7 +1400,40 @@ bitflags = "2"
 unicode-width = "0.2"
 ```
 
-### 5.5 Testing Strategy
+### 5.5 Performance Budgets
+
+Per PRD Section 5 (Non-Functional Constraints), the following budgets govern implementation decisions:
+
+#### FFI Overhead Budget (< 1ms per call)
+
+**Allocation:**
+- **Target:** < 500μs per FFI crossing (50% of budget for safety margin)
+- **Measured via:** `tui_get_perf_counter()` performance counters (Section 4.12)
+
+**Strategy:**
+- Batch mutations in Host Layer before FFI calls
+- Minimize call frequency: `render()` triggers full pipeline in one native execution
+- Event drain uses repeated single-call pattern (ADR-T01) — acceptable due to low event volume
+
+#### Host Bundle Budget (< 50KB)
+
+**Allocation:**
+
+| Component | Budget | Rationale |
+|-----------|--------|-----------|
+| FFI bindings | ~10KB | `dlopen`, symbol definitions, struct packing |
+| Widget classes | ~20KB | 5 widget types × ~4KB each |
+| Style helpers | ~5KB | Color parsing, style merging |
+| Event handling | ~8KB | Event types, drain loop, dispatch |
+| Error handling | ~4KB | Error classes, code mapping |
+| **Buffer** | ~3KB | Safety margin |
+
+**Strategy:**
+- Zero runtime dependencies beyond `bun:ffi` (built-in)
+- No external struct libraries (ADR-T06: custom minimal implementation)
+- Tree-shakeable widget imports
+
+### 5.6 Testing Strategy
 
 | Layer                | Tool                        | What It Tests                                                                                                                                                                            |
 | -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1409,7 +1443,7 @@ unicode-width = "0.2"
 | **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map. v1: Theme constructor/constants API, f32 bit-casting for animation, primitive helper wrappers. |
 | **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling. v1: theme switching (dark/light), fade animations. |
 
-### 5.6 Host Application Loop Pattern
+### 5.7 Host Application Loop Pattern
 
 The canonical event loop for a Kraken TUI application:
 
@@ -1509,7 +1543,7 @@ The v0+v1 implementation structure is designed to accommodate v2 additions witho
 | Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
 | --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PRD.md          | v2.1 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9) includes timed transitions, animation primitives, and chaining; theming foundation with built-in light/dark and runtime switching. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
-| Architecture.md | v2.1 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). |
+| Architecture.md | v2.2 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). Performance budgets moved to TechSpec §5.5 in v2.2. |
 | ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
 | ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
 | ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |
