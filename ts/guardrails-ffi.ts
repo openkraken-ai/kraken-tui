@@ -19,6 +19,8 @@ const ARTIFACT_DIR = resolve(import.meta.dir, ".artifacts");
 const ARTIFACT_PATH = resolve(ARTIFACT_DIR, "guardrails-latest.json");
 
 const thresholds = {
+	// Baseline microbenchmark threshold for a single FFI crossing in a tight
+	// loop. This is a coarse guardrail, not a full end-to-end workload model.
 	ffi_overhead_us_max: 1000,
 	render_frame_ms_max: 16,
 	input_latency_ms_max: 50,

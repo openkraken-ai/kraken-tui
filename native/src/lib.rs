@@ -40,6 +40,14 @@ use context::{
 use terminal::{CrosstermBackend, TerminalBackend};
 use types::{NodeType, TuiEvent};
 
+// The snapshot pointer returned by `tui_get_last_error()` must outlive the
+// function call without borrowing the context lock guard. We keep it in TLS so
+// each caller thread gets stable ownership of its latest snapshot.
+//
+// ADR-T16 keeps Kraken TUI on a single-threaded execution model. In a
+// multi-threaded host calling into FFI from different threads, errors set on
+// one thread are not guaranteed to be visible via `tui_get_last_error()` on
+// another thread.
 thread_local! {
     static LAST_ERROR_SNAPSHOT: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
