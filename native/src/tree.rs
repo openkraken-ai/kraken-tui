@@ -51,12 +51,12 @@ pub(crate) fn destroy_node(ctx: &mut TuiContext, handle: u32) -> Result<(), Stri
         .nodes
         .remove(&handle)
         .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    let detached_parent = node.parent;
 
     // Detach from parent
-    if let Some(parent_handle) = node.parent {
+    if let Some(parent_handle) = detached_parent {
         if let Some(parent) = ctx.nodes.get_mut(&parent_handle) {
             parent.children.retain(|&h| h != handle);
-            mark_dirty_ancestors(ctx, parent_handle);
         }
     }
 
@@ -69,6 +69,12 @@ pub(crate) fn destroy_node(ctx: &mut TuiContext, handle: u32) -> Result<(), Stri
 
     // Remove from Taffy tree
     let _ = ctx.tree.remove(node.taffy_node);
+    if let Some(parent_handle) = detached_parent {
+        if ctx.nodes.contains_key(&parent_handle) {
+            sync_taffy_children(ctx, parent_handle)?;
+            mark_dirty_ancestors(ctx, parent_handle);
+        }
+    }
 
     // Clear root/focus if pointing to this node
     if ctx.root == Some(handle) {
@@ -122,6 +128,7 @@ pub(crate) fn destroy_subtree(ctx: &mut TuiContext, handle: u32) -> Result<(), S
 
     if let Some(parent_handle) = detached_external_parent {
         if ctx.nodes.contains_key(&parent_handle) {
+            sync_taffy_children(ctx, parent_handle)?;
             mark_dirty_ancestors(ctx, parent_handle);
         }
     }
@@ -530,6 +537,7 @@ mod tests {
         assert!(!ctx.nodes.contains_key(&mid));
         assert!(!ctx.nodes.contains_key(&leaf));
         assert_eq!(ctx.nodes[&root].children, vec![sibling]);
+        assert_eq!(taffy_children_handles(&ctx, root), vec![sibling]);
         assert_eq!(ctx.nodes[&sibling].parent, Some(root));
         assert_eq!(ctx.root, Some(root));
         assert_eq!(ctx.focused, None);
