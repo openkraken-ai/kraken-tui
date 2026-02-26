@@ -33,6 +33,11 @@ export abstract class Widget {
 		checkResult(ffi.tui_append_child(this.handle, child.handle));
 	}
 
+	/** Insert a child widget at index. If index >= childCount, appends. */
+	insertChild(child: Widget, index: number): void {
+		checkResult(ffi.tui_insert_child(this.handle, child.handle, index), "insertChild");
+	}
+
 	/** Remove a child widget */
 	removeChild(child: Widget): void {
 		checkResult(ffi.tui_remove_child(this.handle, child.handle));
@@ -48,6 +53,11 @@ export abstract class Widget {
 	/** Destroy this widget */
 	destroy(): void {
 		checkResult(ffi.tui_destroy_node(this.handle));
+	}
+
+	/** Destroy this widget and all descendants in one native call. */
+	destroySubtree(): void {
+		checkResult(ffi.tui_destroy_subtree(this.handle), "destroySubtree");
 	}
 
 	/** Mark this widget as dirty (forces re-render) */

@@ -190,6 +190,16 @@ pub extern "C" fn tui_destroy_node(handle: u32) -> i32 {
 }
 
 #[no_mangle]
+pub extern "C" fn tui_destroy_subtree(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        tree::destroy_subtree(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_get_node_type(handle: u32) -> i32 {
     ffi_wrap(|| {
         let ctx = context_read()?;
@@ -252,6 +262,17 @@ pub extern "C" fn tui_append_child(parent: u32, child: u32) -> i32 {
         ctx.validate_handle(parent)?;
         ctx.validate_handle(child)?;
         tree::append_child(&mut ctx, parent, child)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_insert_child(parent: u32, child: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(parent)?;
+        ctx.validate_handle(child)?;
+        tree::insert_child(&mut ctx, parent, child, index)?;
         Ok(0)
     })
 }

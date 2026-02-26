@@ -39,6 +39,7 @@ const symbols = {
 	// Node Lifecycle
 	tui_create_node: { args: ["u8"] as FFIType[], returns: "u32" as const },
 	tui_destroy_node: { args: ["u32"] as FFIType[], returns: "i32" as const },
+	tui_destroy_subtree: { args: ["u32"] as FFIType[], returns: "i32" as const },
 	tui_get_node_type: { args: ["u32"] as FFIType[], returns: "i32" as const },
 	tui_set_visible: {
 		args: ["u32", "u8"] as FFIType[],
@@ -51,6 +52,10 @@ const symbols = {
 	tui_set_root: { args: ["u32"] as FFIType[], returns: "i32" as const },
 	tui_append_child: {
 		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_insert_child: {
+		args: ["u32", "u32", "u32"] as FFIType[],
 		returns: "i32" as const,
 	},
 	tui_remove_child: {

@@ -1148,7 +1148,7 @@ pub struct TuiContext {
 | `tui_get_node_type`  | `(u32 handle) -> i32`             | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).                             |
 | `tui_set_visible`    | `(u32 handle, u8 visible) -> i32` | 0 / -1        | Set node visibility. `visible`: 0 = hidden, 1 = visible. Hidden nodes are not rendered. |
 | `tui_get_visible`    | `(u32 handle) -> i32`             | 1 / 0 / -1    | Get node visibility. Returns 1 if visible, 0 if hidden, -1 on error.                    |
-| `tui_destroy_subtree`| `(u32 handle) -> i32`             | 0 / -1        | v2: Recursively destroy node and all descendants. Post-order traversal. Cancels animations, removes theme bindings. See ADR-T17. |
+| `tui_destroy_subtree`| `(u32 handle) -> i32`             | 0 / -1        | v2: Recursively destroy node and all descendants. Post-order traversal. Cancels animations, removes theme bindings, and clears root/focus if they point into the destroyed subtree. See ADR-T17. |
 | `tui_get_node_count` | `() -> u32`                       | Count         | Get total number of nodes in the context.                                               |
 
 ### 4.4 Tree Structure
@@ -1157,7 +1157,7 @@ pub struct TuiContext {
 | --------------------- | -------------------------------- | ---------- | ------------------------------------------------------------------------------ |
 | `tui_set_root`        | `(u32 handle) -> i32`            | 0 / -1     | Designate a node as the composition tree root. Required before `tui_render()`. |
 | `tui_append_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Add child to parent. Marks subtree dirty.                                      |
-| `tui_insert_child`    | `(u32 parent, u32 child, u32 index) -> i32` | 0 / -1 | v2: Insert child at index. If index >= child_count, appends. Detaches from current parent if needed. See ADR-T18. |
+| `tui_insert_child`    | `(u32 parent, u32 child, u32 index) -> i32` | 0 / -1 | v2: Insert child at index. If index >= child_count, appends. Detaches from current parent if needed. If the child is already under `parent`, this acts as an in-place reorder. See ADR-T18. |
 | `tui_remove_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Remove child from parent. Marks parent dirty.                                  |
 | `tui_get_child_count` | `(u32 handle) -> i32`            | Count / -1 | Number of children.                                                            |
 | `tui_get_child_at`    | `(u32 handle, u32 index) -> u32` | Handle / 0 | Child handle at index.                                                         |
