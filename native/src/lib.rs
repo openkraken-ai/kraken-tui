@@ -29,11 +29,20 @@ mod theme;
 mod tree;
 mod types;
 
+use std::cell::RefCell;
+use std::ffi::CString;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use context::{context, context_mut, destroy_context, init_context, set_last_error};
+use context::{
+    clear_last_error, context_read, context_write, destroy_context, get_last_error_snapshot,
+    init_context, is_context_initialized, set_last_error,
+};
 use terminal::{CrosstermBackend, TerminalBackend};
 use types::{NodeType, TuiEvent};
+
+thread_local! {
+    static LAST_ERROR_SNAPSHOT: RefCell<Option<CString>> = const { RefCell::new(None) };
+}
 
 // ============================================================================
 // Safety wrapper: every FFI entry point uses this pattern (ADR-T03)
@@ -76,9 +85,13 @@ fn ffi_wrap_handle(f: impl FnOnce() -> Result<u32, String>) -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_init() -> i32 {
     ffi_wrap(|| {
+        if is_context_initialized()? {
+            return Err("Context already initialized. Call tui_shutdown() first.".to_string());
+        }
+
         let mut backend = Box::new(CrosstermBackend::new());
         backend.init()?;
-        init_context(backend);
+        init_context(backend)?;
         Ok(0)
     })
 }
@@ -88,8 +101,12 @@ pub extern "C" fn tui_init() -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_init_headless(width: u16, height: u16) -> i32 {
     ffi_wrap(|| {
+        if is_context_initialized()? {
+            return Err("Context already initialized. Call tui_shutdown() first.".to_string());
+        }
+
         let backend = Box::new(terminal::HeadlessBackend::new(width, height));
-        init_context(backend);
+        init_context(backend)?;
         Ok(0)
     })
 }
@@ -97,9 +114,10 @@ pub extern "C" fn tui_init_headless(width: u16, height: u16) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_shutdown() -> i32 {
     ffi_wrap(|| {
-        if let Some(mut backend) = destroy_context() {
+        if let Some(mut backend) = destroy_context()? {
             backend.shutdown()?;
         }
+        clear_last_error();
         Ok(0)
     })
 }
@@ -107,7 +125,7 @@ pub extern "C" fn tui_shutdown() -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_terminal_size(width: *mut i32, height: *mut i32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         let (w, h) = ctx.backend.size();
         unsafe {
             if !width.is_null() {
@@ -147,18 +165,18 @@ pub extern "C" fn tui_create_node(node_type: u8) -> u32 {
     ffi_wrap_handle(|| {
         let nt = NodeType::from_u8(node_type)
             .ok_or_else(|| format!("Invalid node type: {node_type}"))?;
-        let ctx = context_mut()?;
-        tree::create_node(ctx, nt)
+        let mut ctx = context_write()?;
+        tree::create_node(&mut ctx, nt)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_destroy_node(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        animation::cancel_all_for_node(ctx, handle);
-        tree::destroy_node(ctx, handle)?;
+        animation::cancel_all_for_node(&mut ctx, handle);
+        tree::destroy_node(&mut ctx, handle)?;
         Ok(0)
     })
 }
@@ -166,7 +184,7 @@ pub extern "C" fn tui_destroy_node(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_node_type(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(node.node_type as i32)
@@ -176,7 +194,7 @@ pub extern "C" fn tui_get_node_type(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         node.visible = visible != 0;
@@ -188,7 +206,7 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_visible(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(if node.visible { 1 } else { 0 })
@@ -198,7 +216,9 @@ pub extern "C" fn tui_get_visible(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_node_count() -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
-        context().map(|ctx| ctx.nodes.len() as u32).unwrap_or(0)
+        context_read()
+            .map(|ctx| ctx.nodes.len() as u32)
+            .unwrap_or(0)
     }))
     .unwrap_or_default()
 }
@@ -210,7 +230,7 @@ pub extern "C" fn tui_get_node_count() -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_set_root(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         ctx.root = Some(handle);
         Ok(0)
@@ -220,10 +240,10 @@ pub extern "C" fn tui_set_root(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_append_child(parent: u32, child: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(parent)?;
         ctx.validate_handle(child)?;
-        tree::append_child(ctx, parent, child)?;
+        tree::append_child(&mut ctx, parent, child)?;
         Ok(0)
     })
 }
@@ -231,10 +251,10 @@ pub extern "C" fn tui_append_child(parent: u32, child: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_remove_child(parent: u32, child: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(parent)?;
         ctx.validate_handle(child)?;
-        tree::remove_child(ctx, parent, child)?;
+        tree::remove_child(&mut ctx, parent, child)?;
         Ok(0)
     })
 }
@@ -242,7 +262,7 @@ pub extern "C" fn tui_remove_child(parent: u32, child: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_child_count(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(node.children.len() as i32)
@@ -252,7 +272,7 @@ pub extern "C" fn tui_get_child_count(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_child_at(handle: u32, index: u32) -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         node.children
@@ -265,11 +285,10 @@ pub extern "C" fn tui_get_child_at(handle: u32, index: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_get_parent(handle: u32) -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
-        context()
-            .ok()
-            .and_then(|ctx| ctx.nodes.get(&handle))
-            .and_then(|n| n.parent)
-            .unwrap_or(0)
+        match context_read() {
+            Ok(ctx) => ctx.nodes.get(&handle).and_then(|n| n.parent).unwrap_or(0),
+            Err(_) => 0,
+        }
     }))
     .unwrap_or_default()
 }
@@ -281,7 +300,7 @@ pub extern "C" fn tui_get_parent(handle: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
 
         let text = if ptr.is_null() || len == 0 {
@@ -303,7 +322,7 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
 #[no_mangle]
 pub extern "C" fn tui_get_content_len(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(node.content.len() as i32)
@@ -313,7 +332,7 @@ pub extern "C" fn tui_get_content_len(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_content(handle: u32, buffer: *mut u8, buffer_len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         let content = node.content.as_bytes();
@@ -338,7 +357,7 @@ pub extern "C" fn tui_get_content(handle: u32, buffer: *mut u8, buffer_len: u32)
 #[no_mangle]
 pub extern "C" fn tui_set_content_format(handle: u32, format: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let fmt = types::ContentFormat::from_u8(format)
             .ok_or_else(|| format!("Invalid content format: {format}"))?;
@@ -352,7 +371,7 @@ pub extern "C" fn tui_set_content_format(handle: u32, format: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_code_language(handle: u32, ptr: *const u8, len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
 
         let lang = if ptr.is_null() || len == 0 {
@@ -376,7 +395,7 @@ pub extern "C" fn tui_set_code_language(handle: u32, ptr: *const u8, len: u32) -
 #[no_mangle]
 pub extern "C" fn tui_get_code_language(handle: u32, buffer: *mut u8, buffer_len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
 
@@ -408,7 +427,7 @@ pub extern "C" fn tui_get_code_language(handle: u32, buffer: *mut u8, buffer_len
 #[no_mangle]
 pub extern "C" fn tui_input_set_cursor(handle: u32, position: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Input {
@@ -423,7 +442,7 @@ pub extern "C" fn tui_input_set_cursor(handle: u32, position: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_input_get_cursor(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         if node.node_type != NodeType::Input {
@@ -436,7 +455,7 @@ pub extern "C" fn tui_input_get_cursor(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_input_set_max_len(handle: u32, max_len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Input {
@@ -450,7 +469,7 @@ pub extern "C" fn tui_input_set_max_len(handle: u32, max_len: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_input_set_mask(handle: u32, mask_char: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Input {
@@ -465,7 +484,7 @@ pub extern "C" fn tui_input_set_mask(handle: u32, mask_char: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_input_get_mask(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         if node.node_type != NodeType::Input {
@@ -478,7 +497,7 @@ pub extern "C" fn tui_input_get_mask(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_select_add_option(handle: u32, ptr: *const u8, len: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
 
         let text = if ptr.is_null() || len == 0 {
@@ -503,7 +522,7 @@ pub extern "C" fn tui_select_add_option(handle: u32, ptr: *const u8, len: u32) -
 #[no_mangle]
 pub extern "C" fn tui_select_remove_option(handle: u32, index: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -529,7 +548,7 @@ pub extern "C" fn tui_select_remove_option(handle: u32, index: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_select_clear_options(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -545,7 +564,7 @@ pub extern "C" fn tui_select_clear_options(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_select_get_count(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -563,7 +582,7 @@ pub extern "C" fn tui_select_get_option(
     buffer_len: u32,
 ) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -592,7 +611,7 @@ pub extern "C" fn tui_select_get_option(
 #[no_mangle]
 pub extern "C" fn tui_select_set_selected(handle: u32, index: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -610,7 +629,7 @@ pub extern "C" fn tui_select_set_selected(handle: u32, index: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_select_get_selected(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         if node.node_type != NodeType::Select {
@@ -627,9 +646,9 @@ pub extern "C" fn tui_select_get_selected(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_layout_dimension(handle: u32, prop: u32, value: f32, unit: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        layout::set_dimension(ctx, handle, prop, value, unit)?;
+        layout::set_dimension(&mut ctx, handle, prop, value, unit)?;
         Ok(0)
     })
 }
@@ -637,9 +656,9 @@ pub extern "C" fn tui_set_layout_dimension(handle: u32, prop: u32, value: f32, u
 #[no_mangle]
 pub extern "C" fn tui_set_layout_flex(handle: u32, prop: u32, value: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        layout::set_flex(ctx, handle, prop, value)?;
+        layout::set_flex(&mut ctx, handle, prop, value)?;
         Ok(0)
     })
 }
@@ -654,9 +673,9 @@ pub extern "C" fn tui_set_layout_edges(
     left: f32,
 ) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        layout::set_edges(ctx, handle, prop, top, right, bottom, left)?;
+        layout::set_edges(&mut ctx, handle, prop, top, right, bottom, left)?;
         Ok(0)
     })
 }
@@ -664,9 +683,9 @@ pub extern "C" fn tui_set_layout_edges(
 #[no_mangle]
 pub extern "C" fn tui_set_layout_gap(handle: u32, row_gap: f32, column_gap: f32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        layout::set_gap(ctx, handle, row_gap, column_gap)?;
+        layout::set_gap(&mut ctx, handle, row_gap, column_gap)?;
         Ok(0)
     })
 }
@@ -680,9 +699,9 @@ pub extern "C" fn tui_get_layout(
     h: *mut i32,
 ) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
-        let (lx, ly, lw, lh) = layout::get_layout(ctx, handle)?;
+        let (lx, ly, lw, lh) = layout::get_layout(&ctx, handle)?;
         unsafe {
             if !x.is_null() {
                 *x = lx;
@@ -728,9 +747,9 @@ pub extern "C" fn tui_measure_text(ptr: *const u8, len: u32, width: *mut u32) ->
 #[no_mangle]
 pub extern "C" fn tui_set_style_color(handle: u32, prop: u32, color: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        style::set_color(ctx, handle, prop, color)?;
+        style::set_color(&mut ctx, handle, prop, color)?;
         Ok(0)
     })
 }
@@ -738,9 +757,9 @@ pub extern "C" fn tui_set_style_color(handle: u32, prop: u32, color: u32) -> i32
 #[no_mangle]
 pub extern "C" fn tui_set_style_flag(handle: u32, prop: u32, value: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        style::set_flag(ctx, handle, prop, value)?;
+        style::set_flag(&mut ctx, handle, prop, value)?;
         Ok(0)
     })
 }
@@ -748,9 +767,9 @@ pub extern "C" fn tui_set_style_flag(handle: u32, prop: u32, value: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_style_border(handle: u32, border_style: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        style::set_border(ctx, handle, border_style)?;
+        style::set_border(&mut ctx, handle, border_style)?;
         Ok(0)
     })
 }
@@ -758,9 +777,9 @@ pub extern "C" fn tui_set_style_border(handle: u32, border_style: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_style_opacity(handle: u32, opacity: f32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        style::set_opacity(ctx, handle, opacity)?;
+        style::set_opacity(&mut ctx, handle, opacity)?;
         Ok(0)
     })
 }
@@ -772,16 +791,16 @@ pub extern "C" fn tui_set_style_opacity(handle: u32, opacity: f32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_create_theme() -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context_mut()?;
-        theme::create_theme(ctx)
+        let mut ctx = context_write()?;
+        theme::create_theme(&mut ctx)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_destroy_theme(theme_handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::destroy_theme(ctx, theme_handle)?;
+        let mut ctx = context_write()?;
+        theme::destroy_theme(&mut ctx, theme_handle)?;
         Ok(0)
     })
 }
@@ -789,8 +808,8 @@ pub extern "C" fn tui_destroy_theme(theme_handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_theme_color(theme_handle: u32, prop: u8, color: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::set_theme_color(ctx, theme_handle, prop, color)?;
+        let mut ctx = context_write()?;
+        theme::set_theme_color(&mut ctx, theme_handle, prop, color)?;
         Ok(0)
     })
 }
@@ -798,8 +817,8 @@ pub extern "C" fn tui_set_theme_color(theme_handle: u32, prop: u8, color: u32) -
 #[no_mangle]
 pub extern "C" fn tui_set_theme_flag(theme_handle: u32, prop: u8, value: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::set_theme_flag(ctx, theme_handle, prop, value)?;
+        let mut ctx = context_write()?;
+        theme::set_theme_flag(&mut ctx, theme_handle, prop, value)?;
         Ok(0)
     })
 }
@@ -807,8 +826,8 @@ pub extern "C" fn tui_set_theme_flag(theme_handle: u32, prop: u8, value: u8) -> 
 #[no_mangle]
 pub extern "C" fn tui_set_theme_border(theme_handle: u32, border_style: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::set_theme_border(ctx, theme_handle, border_style)?;
+        let mut ctx = context_write()?;
+        theme::set_theme_border(&mut ctx, theme_handle, border_style)?;
         Ok(0)
     })
 }
@@ -816,8 +835,8 @@ pub extern "C" fn tui_set_theme_border(theme_handle: u32, border_style: u8) -> i
 #[no_mangle]
 pub extern "C" fn tui_set_theme_opacity(theme_handle: u32, opacity: f32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::set_theme_opacity(ctx, theme_handle, opacity)?;
+        let mut ctx = context_write()?;
+        theme::set_theme_opacity(&mut ctx, theme_handle, opacity)?;
         Ok(0)
     })
 }
@@ -825,8 +844,8 @@ pub extern "C" fn tui_set_theme_opacity(theme_handle: u32, opacity: f32) -> i32 
 #[no_mangle]
 pub extern "C" fn tui_apply_theme(theme_handle: u32, node_handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::apply_theme(ctx, theme_handle, node_handle)?;
+        let mut ctx = context_write()?;
+        theme::apply_theme(&mut ctx, theme_handle, node_handle)?;
         Ok(0)
     })
 }
@@ -834,8 +853,8 @@ pub extern "C" fn tui_apply_theme(theme_handle: u32, node_handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_clear_theme(node_handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::clear_theme(ctx, node_handle)?;
+        let mut ctx = context_write()?;
+        theme::clear_theme(&mut ctx, node_handle)?;
         Ok(0)
     })
 }
@@ -843,8 +862,8 @@ pub extern "C" fn tui_clear_theme(node_handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_switch_theme(theme_handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        theme::switch_theme(ctx, theme_handle)?;
+        let mut ctx = context_write()?;
+        theme::switch_theme(&mut ctx, theme_handle)?;
         Ok(0)
     })
 }
@@ -862,21 +881,21 @@ pub extern "C" fn tui_animate(
     easing: u8,
 ) -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let prop = types::AnimProp::from_u8(property)
             .ok_or_else(|| format!("Invalid animation property: {property}"))?;
         let ease = types::Easing::from_u8(easing)
             .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
-        animation::start_animation(ctx, handle, prop, target_bits, duration_ms, ease)
+        animation::start_animation(&mut ctx, handle, prop, target_bits, duration_ms, ease)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_cancel_animation(anim_handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        animation::cancel_animation(ctx, anim_handle)?;
+        let mut ctx = context_write()?;
+        animation::cancel_animation(&mut ctx, anim_handle)?;
         Ok(0)
     })
 }
@@ -884,39 +903,39 @@ pub extern "C" fn tui_cancel_animation(anim_handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_start_spinner(handle: u32, interval_ms: u32) -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        animation::start_spinner(ctx, handle, interval_ms)
+        animation::start_spinner(&mut ctx, handle, interval_ms)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_start_progress(handle: u32, duration_ms: u32, easing: u8) -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let ease = types::Easing::from_u8(easing)
             .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
-        animation::start_progress(ctx, handle, duration_ms, ease)
+        animation::start_progress(&mut ctx, handle, duration_ms, ease)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_start_pulse(handle: u32, duration_ms: u32, easing: u8) -> u32 {
     ffi_wrap_handle(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let ease = types::Easing::from_u8(easing)
             .ok_or_else(|| format!("Invalid easing function: {easing}"))?;
-        animation::start_pulse(ctx, handle, duration_ms, ease)
+        animation::start_pulse(&mut ctx, handle, duration_ms, ease)
     })
 }
 
 #[no_mangle]
 pub extern "C" fn tui_set_animation_looping(anim_id: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        animation::set_animation_looping(ctx, anim_id)?;
+        let mut ctx = context_write()?;
+        animation::set_animation_looping(&mut ctx, anim_id)?;
         Ok(0)
     })
 }
@@ -924,8 +943,8 @@ pub extern "C" fn tui_set_animation_looping(anim_id: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_chain_animation(after_anim: u32, next_anim: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        animation::chain_animation(ctx, after_anim, next_anim)?;
+        let mut ctx = context_write()?;
+        animation::chain_animation(&mut ctx, after_anim, next_anim)?;
         Ok(0)
     })
 }
@@ -937,7 +956,7 @@ pub extern "C" fn tui_chain_animation(after_anim: u32, next_anim: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_focusable(handle: u32, focusable: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get_mut(&handle).unwrap();
         node.focusable = focusable != 0;
@@ -948,7 +967,7 @@ pub extern "C" fn tui_set_focusable(handle: u32, focusable: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_is_focusable(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(if node.focusable { 1 } else { 0 })
@@ -958,7 +977,7 @@ pub extern "C" fn tui_is_focusable(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_focus(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let old = ctx.focused.unwrap_or(0);
         ctx.focused = Some(handle);
@@ -972,7 +991,7 @@ pub extern "C" fn tui_focus(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_focused() -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
-        context().ok().and_then(|ctx| ctx.focused).unwrap_or(0)
+        context_read().ok().and_then(|ctx| ctx.focused).unwrap_or(0)
     }))
     .unwrap_or_default()
 }
@@ -980,8 +999,8 @@ pub extern "C" fn tui_get_focused() -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_focus_next() -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        event::focus_next(ctx);
+        let mut ctx = context_write()?;
+        event::focus_next(&mut ctx);
         Ok(0)
     })
 }
@@ -989,8 +1008,8 @@ pub extern "C" fn tui_focus_next() -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_focus_prev() -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        event::focus_prev(ctx);
+        let mut ctx = context_write()?;
+        event::focus_prev(&mut ctx);
         Ok(0)
     })
 }
@@ -1002,9 +1021,9 @@ pub extern "C" fn tui_focus_prev() -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_set_scroll(handle: u32, x: i32, y: i32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        scroll::set_scroll(ctx, handle, x, y)?;
+        scroll::set_scroll(&mut ctx, handle, x, y)?;
         Ok(0)
     })
 }
@@ -1012,9 +1031,9 @@ pub extern "C" fn tui_set_scroll(handle: u32, x: i32, y: i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_scroll(handle: u32, x: *mut i32, y: *mut i32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context()?;
+        let ctx = context_read()?;
         ctx.validate_handle(handle)?;
-        let (sx, sy) = scroll::get_scroll(ctx, handle)?;
+        let (sx, sy) = scroll::get_scroll(&ctx, handle)?;
         unsafe {
             if !x.is_null() {
                 *x = sx;
@@ -1030,9 +1049,9 @@ pub extern "C" fn tui_get_scroll(handle: u32, x: *mut i32, y: *mut i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_scroll_by(handle: u32, dx: i32, dy: i32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        scroll::scroll_by(ctx, handle, dx, dy);
+        scroll::scroll_by(&mut ctx, handle, dx, dy);
         Ok(0)
     })
 }
@@ -1044,8 +1063,8 @@ pub extern "C" fn tui_scroll_by(handle: u32, dx: i32, dy: i32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_read_input(timeout_ms: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        let count = event::read_input(ctx, timeout_ms)?;
+        let mut ctx = context_write()?;
+        let count = event::read_input(&mut ctx, timeout_ms)?;
         Ok(count as i32)
     })
 }
@@ -1053,8 +1072,8 @@ pub extern "C" fn tui_read_input(timeout_ms: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_next_event(out: *mut TuiEvent) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        match event::next_event(ctx) {
+        let mut ctx = context_write()?;
+        match event::next_event(&mut ctx) {
             Some(evt) => {
                 if !out.is_null() {
                     unsafe {
@@ -1071,8 +1090,8 @@ pub extern "C" fn tui_next_event(out: *mut TuiEvent) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_render() -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
-        render::render(ctx)?;
+        let mut ctx = context_write()?;
+        render::render(&mut ctx)?;
         Ok(0)
     })
 }
@@ -1080,9 +1099,9 @@ pub extern "C" fn tui_render() -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_mark_dirty(handle: u32) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        tree::mark_dirty(ctx, handle);
+        tree::mark_dirty(&mut ctx, handle);
         Ok(0)
     })
 }
@@ -1094,35 +1113,45 @@ pub extern "C" fn tui_mark_dirty(handle: u32) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_last_error() -> *const std::os::raw::c_char {
     match catch_unwind(AssertUnwindSafe(|| -> *const std::os::raw::c_char {
-        match context() {
-            Ok(ctx) => {
-                if ctx.last_error.is_empty() {
-                    std::ptr::null()
-                } else {
-                    ctx.last_error.as_ptr() as *const std::os::raw::c_char
-                }
-            }
-            Err(_) => std::ptr::null(),
-        }
+        let Some(snapshot) = get_last_error_snapshot() else {
+            return std::ptr::null();
+        };
+        let Ok(cstring) = CString::new(snapshot) else {
+            return std::ptr::null();
+        };
+
+        LAST_ERROR_SNAPSHOT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            *slot = Some(cstring);
+            slot.as_ref().map_or(std::ptr::null(), |s| {
+                s.as_ptr() as *const std::os::raw::c_char
+            })
+        })
     })) {
         Ok(ptr) => ptr,
-        Err(_) => std::ptr::null(),
+        Err(_) => {
+            LAST_ERROR_SNAPSHOT.with(|slot| {
+                *slot.borrow_mut() = None;
+            });
+            std::ptr::null()
+        }
     }
 }
 
 #[no_mangle]
 pub extern "C" fn tui_clear_error() {
     let _ = catch_unwind(AssertUnwindSafe(|| {
-        if let Ok(ctx) = context_mut() {
-            ctx.last_error.clear();
-        }
+        clear_last_error();
+        LAST_ERROR_SNAPSHOT.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
     }));
 }
 
 #[no_mangle]
 pub extern "C" fn tui_set_debug(enabled: u8) -> i32 {
     ffi_wrap(|| {
-        let ctx = context_mut()?;
+        let mut ctx = context_write()?;
         ctx.debug_mode = enabled != 0;
         Ok(0)
     })
@@ -1131,7 +1160,7 @@ pub extern "C" fn tui_set_debug(enabled: u8) -> i32 {
 #[no_mangle]
 pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
     catch_unwind(AssertUnwindSafe(|| -> u64 {
-        let ctx = match context() {
+        let ctx = match context_read() {
             Ok(c) => c,
             Err(_) => return 0,
         };
@@ -1160,9 +1189,20 @@ pub extern "C" fn tui_free_string(_ptr: *const u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn ffi_test_guard() -> MutexGuard<'static, ()> {
+        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
 
     #[test]
-    fn test_get_last_error_null_terminated() {
+    fn test_get_last_error_snapshot_round_trip() {
+        let _guard = ffi_test_guard();
+
         // Initialize a headless context for testing
         tui_init_headless(80, 24);
 
@@ -1174,7 +1214,7 @@ mod tests {
         let ptr = tui_get_last_error();
         assert!(!ptr.is_null(), "Error pointer should not be null");
 
-        // Read it as a C string — this is safe because we now null-terminate
+        // Read it as a C string snapshot.
         let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
         let error_msg = c_str.to_str().expect("Error should be valid UTF-8");
         assert!(
@@ -1195,6 +1235,8 @@ mod tests {
 
     #[test]
     fn test_get_last_error_specific_message() {
+        let _guard = ffi_test_guard();
+
         tui_init_headless(80, 24);
 
         // Trigger a known error message
@@ -1204,6 +1246,45 @@ mod tests {
 
         let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
         assert_eq!(c_str.to_str().unwrap(), "test error");
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_init_rejects_double_init() {
+        let _guard = ffi_test_guard();
+
+        tui_shutdown();
+
+        assert_eq!(tui_init_headless(80, 24), 0);
+        assert_eq!(tui_init_headless(80, 24), -1);
+
+        let ptr = tui_get_last_error();
+        assert!(!ptr.is_null());
+        let c_str = unsafe { std::ffi::CStr::from_ptr(ptr) };
+        let error_msg = c_str.to_str().unwrap();
+        assert!(error_msg.contains("already initialized"));
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_shutdown_reinit_invalidates_old_handles() {
+        let _guard = ffi_test_guard();
+
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Box as u8);
+        assert!(handle > 0);
+        assert_eq!(tui_get_node_count(), 1);
+
+        assert_eq!(tui_shutdown(), 0);
+        assert_eq!(tui_shutdown(), 0); // idempotent no-op
+
+        assert_eq!(tui_init_headless(80, 24), 0);
+        assert_eq!(tui_get_node_count(), 0);
+        assert_eq!(tui_destroy_node(handle), -1);
 
         tui_shutdown();
     }

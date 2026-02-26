@@ -100,6 +100,18 @@ Run benchmarks on your machine:
 cargo build --release --manifest-path native/Cargo.toml && bun run ts/bench-ffi.ts
 ```
 
+Run Epic I guardrails (strict, CI-failing on regression):
+
+```bash
+cargo build --release --manifest-path native/Cargo.toml && bun run ts/guardrails-ffi.ts
+```
+
+Run Epic I guardrails in report-only mode:
+
+```bash
+cargo build --release --manifest-path native/Cargo.toml && bun run ts/guardrails-ffi.ts --report-only
+```
+
 Contributions welcome. This is a learning exercise - don't expect perfect code.
 
 ## License

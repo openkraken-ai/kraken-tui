@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "bun test test-ffi.test.ts",
-    "bench": "bun run bench-ffi.ts"
+    "bench": "bun run bench-ffi.ts",
+    "guardrails": "bun run guardrails-ffi.ts",
+    "guardrails:report": "bun run guardrails-ffi.ts --report-only"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
