@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 2.1
-**Status**: Approved (Experimental until public v1 GA)
+**Status**: Approved
 **Date**: February 2026
 
 ---
@@ -164,27 +164,35 @@
 - Cross-platform terminal abstraction.
 - Scrollable regions.
 
-**v1 — Internal Stable Milestone (Experimental until public v1 GA):**
+**v1 — Delivered:**
 
 - Animation system (timed transitions, built-in primitives, frame-budget-aware).
 - Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
 
 **v2 — Expansion:**
 
-- Theme inheritance model (constraint-based, nested subtrees).
-- Declarative/reactive framework bindings (reconciler layer).
+- Native Core hardening (safe global state, graceful error propagation, memory budget enforcement).
+- Tree operations for reconciler support (cascading subtree destruction, indexed child insertion).
+- Theme inheritance model (constraint-based, nested subtrees, per-NodeType defaults).
+- TextArea widget (multi-line text input and editing).
+- Position animation (visual-only render offsets).
+- Animation choreography (fan-in/fan-out timelines, additional easing functions).
+- Declarative/reactive framework bindings (lightweight JSX factory + granular signal reactivity).
+- Foundational accessibility (screen reader compatibility, ARIA-like roles).
 
 ### Out of Scope (Anti-Scope) — Explicit Exclusions
 
-1. **Declarative/Reactive framework bindings.** Adding reconciler-based renderers (reactive signal-based or virtual-DOM-based) in v0/v1 would double the API surface and introduce conceptual complexity that conflicts with the "ship faster" JTBD. The imperative API is the minimal sufficient interface. Deferred to v2.
+1. **Declarative/Reactive framework bindings.** Deferred from v0/v1 anti-scope to v2 in-scope. The imperative API remains the primary interface; the reconciler wraps it (Strangler Fig pattern).
 
 2. **Select widget search/filter.** Implementing search/filter within Select dropdowns adds significant complexity to the widget. Plain selection via arrow keys is sufficient for v0.
 
-3. **Accessibility (a11y) features.** Screen reader support, ARIA-like labels, and focus indicators are deferred to v2. Basic keyboard navigation is supported in v0.
+3. **Accessibility (a11y) features.** Deferred from v0/v1 anti-scope to v2 in-scope (foundational level). Full screen reader integration is beyond v2.
 
-4. **Internationalization (i18n).** RTL layout support, Unicode beyond UTF-8, and localization hooks are out of scope for v0/v1.
+4. **Internationalization (i18n).** RTL layout support, Unicode beyond UTF-8, and localization hooks are out of scope.
 
 5. **Widget state persistence.** Serialization/deserialization of the Composition Tree is deferred to future versions.
+
+6. **Background render thread.** Shifting layout/rendering to a dedicated thread contradicts the batched-synchronous pipeline and host-driven animation model. Deferred to v3 pending profiling evidence that the synchronous model is a bottleneck for real workloads.
 
 ---
 
@@ -285,7 +293,7 @@ classDiagram
 | ------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
 | **v0**  | 1, 2, 3, 4, 5, 6, 7                  | Widget composition, layout, styling, input (keyboard + mouse), scrolling, cross-platform, rich text rendering |
 | **v1**  | 8, 9 (foundation)                    | Animation system (timed transitions, primitives, chaining), theming foundation (built-in themes, runtime switching) |
-| **v2**  | 9 (completion), declarative bindings | Theme inheritance, reconciler layer (Solid.js, then React)                                                    |
+| **v2**  | 9 (completion), 10, 11, hardening    | Core hardening (safe state, memory budget), tree ops (subtree destroy, indexed insert), theme inheritance + per-NodeType defaults, TextArea widget, position animation + choreography, declarative reconciler (JSX + signals), foundational accessibility |
 
 ## Appendix B: Operator Preferences
 
@@ -298,7 +306,7 @@ _The following are the developer's stated technology preferences. Per the Princi
 | FFI mechanism                | bun:ffi                        |
 | Layout engine                | Taffy                          |
 | Terminal backend             | crossterm                      |
-| Future reconciler path       | Solid.js (v2), then React (v3) |
+| Future reconciler path       | Lightweight JSX factory + `@preact/signals-core` (v2), optional Effect integration |
 | Build artifact               | cdylib                         |
 | Dev environment              | devenv (Nix)                   |
 

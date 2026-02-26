@@ -10,10 +10,11 @@ TUI library: Rust (layout/rendering) + TypeScript/Bun (API).
 
 ## Status
 
-- **Implementation**: 74 exported FFI symbols (73 public production symbols; excludes test-only `tui_init_headless`)
+- **Implementation**: 79 exported FFI symbols (78 public production symbols; excludes test-only `tui_init_headless`)
 - **Testing**: Rust unit/integration + TypeScript FFI test suites
 - **Performance**: FFI overhead ~0.085μs, 300 mutations @ 0.183ms/frame
-- **API Stability**: Experimental until public v1 GA
+- **v1 Complete**: Theme + Animation (primitives, chaining, easing) fully implemented
+- **v2 Planned**: Core hardening, TextArea, position animation, theme inheritance, JSX reconciler, accessibility
 - **Production Ready**: No
 
 ### Available Widgets
@@ -88,7 +89,7 @@ app.shutdown();
 - Limited error handling - panics instead of graceful errors
 - Untested edge cases remain
 - No accessibility support
-- Animation primitives/chaining are still being finalized for public v1 readiness
+- Animation primitives/chaining implemented but lightly tested in real-world usage
 - Basic widgets only
 
 ## Contributing

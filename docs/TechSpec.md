@@ -2,12 +2,14 @@
 
 ## Kraken TUI
 
-**Version**: 3.1
-**Status**: Draft (Experimental until public v1 GA)
+**Version**: 4.0
+**Status**: Draft
 **Date**: February 2026
-**Source of Truth**: [Architecture.md](./Architecture.md) v2.1, [PRD.md](./PRD.md) v2.1
+**Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
 **Changelog**:
+- v4.0 — v2 scope additions. New ADRs: T16 (safe global state), T17 (subtree destruction), T18 (indexed insertion), T19 (TextArea widget), T20 (reconciler strategy), T21 (theme inheritance), T22 (position animation). Data model: Animation gains looping/pending/chain_next fields, TuiNode gains render_offset, NodeType gains TextArea, Theme gains type_defaults. New FFI functions: tui_destroy_subtree, tui_insert_child. Updated Appendix A (promoted v2 items). Updated Appendix B.
+- v3.2 — Absorbed Performance Budgets from Architecture.md (was out of Architecture's boundary scope) into §5.5. Renumbered §5.6–§5.7.
 - v3.1 — Aligned v1 scope with PRD: animation primitives and chaining are in v1 scope. Canonicalized Theme TS API contract (`new Theme()`, `Theme.DARK`, `Theme.LIGHT`) and `Kraken.switchTheme(theme: Theme)`. Marked headless init as testing utility excluded from public FFI symbol count.
 - v3.0 — Added Theme Module (ADR-T12, ADR-T15), Animation Module (ADR-T13, ADR-T14). 11 new public FFI functions (73 total). Style mask for theme resolution. Built-in dark/light themes.
 - v2.1 — Added text measurement API (ADR-T07), clarified Input scope (ADR-T08), added password masking (ADR-T09), completed Select CRUD (ADR-T10), fixed Select event model (ADR-T11)
@@ -381,6 +383,8 @@ Animation advancement occurs **before** layout resolution in the render pipeline
 | 1 | fg_color | u32 (color encoding) | Per-channel RGB lerp |
 | 2 | bg_color | u32 (color encoding) | Per-channel RGB lerp |
 | 3 | border_color | u32 (color encoding) | Per-channel RGB lerp |
+| 4 | position_x | f32 (as bits) | Linear lerp in f32 space (v2, ADR-T22) |
+| 5 | position_y | f32 (as bits) | Linear lerp in f32 space (v2, ADR-T22) |
 
 **Color interpolation rules:**
 - Both start and end are RGB (tag `0x01`): interpolate R, G, B channels independently, recombine with RGB tag
@@ -449,6 +453,149 @@ Neither built-in theme is applied by default. The developer must explicitly call
 - (+) No implicit behavior change — themes must be explicitly activated
 - (-) Opinionated color choices (may not match every terminal's aesthetic)
 - (note) Advanced use case: detect terminal background color in the Host Layer and select the appropriate built-in theme. This is a Host Layer concern, not a Native Core responsibility.
+
+### ADR-T16: Safe Global State — `OnceLock<RwLock>` (v2)
+
+**Context:** The v0/v1 `TuiContext` is stored as `static mut CONTEXT: Option<TuiContext>` with `#[allow(static_mut_refs)]`. This pattern is deprecated in Rust and unsound under strict aliasing rules. The v2 async event loop and reconciler introduce code paths that could theoretically access state from multiple call sites within a single thread.
+
+**Decision:** Replace `static mut CONTEXT` with `std::sync::OnceLock<std::sync::RwLock<TuiContext>>`. All FFI entry points acquire the lock explicitly. The single-threaded execution model is preserved — `RwLock` provides Rust safety guarantees, not multi-threaded concurrency.
+
+**Alternatives considered:**
+- `thread_local!`: Simpler, but prevents future multi-threaded access (closes the door on a background render thread in v3).
+- `Mutex<TuiContext>`: Write-only locking. `RwLock` is preferred because read-heavy FFI functions (getters, queries) can share access.
+
+**Consequences:**
+
+- (+) Eliminates `#[allow(static_mut_refs)]` — no more deprecated patterns
+- (+) Sound under Rust aliasing rules
+- (+) Preserves single-threaded execution model (no behavior change)
+- (+) Prepares for potential v3 background thread without re-architecture
+- (-) Minor overhead: lock acquisition on every FFI call (~10ns for uncontended RwLock)
+- (-) All FFI entry points must be updated to acquire the lock
+
+### ADR-T17: Cascading Subtree Destruction (v2)
+
+**Context:** The current `tui_destroy_node()` orphans children — it does not recursively destroy descendants. In the imperative API, this is acceptable: the Developer manages individual nodes. In the declarative reconciler, unmounting a component subtree requires destroying all descendants. Without a native recursive destroy, the reconciler must walk the tree from the Host Layer — O(n) FFI calls for a subtree of n nodes.
+
+**Decision:** Add `tui_destroy_subtree(handle)` to the FFI surface. This function recursively destroys a node and all its descendants in a single native call. For each destroyed node: detach from parent, cancel active animations, remove theme bindings, remove from Taffy layout tree, deallocate.
+
+**Traversal order:** Post-order (children before parent) to ensure parent-child bookkeeping is consistent during destruction.
+
+**Consequences:**
+
+- (+) O(n) native operations in a single FFI call vs O(n) FFI calls
+- (+) Prevents handle leaks in the reconciler
+- (+) Animation and theme cleanup is automatic per node
+- (-) One additional FFI function
+- (note) `tui_destroy_node()` retains its current orphaning behavior for backwards compatibility
+
+### ADR-T18: Indexed Child Insertion (v2)
+
+**Context:** The current tree API provides only `tui_append_child(parent, child)` (appends to end) and `tui_remove_child(parent, child)` (removes). To reorder children, the Host Layer must remove all children and re-append them in the desired order — O(n) FFI calls. This is the standard `insertBefore` operation that every reconciler depends on for efficient keyed-list diffing.
+
+**Decision:** Add `tui_insert_child(parent, child, index)` to the FFI surface. Inserts `child` at `index` in `parent`'s child list. If `index >= child_count`, appends (same as `tui_append_child`). If `child` already has a parent, it is detached first (reparenting). Marks the parent's subtree dirty.
+
+**Consequences:**
+
+- (+) Enables O(1) child reordering per node
+- (+) Hard prerequisite for the reconciler's keyed-list diffing
+- (+) Standard DOM-like tree mutation primitive
+- (-) One additional FFI function
+- (note) The Taffy layout tree must also be updated to reflect the new child order
+
+### ADR-T19: TextArea Widget — Multi-Line Input (v2)
+
+**Context:** ADR-T08 deferred multi-line text editing to v2. The PRD's TextArea widget requires a 2D cursor model, line buffer management, vertical navigation, and viewport scrolling.
+
+**Decision:** Add `NodeType::TextArea = 5` as a new widget type. The TextArea widget manages:
+- A `Vec<String>` line buffer (one allocation per line)
+- 2D cursor: `(row: u32, col: u32)` position
+- Viewport offset: `(scroll_row: u32, scroll_col: u32)` for scrolling
+- Word wrap mode: off (horizontal scroll) or on (soft wrap at widget width)
+
+**FFI surface additions:**
+- `tui_textarea_set_cursor(handle, row, col) -> i32`
+- `tui_textarea_get_cursor(handle, *mut u32 row, *mut u32 col) -> i32`
+- `tui_textarea_get_line_count(handle) -> i32`
+- `tui_textarea_set_wrap(handle, u8 wrap_mode) -> i32`
+
+**Content model:** TextArea reuses `tui_set_content()` and `tui_get_content()` for the full text buffer. Newlines (`\n`) delimit lines internally. The Event Module handles vertical cursor movement (Up/Down) and multi-line editing (Enter inserts newline, Backspace at column 0 joins lines).
+
+**Consequences:**
+
+- (+) Covers the 20% of CLI use cases that single-line Input cannot (email body, comments, code snippets)
+- (+) Reuses existing content FFI functions — no new string passing
+- (-) Significant implementation complexity (2D cursor, line management, viewport scrolling)
+- (-) 4+ new FFI functions
+- (migration) The reconciler treats TextArea identically to Input — same lifecycle, same event model
+
+### ADR-T20: Reconciler Strategy — JSX Factory + Signals (v2)
+
+**Context:** ADR-004 established "imperative API first, reactive reconciler v2" with the Strangler Fig pattern. The PRD's Appendix B originally suggested Solid.js, then React. The v2 blueprint proposes a lighter approach: a custom JSX factory + `@preact/signals-core`.
+
+**Decision:** The v2 reconciler is a lightweight runtime JSX factory that instantiates standard Widget classes. Reactivity is provided by `@preact/signals-core` (or equivalent micro-signal library). Signal effects push updates directly to the FFI. No Virtual DOM, no diffing of component trees — signals provide fine-grained reactivity at the property level.
+
+**Package structure:**
+- `kraken-tui` (core, <50KB): imperative wrappers + JSX factory + signal reconciler
+- `kraken-tui/effect` (optional): maps widget lifecycles to Effect `Scope`, input buffer to Effect `Stream`
+
+**JSX factory behavior:**
+1. JSX element → calls `tui_create_node()`, returns Widget instance
+2. JSX children → calls `tui_append_child()` / `tui_insert_child()` in order
+3. JSX props → calls `tui_set_style_*()`, `tui_set_layout_*()`, etc.
+4. Signal prop → wraps in `effect()` that re-calls the setter when the signal changes
+5. Component unmount → calls `tui_destroy_subtree()` (ADR-T17)
+
+**Consequences:**
+
+- (+) Familiar JSX DX without React's weight
+- (+) Fine-grained reactivity — no Virtual DOM diffing overhead
+- (+) Core package stays under 50KB budget
+- (+) Wraps the imperative API — no Native Core changes (Strangler Fig)
+- (-) Diverges from PRD Appendix B's Solid.js preference (non-binding preference)
+- (-) Custom JSX factory requires maintenance; no framework ecosystem to lean on
+- (note) The imperative API remains fully supported — the reconciler is additive
+
+### ADR-T21: Theme Inheritance — Per-NodeType Defaults (v2)
+
+**Context:** v1 themes provide a single set of style defaults for an entire subtree. The PRD and TechSpec Appendix A anticipate v2 theme inheritance: "constraint-based Theme inheritance model for nested subtrees" and "Per-NodeType Themes."
+
+**Decision:** Extend the `Theme` struct with `type_defaults: HashMap<NodeType, VisualStyle>`. The resolution algorithm (ADR-T12) gains a new step:
+
+1. If `style_mask` bit is set → use node's explicit value
+2. **[NEW]** Else if theme provides a NodeType-specific default for this node's type, and that default's mask bit is set → use the NodeType default
+3. Else if theme provides a global default for this property → use theme's global value
+4. Else → use the node's stored value (which defaults to 0x00/empty/1.0)
+
+**FFI surface additions:**
+- `tui_set_theme_type_color(theme, node_type, prop, color) -> i32`
+- `tui_set_theme_type_flag(theme, node_type, prop, value) -> i32`
+- `tui_set_theme_type_border(theme, node_type, border_style) -> i32`
+- `tui_set_theme_type_opacity(theme, node_type, opacity) -> i32`
+
+**Consequences:**
+
+- (+) Enables "style all Text nodes blue" without per-node explicit styling
+- (+) Backwards-compatible: v1 themes without type_defaults are unaffected
+- (+) Resolution algorithm is a clean extension (one new step)
+- (-) 4 new FFI functions
+- (-) Theme struct grows by `HashMap<NodeType, VisualStyle>` (heap-allocated, lazy)
+
+### ADR-T22: Position Animation via Render Offset (v2)
+
+**Context:** ADR-T14 deferred position animation to v2 "to preserve bounded-context separation with Layout." TechSpec Appendix A already sketched the approach: "visual-only render offset."
+
+**Decision:** Add `AnimProp::PositionX = 4` and `AnimProp::PositionY = 5` to the animatable property enum. Add `render_offset: (f32, f32)` field to `TuiNode`. The Animation Module writes to `render_offset`; the Render Module applies the offset during buffer rendering (shifts cell positions). The Layout Module is not involved — `render_offset` is a visual-only displacement that does not affect Flexbox computation.
+
+**Interpolation:** Linear lerp in f32 space. The `target_bits` for position animations is the f32 offset in terminal cells, bit-cast to u32 (same pattern as opacity).
+
+**Consequences:**
+
+- (+) Enables slide-in/slide-out, bounce, and position-based motion
+- (+) Clean bounded-context separation: Animation writes offset, Render reads offset, Layout is unaffected
+- (+) No FFI surface change — `tui_animate()` already accepts `u8 property` and `u32 target_bits`
+- (-) Visual offset can make widgets visually overlap without Layout awareness (developer responsibility)
+- (note) For complex motion, combine position animation with opacity animation using chaining (ADR-T14)
 
 ---
 
@@ -562,6 +709,7 @@ pub enum NodeType {
     Input    = 2,
     Select   = 3,
     ScrollBox = 4,
+    TextArea  = 5,  // v2: multi-line text input (ADR-T19)
 }
 ```
 
@@ -646,7 +794,7 @@ pub enum TuiEventType {
 }
 ```
 
-#### AnimProp (v1)
+#### AnimProp
 
 ```rust
 #[repr(u8)]
@@ -655,10 +803,12 @@ pub enum AnimProp {
     FgColor     = 1,
     BgColor     = 2,
     BorderColor = 3,
+    PositionX   = 4,  // v2: visual-only render offset X (ADR-T22)
+    PositionY   = 5,  // v2: visual-only render offset Y (ADR-T22)
 }
 ```
 
-#### Easing (v1)
+#### Easing
 
 ```rust
 #[repr(u8)]
@@ -667,6 +817,11 @@ pub enum Easing {
     EaseIn    = 1,
     EaseOut   = 2,
     EaseInOut = 3,
+    // v2 additions:
+    CubicIn   = 4,
+    CubicOut  = 5,
+    Elastic   = 6,
+    Bounce    = 7,
 }
 ```
 
@@ -701,7 +856,7 @@ impl Default for VisualStyle {
 
 **Style mask behavior:** The `tui_set_style_*` FFI functions set both the property value AND the corresponding `style_mask` bit. This is transparent to the caller — no additional FFI call is needed. The mask is internal state used only by the Style Module during theme-aware resolution (v1).
 
-#### Theme (v1)
+#### Theme
 
 ```rust
 pub struct Theme {
@@ -713,6 +868,7 @@ pub struct Theme {
     pub opacity: f32,
     pub mask: u8,               // Which properties this theme provides defaults for.
                                 // Same bit layout as VisualStyle.style_mask.
+    pub type_defaults: HashMap<NodeType, VisualStyle>,  // v2: per-NodeType style defaults (ADR-T21)
 }
 
 impl Default for Theme {
@@ -724,6 +880,7 @@ impl Default for Theme {
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: 0,  // No defaults provided until tui_set_theme_* is called
+            type_defaults: HashMap::new(),
         }
     }
 }
@@ -731,7 +888,9 @@ impl Default for Theme {
 
 **Theme mask behavior:** `tui_set_theme_*` functions set both the property value AND the corresponding `mask` bit on the Theme. During resolution, only properties where the theme's mask bit is set are applied as defaults.
 
-#### Animation (v1, internal)
+**v2 per-NodeType defaults:** `tui_set_theme_type_*` functions set style defaults specific to a `NodeType`. During resolution, NodeType-specific defaults take priority over global theme defaults (see ADR-T21 for full resolution order).
+
+#### Animation (internal)
 
 ```rust
 pub struct Animation {
@@ -743,6 +902,9 @@ pub struct Animation {
     pub duration_ms: u32,       // Total animation duration in milliseconds
     pub elapsed_ms: f32,        // Elapsed time since animation start
     pub easing: Easing,         // Easing function
+    pub looping: bool,          // v1: reverse-on-completion (used by pulse primitive)
+    pub pending: bool,          // v1: chained animation waiting for predecessor to complete
+    pub chain_next: Option<u32>, // v1: animation ID to start when this animation completes
 }
 ```
 
@@ -767,6 +929,11 @@ pub struct TuiNode {
     pub visible: bool,
     pub scroll_x: i32,
     pub scroll_y: i32,
+    pub render_offset: (f32, f32),       // v2: visual-only displacement (ADR-T22). Default (0.0, 0.0).
+    // v2 TextArea fields (only used when node_type == TextArea):
+    pub cursor_row: u32,                 // v2: 2D cursor row (ADR-T19)
+    pub cursor_col: u32,                 // v2: 2D cursor column
+    pub wrap_mode: u8,                   // v2: 0 = no wrap (horizontal scroll), 1 = soft wrap
 }
 ```
 
@@ -895,6 +1062,8 @@ pub struct CellUpdate {
 
 #### TuiContext
 
+**v2 note:** The global accessor changes from `static mut CONTEXT` to `OnceLock<RwLock<TuiContext>>` per ADR-T16. The struct contents are unchanged.
+
 ```rust
 pub struct TuiContext {
     // Tree Module
@@ -916,12 +1085,12 @@ pub struct TuiContext {
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub theme_set: syntect::highlighting::ThemeSet,
 
-    // Theme Module (v1)
+    // Theme Module
     pub themes: HashMap<u32, Theme>,
     pub theme_bindings: HashMap<u32, u32>,  // node_handle → theme_handle
     pub next_theme_handle: u32,             // Starts at 3 (1, 2 reserved for built-in)
 
-    // Animation Module (v1)
+    // Animation Module
     pub animations: Vec<Animation>,
     pub next_anim_handle: u32,              // Starts at 1
     pub last_render_time: Option<Instant>,  // std::time::Instant
@@ -979,6 +1148,7 @@ pub struct TuiContext {
 | `tui_get_node_type`  | `(u32 handle) -> i32`             | NodeType / -1 | Returns node type as `i32` (cast of `NodeType` enum value).                             |
 | `tui_set_visible`    | `(u32 handle, u8 visible) -> i32` | 0 / -1        | Set node visibility. `visible`: 0 = hidden, 1 = visible. Hidden nodes are not rendered. |
 | `tui_get_visible`    | `(u32 handle) -> i32`             | 1 / 0 / -1    | Get node visibility. Returns 1 if visible, 0 if hidden, -1 on error.                    |
+| `tui_destroy_subtree`| `(u32 handle) -> i32`             | 0 / -1        | v2: Recursively destroy node and all descendants. Post-order traversal. Cancels animations, removes theme bindings. See ADR-T17. |
 | `tui_get_node_count` | `() -> u32`                       | Count         | Get total number of nodes in the context.                                               |
 
 ### 4.4 Tree Structure
@@ -987,6 +1157,7 @@ pub struct TuiContext {
 | --------------------- | -------------------------------- | ---------- | ------------------------------------------------------------------------------ |
 | `tui_set_root`        | `(u32 handle) -> i32`            | 0 / -1     | Designate a node as the composition tree root. Required before `tui_render()`. |
 | `tui_append_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Add child to parent. Marks subtree dirty.                                      |
+| `tui_insert_child`    | `(u32 parent, u32 child, u32 index) -> i32` | 0 / -1 | v2: Insert child at index. If index >= child_count, appends. Detaches from current parent if needed. See ADR-T18. |
 | `tui_remove_child`    | `(u32 parent, u32 child) -> i32` | 0 / -1     | Remove child from parent. Marks parent dirty.                                  |
 | `tui_get_child_count` | `(u32 handle) -> i32`            | Count / -1 | Number of children.                                                            |
 | `tui_get_child_at`    | `(u32 handle, u32 index) -> u32` | Handle / 0 | Child handle at index.                                                         |
@@ -1026,6 +1197,12 @@ Widget-specific properties for Input and Select nodes.
 | `tui_select_get_option`   | `(u32 handle, u32 index, *mut u8 buffer, u32 buffer_len) -> i32` | Bytes written / -1 | Get option text at index.                                 |
 | `tui_select_set_selected` | `(u32 handle, u32 index) -> i32`                                 | 0 / -1             | Set selected option by index.                             |
 | `tui_select_get_selected` | `(u32 handle) -> i32`                                            | Index / -1         | Get currently selected option index. -1 if none selected. |
+
+| **TextArea Widget (v2)** |                                                                  |                    |                                                           |
+| `tui_textarea_set_cursor` | `(u32 handle, u32 row, u32 col) -> i32`                         | 0 / -1             | Set 2D cursor position within TextArea. See ADR-T19.       |
+| `tui_textarea_get_cursor` | `(u32 handle, *mut u32 row, *mut u32 col) -> i32`               | 0 / -1             | Get current 2D cursor position.                            |
+| `tui_textarea_get_line_count` | `(u32 handle) -> i32`                                        | Count / -1         | Get number of lines in TextArea content.                   |
+| `tui_textarea_set_wrap`   | `(u32 handle, u8 wrap_mode) -> i32`                              | 0 / -1             | Set word wrap: 0 = off (horizontal scroll), 1 = soft wrap. |
 
 ### 4.7 Layout Properties
 
@@ -1215,16 +1392,26 @@ The `tui_render()` pipeline with animation support:
 
 **Theme setter patterns:** The `tui_set_theme_*` functions mirror the `tui_set_style_*` functions exactly. The `prop` values for `tui_set_theme_color` and `tui_set_theme_flag` use the same encoding as `tui_set_style_color` and `tui_set_style_flag`.
 
-### 4.16 Animation (v1)
+**v2 per-NodeType theme setters:**
+
+| Function                     | Signature                                              | Returns | Description |
+| ---------------------------- | ------------------------------------------------------ | ------- | ----------- |
+| `tui_set_theme_type_color`   | `(u32 theme, u8 node_type, u8 prop, u32 color) -> i32` | 0 / -1  | Set a color default for a specific NodeType within a theme. See ADR-T21. |
+| `tui_set_theme_type_flag`    | `(u32 theme, u8 node_type, u8 prop, u8 value) -> i32`  | 0 / -1  | Set a text decoration default for a specific NodeType. |
+| `tui_set_theme_type_border`  | `(u32 theme, u8 node_type, u8 border_style) -> i32`    | 0 / -1  | Set a border style default for a specific NodeType. |
+| `tui_set_theme_type_opacity` | `(u32 theme, u8 node_type, f32 opacity) -> i32`        | 0 / -1  | Set an opacity default for a specific NodeType. |
+
+### 4.16 Animation
 
 | Function                 | Signature                                                               | Returns        | Description                                                                                          |
 | ------------------------ | ----------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
 | `tui_animate`            | `(u32 handle, u8 property, u32 target_bits, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start animation on a widget property. `property`: see `AnimProp` enum. `target_bits`: target value encoded as u32 (f32 bit-cast for opacity, color encoding for colors). `duration_ms`: animation duration. `easing`: see `Easing` enum. Captures current value as start. Returns animation handle. |
 | `tui_cancel_animation`   | `(u32 anim_handle) -> i32`                                              | 0 / -1         | Cancel an active animation. The property retains its current interpolated value. Returns -1 if animation not found (already completed or invalid handle). |
-| `tui_chain_animation` *(planned for v1 GA)* | `(u32 after_anim, u32 next_anim) -> i32` | 0 / -1 | Chain animations so `next_anim` starts when `after_anim` completes. |
-| `tui_start_spinner` *(planned for v1 GA)* | `(u32 handle, u32 interval_ms) -> u32` | Anim handle / 0 | Start built-in spinner primitive on a widget subtree. |
-| `tui_start_progress` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in progress-bar primitive on a widget subtree. |
-| `tui_start_pulse` *(planned for v1 GA)* | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
+| `tui_chain_animation` | `(u32 after_anim, u32 next_anim) -> i32` | 0 / -1 | Chain animations so `next_anim` starts when `after_anim` completes. |
+| `tui_start_spinner` | `(u32 handle, u32 interval_ms) -> u32` | Anim handle / 0 | Start built-in spinner primitive on a widget subtree. |
+| `tui_start_progress` | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in progress-bar primitive on a widget subtree. |
+| `tui_start_pulse` | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
+| `tui_set_animation_looping` | `(u32 anim_id) -> i32` | 0 / -1 | Enable looping (reverse-on-completion) for an animation. Used internally by pulse primitive. |
 
 **Animation behavior:**
 
@@ -1253,27 +1440,27 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 
 ### 4.17 Complete FFI Symbol Count
 
-**Current implemented public surface: 73 functions** (v0 + current v1 progress)
+**v1 public FFI surface: 78 functions** *(excludes test-only `tui_init_headless`)*
+**v2 planned additions: +11 functions = 89 total**
 
-| Category | Count | Note |
-|----------|-------|------|
-| Lifecycle | 4 | init, shutdown, get_terminal_size, get_capabilities *(excludes test-only `tui_init_headless`)* |
-| Node | 6 | create, destroy, type, visibility |
-| Tree | 6 | root, append/remove child, parent queries |
-| Content | 6 | text content, format, code language |
-| Widget | 12 | Input (5) + Select (7) |
-| Layout | 6 | dimensions, flex, edges, gap, get_layout, measure_text |
-| Style | 4 | colors, flags, border, opacity |
-| Focus | 6 | focusable state, focus navigation |
-| Scroll | 3 | scroll position and delta |
-| Input/Render | 4 | read_input, next_event, render, mark_dirty |
-| Diagnostics | 5 | errors, debug, perf, free_string |
-| **Theme** | **9** | **create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch** |
-| **Animation** | **2** | **animate, cancel_animation** |
+| Category | v1 Count | v2 Adds | Note |
+|----------|----------|---------|------|
+| Lifecycle | 4 | — | init, shutdown, get_terminal_size, get_capabilities |
+| Node | 6 | +1 | create, destroy, type, visibility; v2: destroy_subtree |
+| Tree | 6 | +1 | root, append/remove child, parent queries; v2: insert_child |
+| Content | 6 | — | text content, format, code language |
+| Widget | 12 | +4 | Input (5) + Select (7); v2: TextArea (4) |
+| Layout | 6 | — | dimensions, flex, edges, gap, get_layout, measure_text |
+| Style | 4 | — | colors, flags, border, opacity |
+| Focus | 6 | — | focusable state, focus navigation |
+| Scroll | 3 | — | scroll position and delta |
+| Input/Render | 4 | — | read_input, next_event, render, mark_dirty |
+| Diagnostics | 5 | — | errors, debug, perf, free_string |
+| Theme | 9 | +4 | create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch; v2: set_theme_type_color/flag/border/opacity |
+| Animation | 7 | +1 | animate, cancel, spinner, progress, pulse, set_looping, chain; v2: (position anim uses existing tui_animate with new AnimProp values — no new function needed, but choreography APIs TBD) |
 
-**Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+2 = **73**
-
-**Planned additions for public v1 GA:** +4 animation helper symbols (`chain_animation`, `start_spinner`, `start_progress`, `start_pulse`) for a target public surface of **77**.
+**v1 Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+7 = **78**
+**v2 Breakdown:** 4+7+7+6+16+6+4+6+3+4+5+13+7 = **88** (+ choreography APIs TBD)
 
 ---
 
@@ -1316,8 +1503,15 @@ kraken-tui/
 │       │   └── scrollbox.ts
 │       ├── events.ts              # Event types, drain loop, dispatch
 │       ├── style.ts               # Color parsing, style helpers
-│       ├── theme.ts               # Theme class (v1: constructor + built-in constants, configure, apply, switch)
+│       ├── theme.ts               # Theme class (constructor + built-in constants, configure, apply, switch)
 │       └── errors.ts              # KrakenError, error code mapping
+│   # v2 additions:
+│   ├── jsx/                        # v2: JSX factory + reconciler (ADR-T20)
+│   │   ├── jsx-runtime.ts         # Custom JSX factory (createElement, Fragment)
+│   │   ├── reconciler.ts          # Signal-driven reconciler (create, update, unmount)
+│   │   └── types.ts               # JSX type definitions
+│   └── widgets/
+│       └── textarea.ts            # v2: TextArea widget class (ADR-T19)
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
 └── README.md
@@ -1326,17 +1520,17 @@ kraken-tui/
 
 | Architecture Module | Rust File | Responsibility |
 |---|---|---|
-| Tree Module | `tree.rs` | Node CRUD, handle allocation (`next_handle++`), dirty flag set + propagation to ancestors, parent-child bookkeeping. |
+| Tree Module | `tree.rs` | Node CRUD, handle allocation (`next_handle++`), dirty flag set + propagation to ancestors, parent-child bookkeeping. v2: `destroy_subtree()` (ADR-T17), `insert_child()` (ADR-T18). |
 | Layout Module | `layout.rs` | Wraps Taffy: translates `tui_set_layout_*` calls into Taffy `Style` mutations (read-modify-write per ADR-T04). `compute_layout()` delegates to `tree.compute_layout()`. Hit-testing: traverse computed rectangles back-to-front. |
 | Style Module | `style.rs` | `VisualStyle` storage per node. `tui_set_style_*` setters mutate the node's `VisualStyle` and set `style_mask` bits (ADR-T12). Color decoding from `u32` encoding to crossterm `Color`. v1: `resolve_style()` merges explicit node style with nearest ancestor theme defaults based on `style_mask`. |
 | Render Module | `render.rs` | Allocates front/back `Buffer`. v1 render pipeline: animation advancement → theme resolution → layout → buffer rendering → dirty diffing → terminal I/O. Swaps buffers. Clears dirty flags. |
 | Event Module | `event.rs` | `read_input()`: calls `backend.read_events()`, classifies `TerminalInputEvent` → `TuiEvent` (mapping key codes, performing hit-testing for mouse events, managing focus state machine for Tab/BackTab). `next_event()`: drains from `event_buffer`. |
 | Scroll Module | `scroll.rs` | Stores `(scroll_x, scroll_y)` per ScrollBox node. Clamps to content bounds. Render Module calls into Scroll Module to offset child positions and clip overflow during rendering. |
 | Text Module | `text.rs` | Markdown: `pulldown_cmark::Parser` → iterate events → produce `Vec<StyledSpan>`. Code: `syntect` highlighter → produce `Vec<StyledSpan>`. `StyledSpan` = `{ text: &str, attrs: CellAttrs, fg: u32, bg: u32 }`. Render Module consumes spans. |
-| Theme Module | `theme.rs` | `Theme` storage (`HashMap<u32, Theme>`), built-in theme initialization (dark=1, light=2), theme-to-subtree bindings (`theme_bindings: HashMap<u32, u32>`), nearest-ancestor resolution. `tui_set_theme_*` setters mutate theme properties and set mask bits. |
-| Animation Module | `animation.rs` | `Animation` registry (`Vec<Animation>`), delta-time advancement per `tui_render()`, property interpolation (f32 lerp for opacity, per-channel RGB lerp for colors), easing functions (4 quadratic variants), animation lifecycle (start → advance → complete/cancel). Marks target nodes dirty on each advancement step. |
+| Theme Module | `theme.rs` | `Theme` storage (`HashMap<u32, Theme>`), built-in theme initialization (dark=1, light=2), theme-to-subtree bindings (`theme_bindings: HashMap<u32, u32>`), nearest-ancestor resolution. `tui_set_theme_*` setters mutate theme properties and set mask bits. v2: per-NodeType defaults (`type_defaults: HashMap<NodeType, VisualStyle>`) per ADR-T21. |
+| Animation Module | `animation.rs` | `Animation` registry (`Vec<Animation>`), delta-time advancement per `tui_render()`, property interpolation (f32 lerp for opacity, per-channel RGB lerp for colors), easing functions, animation lifecycle (start → advance → complete/cancel), chaining, looping. Marks target nodes dirty on each advancement step. v2: position animation via `render_offset` (ADR-T22), new easing variants (cubic, elastic, bounce). |
 | — | `terminal.rs` | `TerminalBackend` trait definition. `CrosstermBackend`: `init()` enters alternate screen + raw mode + mouse capture. `shutdown()` restores. `size()` queries terminal. `write_diff()` emits crossterm commands. `read_events()` polls crossterm events. |
-| — | `context.rs` | `TuiContext` struct. Global `static mut CONTEXT: Option<TuiContext>`. `context()` and `context_mut()` accessors that return `Result`. `tui_init()` creates built-in themes and initializes animation state. |
+| — | `context.rs` | `TuiContext` struct. v1: Global `static mut CONTEXT: Option<TuiContext>`. v2: `OnceLock<RwLock<TuiContext>>` per ADR-T16. `context()` and `context_mut()` accessors that return `Result`. `tui_init()` creates built-in themes and initializes animation state. |
 | — | `types.rs` | `NodeHandle` type alias, all enums (`NodeType`, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`), `TuiEvent` struct, key code constants, modifier constants. |
 | — | `lib.rs` | **Only** `extern "C"` functions. Each function: `catch_unwind` → `context_mut()` → validate → delegate to module function → return status code. Zero logic beyond dispatch. |
 
@@ -1399,7 +1593,40 @@ bitflags = "2"
 unicode-width = "0.2"
 ```
 
-### 5.5 Testing Strategy
+### 5.5 Performance Budgets
+
+Per PRD Section 5 (Non-Functional Constraints), the following budgets govern implementation decisions:
+
+#### FFI Overhead Budget (< 1ms per call)
+
+**Allocation:**
+- **Target:** < 500μs per FFI crossing (50% of budget for safety margin)
+- **Measured via:** `tui_get_perf_counter()` performance counters (Section 4.12)
+
+**Strategy:**
+- Batch mutations in Host Layer before FFI calls
+- Minimize call frequency: `render()` triggers full pipeline in one native execution
+- Event drain uses repeated single-call pattern (ADR-T01) — acceptable due to low event volume
+
+#### Host Bundle Budget (< 50KB)
+
+**Allocation:**
+
+| Component | Budget | Rationale |
+|-----------|--------|-----------|
+| FFI bindings | ~10KB | `dlopen`, symbol definitions, struct packing |
+| Widget classes | ~20KB | 5 widget types × ~4KB each |
+| Style helpers | ~5KB | Color parsing, style merging |
+| Event handling | ~8KB | Event types, drain loop, dispatch |
+| Error handling | ~4KB | Error classes, code mapping |
+| **Buffer** | ~3KB | Safety margin |
+
+**Strategy:**
+- Zero runtime dependencies beyond `bun:ffi` (built-in)
+- No external struct libraries (ADR-T06: custom minimal implementation)
+- Tree-shakeable widget imports
+
+### 5.6 Testing Strategy
 
 | Layer                | Tool                        | What It Tests                                                                                                                                                                            |
 | -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1409,7 +1636,7 @@ unicode-width = "0.2"
 | **TypeScript unit**  | `bun test`                  | Widget API, color parsing, error class, ID map. v1: Theme constructor/constants API, f32 bit-casting for animation, primitive helper wrappers. |
 | **Visual smoke**     | Manual                      | Run example applications. Visually verify rendering, input, focus traversal, scrolling. v1: theme switching (dark/light), fade animations. |
 
-### 5.6 Host Application Loop Pattern
+### 5.7 Host Application Loop Pattern
 
 The canonical event loop for a Kraken TUI application:
 
@@ -1443,6 +1670,37 @@ while (running) {
 	}
 
 	app.render(); // Animation advancement → layout → diff → terminal I/O
+}
+
+app.shutdown();
+```
+
+**v2 async loop pattern (animation-aware sleep):**
+
+```typescript
+import { Kraken, Box, Text } from "kraken-tui";
+
+const app = Kraken.init();
+// ... widget setup as above ...
+
+let running = true;
+while (running) {
+	const animating = app.getPerfCounter(6) > 0; // Active animation count
+
+	if (animating) {
+		app.readInput(0); // Non-blocking when animating (need to keep rendering)
+		await Bun.sleep(16); // Yield to event loop, ~60fps
+	} else {
+		app.readInput(100); // Block longer when idle (saves CPU)
+	}
+
+	for (const event of app.drainEvents()) {
+		if (event.type === "key" && event.keyCode === 0x010e) {
+			running = false;
+		}
+	}
+
+	app.render();
 }
 
 app.shutdown();
@@ -1492,36 +1750,56 @@ loop:
 
 ---
 
-## Appendix A: v2 Extension Points
+## Appendix A: v2 Design Decisions & Remaining Extension Points
 
-The v0+v1 implementation structure is designed to accommodate v2 additions without architectural change:
+The following v2 features are now fully specified with ADRs and FFI contracts in the main document:
 
-| v2 Feature               | Integration Point                                                                                                                                                                                                                |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Position Animation**   | Add `AnimProp::PositionX = 4` and `AnimProp::PositionY = 5`. Animation Module applies visual offset via a new `render_offset: (f32, f32)` field on `TuiNode`. Render Module applies offset during buffer rendering. Layout is not affected. |
-| **Animation Choreography** | Extend chaining and sequencing beyond pairwise links (fan-in/fan-out timelines, cancellation groups). |
-| **Per-NodeType Themes**  | Extend `Theme` struct with `HashMap<NodeType, VisualStyle>`. Resolution algorithm gains a NodeType lookup step between the node's explicit style and the global theme defaults. No changes to existing FFI functions; add `tui_set_theme_type_color(theme, node_type, prop, color)` etc. |
-| **Reactive Reconciler**  | Per ADR-004. v2 reconciler wraps the same FFI command protocol (Strangler Fig pattern per Fowler). No changes to the Native Core. |
-| **Additional Easings**   | Extend `Easing` enum with cubic, elastic, bounce variants. No FFI surface change — `tui_animate()` already accepts `u8` easing. |
+| v2 Feature               | Status | ADR / Section |
+| ------------------------ | ------ | ------------- |
+| **Safe Global State**    | Specified | ADR-T16. `OnceLock<RwLock<TuiContext>>` replaces `static mut`. |
+| **Cascading Destruction** | Specified | ADR-T17. `tui_destroy_subtree()` in §4.3. |
+| **Indexed Insertion**    | Specified | ADR-T18. `tui_insert_child()` in §4.4. |
+| **TextArea Widget**      | Specified | ADR-T19. `NodeType::TextArea = 5`, 4 new FFI functions in §4.6. |
+| **Reconciler Strategy**  | Specified | ADR-T20. JSX factory + signals. Package split in §5.1. |
+| **Per-NodeType Themes**  | Specified | ADR-T21. `type_defaults` on Theme, 4 new FFI functions in §4.15. |
+| **Position Animation**   | Specified | ADR-T22. `AnimProp::PositionX/Y`, `render_offset` on TuiNode. |
+| **Additional Easings**   | Specified | Extended `Easing` enum (cubic, elastic, bounce) in §3.2. No new FFI functions. |
+
+**Remaining extension points (not yet fully specified — require additional ADRs):**
+
+| Feature                    | Integration Point |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Animation Choreography** | Extend chaining beyond pairwise links: fan-in/fan-out timelines, cancellation groups, parallel animation batches. New FFI functions TBD. |
+| **Scrollbar Rendering**    | Native Core renders scrollbar indicators based on scroll position and content overflow. Render Module enhancement — no FFI surface change. |
+| **Accessibility (a11y)**   | New fields on TuiNode (role, label). Event Module extension for screen reader output. FFI functions for setting ARIA-like attributes. Requires a dedicated ADR. |
+| **Async Event Loop**       | Host Layer refactoring: animation-aware sleep, `await Bun.sleep(16)` when animating. ts/CLAUDE.md constraint amendment needed. No Native Core change. |
+| **String Interning**       | Internal optimization within Text Module for high-frequency identical content. Per Architecture Appendix B: deferred to profiling data. No FFI surface change. |
 
 ## Appendix B: Upstream Consistency
 
 | Document        | Version         | Constraints Honored                                                                                                                                                                                                                                                                                   |
 | --------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| PRD.md          | v2.1 (Approved) | v0 scope (Epics 1–7). v1 scope (Epics 8–9) includes timed transitions, animation primitives, and chaining; theming foundation with built-in light/dark and runtime switching. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
-| Architecture.md | v2.1 (Draft)    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants: unidirectional flow, single source of truth, copy semantics, error codes, no interior pointers). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules (Theme & Animation now fully specified). |
+| PRD.md          | Approved | v0 scope (Epics 1–7). v1 scope (Epics 8–9). v2 scope: core hardening, tree ops, theme inheritance, TextArea, position animation, choreography, reconciler, accessibility. Performance targets: <20MB, <50ms input latency, <16ms render budget, <1ms FFI overhead. |
+| Architecture.md | Draft    | Modular Monolith with Cross-Language Facade. FFI boundary contract (5 invariants). Buffer-poll event model. Batched-synchronous render pipeline. 9 internal modules. v2: safe global state (Risk 1 resolved), background render thread descoped to v3 (Risk 7), new Appendix B decisions for reconciler, subtree destruction, indexed insertion. |
 | ADR-001         | Accepted        | Retained-mode scene graph with dirty-flag diffing. Double-buffered cell grid.                                                                                                                                                                                                                         |
 | ADR-002         | Accepted        | Taffy 0.9.x for Flexbox layout.                                                                                                                                                                                                                                                                       |
 | ADR-003         | Accepted        | Opaque `u32` handles. `HashMap<u32, TuiNode>`. Handle(0) invalid. Sequential allocation. Rust-owned state.                                                                                                                                                                                            |
-| ADR-004         | Accepted        | Imperative command API (v0/v1). Reactive reconciler deferred to v2.                                                                                                                                                                                                                                   |
+| ADR-004         | Accepted        | Imperative command API (v0/v1). v2: reactive reconciler via JSX factory + signals (ADR-T20). Wraps imperative API (Strangler Fig).                                                                                                                                                                    |
 | ADR-005         | Accepted        | crossterm 0.29.x. Behind `TerminalBackend` trait per Risk 4 mitigation.                                                                                                                                                                                                                               |
 | ADR-T06         | Accepted        | Custom minimal FFI struct handling (no external libraries).                                                                                                                                                                                                                                           |
 | ADR-T07         | Accepted        | Text measurement via unicode-width crate for CJK/emoji width calculation.                                                                                                                                                                                                                          |
-| ADR-T08         | Accepted        | Single-line Input only for v0/v1. Multi-line deferred to v2.                                                                                                                                                                                                                                      |
+| ADR-T08         | Accepted        | Single-line Input only for v0/v1. v2: TextArea widget for multi-line (ADR-T19).                                                                                                                                                                                                                   |
 | ADR-T09         | Accepted        | Password masking support in Input widget.                                                                                                                                                                                                                                                      |
 | ADR-T10         | Accepted        | Full CRUD for Select widget (add, remove, clear options).                                                                                                                                                                                                                                    |
 | ADR-T11         | Accepted        | Select Change events carry index in data[0] to avoid FFI round-trip.                                                                                                                                                                                                                         |
-| ADR-T12         | Accepted        | Style property mask (`style_mask: u8`) for theme resolution. Explicit styles win over theme defaults.                                                                                                                                                                                        |
+| ADR-T12         | Accepted        | Style property mask (`style_mask: u8`) for theme resolution. Explicit styles win over theme defaults. v2: extended with NodeType-specific resolution step (ADR-T21).                                                                                                                         |
 | ADR-T13         | Accepted        | Delta-time animation model. `tui_render()` advances animations using elapsed wall-clock time.                                                                                                                                                                                                |
-| ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. Chaining is in v1 scope; position remains deferred to v2.                                                                                                                                                              |
+| ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. v2: position_x, position_y added (ADR-T22).                                                                                                                                                                            |
 | ADR-T15         | Accepted        | Built-in dark (handle 1) and light (handle 2) theme palettes. Created during `tui_init()`. Not applied by default.                                                                                                                                                                          |
+| ADR-T16         | v2 Draft        | Safe global state: `OnceLock<RwLock<TuiContext>>` replaces `static mut`.                                                                                                                                                                                                                     |
+| ADR-T17         | v2 Draft        | Cascading subtree destruction: `tui_destroy_subtree()` for recursive cleanup.                                                                                                                                                                                                                |
+| ADR-T18         | v2 Draft        | Indexed child insertion: `tui_insert_child()` for reconciler keyed-list diffing.                                                                                                                                                                                                              |
+| ADR-T19         | v2 Draft        | TextArea widget: multi-line input with 2D cursor, line buffer, word wrap.                                                                                                                                                                                                                     |
+| ADR-T20         | v2 Draft        | Reconciler strategy: lightweight JSX factory + `@preact/signals-core`. Package split: core <50KB + optional effect package.                                                                                                                                                                   |
+| ADR-T21         | v2 Draft        | Theme inheritance: per-NodeType style defaults via `type_defaults: HashMap<NodeType, VisualStyle>`.                                                                                                                                                                                           |
+| ADR-T22         | v2 Draft        | Position animation: visual-only render offset on TuiNode. `AnimProp::PositionX/Y`. Layout unaffected.                                                                                                                                                                                        |
