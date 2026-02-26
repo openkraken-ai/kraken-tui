@@ -4,6 +4,10 @@
 //! A single global instance is managed via `tui_init()` / `tui_shutdown()`.
 
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
+use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(not(test))]
+use std::thread::ThreadId;
 use std::time::Instant;
 
 use crate::animation::Animation;
@@ -49,6 +53,13 @@ pub struct TuiContext {
     pub perf_render_us: u64,
     pub perf_diff_cells: u32,
 }
+
+// SAFETY: ADR-T16 preserves Kraken TUI's single-threaded execution model.
+// The lock is used for aliasing safety at the FFI boundary, not to introduce
+// concurrent access. We never intentionally share mutable context access across
+// threads in production code paths.
+unsafe impl Send for TuiContext {}
+unsafe impl Sync for TuiContext {}
 
 impl TuiContext {
     pub fn new(backend: Box<dyn TerminalBackend>) -> Self {
@@ -112,62 +123,210 @@ impl TuiContext {
 // Global State
 // ============================================================================
 
-#[allow(static_mut_refs)]
-static mut CONTEXT: Option<TuiContext> = None;
+static CONTEXT: OnceLock<RwLock<Option<TuiContext>>> = OnceLock::new();
+#[cfg(not(test))]
+static OWNER_THREAD: OnceLock<RwLock<Option<ThreadId>>> = OnceLock::new();
 
-/// Get an immutable reference to the global context.
-///
-/// # Safety
-/// This accesses a global `static mut`. The entire Native Core is single-threaded
-/// per ADR-003, so this is safe within that invariant.
-#[allow(static_mut_refs)]
-pub fn context() -> Result<&'static TuiContext, String> {
-    unsafe {
-        CONTEXT
-            .as_ref()
-            .ok_or_else(|| "Context not initialized. Call tui_init() first.".to_string())
+fn context_lock() -> &'static RwLock<Option<TuiContext>> {
+    CONTEXT.get_or_init(|| RwLock::new(None))
+}
+
+#[cfg(not(test))]
+fn owner_thread_lock() -> &'static RwLock<Option<ThreadId>> {
+    OWNER_THREAD.get_or_init(|| RwLock::new(None))
+}
+
+fn lock_poisoned(name: &str, detail: impl std::fmt::Display) -> String {
+    format!("{name} lock poisoned after panic: {detail}")
+}
+
+fn ensure_thread_affinity() -> Result<(), String> {
+    #[cfg(test)]
+    {
+        return Ok(());
+    }
+
+    #[cfg(not(test))]
+    {
+        let current = std::thread::current().id();
+        let owner = owner_thread_lock()
+            .read()
+            .map_err(|e| lock_poisoned("owner_thread", e))?;
+        if let Some(owner_id) = *owner {
+            if owner_id != current {
+                return Err("Context access from non-owner thread is unsupported".to_string());
+            }
+        }
+        Ok(())
     }
 }
 
-/// Get a mutable reference to the global context.
-///
-/// # Safety
-/// Same single-threaded invariant as `context()`.
-#[allow(static_mut_refs)]
-pub fn context_mut() -> Result<&'static mut TuiContext, String> {
-    unsafe {
-        CONTEXT
-            .as_mut()
-            .ok_or_else(|| "Context not initialized. Call tui_init() first.".to_string())
+#[cfg(not(test))]
+fn bind_owner_thread_current() -> Result<(), String> {
+    let current = std::thread::current().id();
+    let mut owner = owner_thread_lock()
+        .write()
+        .map_err(|e| lock_poisoned("owner_thread", e))?;
+    if let Some(owner_id) = *owner {
+        if owner_id != current {
+            return Err("Context access from non-owner thread is unsupported".to_string());
+        }
     }
+    *owner = Some(current);
+    Ok(())
+}
+
+#[cfg(test)]
+fn bind_owner_thread_current() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn clear_owner_thread() -> Result<(), String> {
+    let mut owner = owner_thread_lock()
+        .write()
+        .map_err(|e| lock_poisoned("owner_thread", e))?;
+    *owner = None;
+    Ok(())
+}
+
+#[cfg(test)]
+fn clear_owner_thread() -> Result<(), String> {
+    Ok(())
+}
+
+pub struct ContextReadGuard<'a> {
+    guard: RwLockReadGuard<'a, Option<TuiContext>>,
+}
+
+impl Deref for ContextReadGuard<'_> {
+    type Target = TuiContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard
+            .as_ref()
+            .expect("ContextReadGuard is only constructed for initialized context")
+    }
+}
+
+pub struct ContextWriteGuard<'a> {
+    guard: RwLockWriteGuard<'a, Option<TuiContext>>,
+}
+
+impl Deref for ContextWriteGuard<'_> {
+    type Target = TuiContext;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard
+            .as_ref()
+            .expect("ContextWriteGuard is only constructed for initialized context")
+    }
+}
+
+impl DerefMut for ContextWriteGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard
+            .as_mut()
+            .expect("ContextWriteGuard is only constructed for initialized context")
+    }
+}
+
+/// Acquire a read lock for the global context.
+pub fn context_read() -> Result<ContextReadGuard<'static>, String> {
+    ensure_thread_affinity()?;
+    let guard = context_lock()
+        .read()
+        .map_err(|e| lock_poisoned("context", e))?;
+    if guard.is_none() {
+        return Err("Context not initialized. Call tui_init() first.".to_string());
+    }
+    Ok(ContextReadGuard { guard })
+}
+
+/// Acquire a write lock for the global context.
+pub fn context_write() -> Result<ContextWriteGuard<'static>, String> {
+    ensure_thread_affinity()?;
+    let guard = context_lock()
+        .write()
+        .map_err(|e| lock_poisoned("context", e))?;
+    if guard.is_none() {
+        return Err("Context not initialized. Call tui_init() first.".to_string());
+    }
+    Ok(ContextWriteGuard { guard })
 }
 
 /// Initialize the global context with the given backend.
-#[allow(static_mut_refs)]
-pub fn init_context(backend: Box<dyn TerminalBackend>) {
-    unsafe {
-        CONTEXT = Some(TuiContext::new(backend));
+pub fn init_context(backend: Box<dyn TerminalBackend>) -> Result<(), String> {
+    ensure_thread_affinity()?;
+    bind_owner_thread_current()?;
+
+    let mut guard = context_lock()
+        .write()
+        .map_err(|e| lock_poisoned("context", e))?;
+    if guard.is_some() {
+        return Err("Context already initialized. Call tui_shutdown() first.".to_string());
     }
+    *guard = Some(TuiContext::new(backend));
+    Ok(())
+}
+
+/// Check whether a context is currently initialized.
+pub fn is_context_initialized() -> Result<bool, String> {
+    ensure_thread_affinity()?;
+    let guard = context_lock()
+        .read()
+        .map_err(|e| lock_poisoned("context", e))?;
+    Ok(guard.is_some())
 }
 
 /// Destroy the global context and return the backend for shutdown.
-#[allow(static_mut_refs)]
-pub fn destroy_context() -> Option<Box<dyn TerminalBackend>> {
-    unsafe { CONTEXT.take().map(|ctx| ctx.backend) }
+pub fn destroy_context() -> Result<Option<Box<dyn TerminalBackend>>, String> {
+    ensure_thread_affinity()?;
+    let mut guard = context_lock()
+        .write()
+        .map_err(|e| lock_poisoned("context", e))?;
+    let backend = guard.take().map(|ctx| ctx.backend);
+    drop(guard);
+    clear_owner_thread()?;
+    Ok(backend)
 }
 
 /// Store an error message in the global context (best-effort; ignores if no context).
-///
-/// Appends a null byte so the string can be safely returned as a C string
-/// pointer via `tui_get_last_error()`. Without this, reading the pointer
-/// as a C string would cause undefined behavior (buffer overread).
-#[allow(static_mut_refs)]
 pub fn set_last_error(msg: String) {
-    unsafe {
-        if let Some(ref mut ctx) = CONTEXT {
-            let mut s = msg;
-            s.push('\0');
-            ctx.last_error = s;
+    if ensure_thread_affinity().is_err() {
+        return;
+    }
+    if let Ok(mut guard) = context_lock().write() {
+        if let Some(ctx) = guard.as_mut() {
+            ctx.last_error = msg;
         }
     }
+}
+
+/// Clear the context-bound error message.
+pub fn clear_last_error() {
+    if ensure_thread_affinity().is_err() {
+        return;
+    }
+    if let Ok(mut guard) = context_lock().write() {
+        if let Some(ctx) = guard.as_mut() {
+            ctx.last_error.clear();
+        }
+    }
+}
+
+/// Snapshot the last error into owned memory.
+pub fn get_last_error_snapshot() -> Option<String> {
+    if ensure_thread_affinity().is_err() {
+        return None;
+    }
+    if let Ok(guard) = context_lock().read() {
+        if let Some(ctx) = guard.as_ref() {
+            if !ctx.last_error.is_empty() {
+                return Some(ctx.last_error.clone());
+            }
+        }
+    }
+
+    None
 }

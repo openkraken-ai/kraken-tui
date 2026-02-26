@@ -1418,6 +1418,57 @@ describe("FFI integration", () => {
 	// ── Post-shutdown safety ────────────────────────────────────────────────
 
 	describe("post-shutdown", () => {
+		test("double init fails with explicit error", () => {
+			ffi.tui_shutdown();
+			expect(ffi.tui_init_headless(80, 24)).toBe(0);
+			expect(ffi.tui_init_headless(80, 24)).toBe(-1);
+
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBeNull();
+			if (errPtr) {
+				expect(new CString(errPtr).toString()).toContain("already initialized");
+			}
+			ffi.tui_clear_error();
+			ffi.tui_shutdown();
+		});
+
+		test("shutdown and reinit invalidate old handles", () => {
+			expect(ffi.tui_init_headless(80, 24)).toBe(0);
+			const stale = ffi.tui_create_node(0);
+			expect(stale).toBeGreaterThan(0);
+
+			expect(ffi.tui_shutdown()).toBe(0);
+			expect(ffi.tui_shutdown()).toBe(0); // idempotent no-op
+			expect(ffi.tui_init_headless(80, 24)).toBe(0);
+
+			expect(ffi.tui_destroy_node(stale)).toBe(-1);
+			expect(ffi.tui_get_node_count()).toBe(0);
+			ffi.tui_shutdown();
+		});
+
+		test("shutdown and reinit invalidate old theme and animation handles", () => {
+			expect(ffi.tui_init_headless(80, 24)).toBe(0);
+
+			const root = ffi.tui_create_node(0);
+			expect(root).toBeGreaterThan(0);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 1, 24, 1)).toBe(0);
+
+			const staleTheme = ffi.tui_create_theme();
+			expect(staleTheme).toBeGreaterThanOrEqual(3);
+			const staleAnim = ffi.tui_start_spinner(root, 50);
+			expect(staleAnim).toBeGreaterThan(0);
+
+			expect(ffi.tui_shutdown()).toBe(0);
+			expect(ffi.tui_init_headless(80, 24)).toBe(0);
+
+			expect(ffi.tui_destroy_theme(staleTheme)).toBe(-1);
+			expect(ffi.tui_cancel_animation(staleAnim)).toBe(-1);
+
+			ffi.tui_shutdown();
+		});
+
 		test("operations fail after shutdown", () => {
 			ffi.tui_shutdown();
 			expect(ffi.tui_create_node(0)).toBe(0);
