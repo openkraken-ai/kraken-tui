@@ -84,6 +84,10 @@ const lib = dlopen(LIB_PATH, {
 	tui_input_set_max_len: { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_input_set_mask:    { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_input_get_mask:    { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_textarea_set_cursor: { args: ["u32", "u32", "u32"] as FFIType[],         returns: "i32" as const },
+	tui_textarea_get_cursor: { args: ["u32", "ptr", "ptr"] as FFIType[],         returns: "i32" as const },
+	tui_textarea_get_line_count: { args: ["u32"] as FFIType[],                   returns: "i32" as const },
+	tui_textarea_set_wrap: { args: ["u32", "u8"] as FFIType[],                   returns: "i32" as const },
 
 	// Select widget
 	tui_select_add_option:    { args: ["u32", "ptr", "u32"] as FFIType[],        returns: "i32" as const },
@@ -101,6 +105,10 @@ const lib = dlopen(LIB_PATH, {
 	tui_set_theme_flag:    { args: ["u32", "u8", "u8"] as FFIType[],             returns: "i32" as const },
 	tui_set_theme_border:  { args: ["u32", "u8"] as FFIType[],                   returns: "i32" as const },
 	tui_set_theme_opacity: { args: ["u32", "f32"] as FFIType[],                  returns: "i32" as const },
+	tui_set_theme_type_color: { args: ["u32", "u8", "u8", "u32"] as FFIType[],   returns: "i32" as const },
+	tui_set_theme_type_flag: { args: ["u32", "u8", "u8", "u8"] as FFIType[],     returns: "i32" as const },
+	tui_set_theme_type_border: { args: ["u32", "u8", "u8"] as FFIType[],         returns: "i32" as const },
+	tui_set_theme_type_opacity: { args: ["u32", "u8", "f32"] as FFIType[],       returns: "i32" as const },
 	tui_apply_theme:       { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_clear_theme:       { args: ["u32"] as FFIType[],                         returns: "i32" as const },
 	tui_switch_theme:      { args: ["u32"] as FFIType[],                         returns: "i32" as const },
@@ -112,6 +120,11 @@ const lib = dlopen(LIB_PATH, {
 	tui_start_progress:    { args: ["u32", "u32", "u8"] as FFIType[],            returns: "u32" as const },
 	tui_start_pulse:       { args: ["u32", "u32", "u8"] as FFIType[],            returns: "u32" as const },
 	tui_chain_animation:   { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_create_choreo_group: { args: [] as FFIType[],                            returns: "u32" as const },
+	tui_choreo_add:        { args: ["u32", "u32", "u32"] as FFIType[],           returns: "i32" as const },
+	tui_choreo_start:      { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_choreo_cancel:     { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_destroy_choreo_group: { args: ["u32"] as FFIType[],                      returns: "i32" as const },
 
 	// Rendering
 	tui_render:     { args: [] as FFIType[],                                    returns: "i32" as const },
@@ -199,8 +212,8 @@ describe("FFI integration", () => {
 	// ── Node Lifecycle ──────────────────────────────────────────────────────
 
 	describe("node lifecycle", () => {
-		test("creates all 5 widget types", () => {
-			const handles = [0, 1, 2, 3, 4].map((t) => ffi.tui_create_node(t));
+		test("creates all 6 widget types", () => {
+			const handles = [0, 1, 2, 3, 4, 5].map((t) => ffi.tui_create_node(t));
 			for (const h of handles) expect(h).toBeGreaterThan(0);
 
 			// Verify types
@@ -713,6 +726,38 @@ describe("FFI integration", () => {
 		});
 	});
 
+	// ── TextArea Widget ───────────────────────────────────────────────────────
+
+	describe("textarea widget", () => {
+		test("cursor and line count round-trip", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "abc\ndef\nghi")).toBe(0);
+			expect(ffi.tui_textarea_get_line_count(h)).toBe(3);
+
+			expect(ffi.tui_textarea_set_cursor(h, 2, 4)).toBe(0);
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			expect(ffi.tui_textarea_get_cursor(h, row, col)).toBe(0);
+			expect(row[0]).toBe(2);
+			expect(col[0]).toBe(3); // clamped to line length
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("set wrap mode and type guard", () => {
+			const textarea = ffi.tui_create_node(5);
+			const box = ffi.tui_create_node(0);
+
+			expect(ffi.tui_textarea_set_wrap(textarea, 1)).toBe(0);
+			expect(ffi.tui_textarea_set_wrap(textarea, 0)).toBe(0);
+			expect(ffi.tui_textarea_set_wrap(textarea, 2)).toBe(-1);
+			expect(ffi.tui_textarea_get_line_count(box)).toBe(-1);
+
+			expect(ffi.tui_destroy_node(box)).toBe(0);
+			expect(ffi.tui_destroy_node(textarea)).toBe(0);
+		});
+	});
+
 	// ── Select Widget Extended ──────────────────────────────────────────────
 
 	describe("select widget extended", () => {
@@ -966,6 +1011,17 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_theme(t);
 		});
 
+		test("set NodeType-specific theme defaults", () => {
+			const t = ffi.tui_create_theme();
+			// NodeType::Text = 1
+			expect(ffi.tui_set_theme_type_color(t, 1, 0, 0x0100AAFF)).toBe(0);
+			expect(ffi.tui_set_theme_type_flag(t, 1, 0, 1)).toBe(0);
+			expect(ffi.tui_set_theme_type_border(t, 1, 1)).toBe(0);
+			expect(ffi.tui_set_theme_type_opacity(t, 1, 0.7)).toBe(0);
+			expect(ffi.tui_set_theme_type_color(t, 99, 0, 0x01FFFFFF)).toBe(-1);
+			ffi.tui_destroy_theme(t);
+		});
+
 		test("apply and clear theme on node", () => {
 			const root = ffi.tui_create_node(0);
 			ffi.tui_set_root(root);
@@ -1100,7 +1156,7 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(root);
 		});
 
-		test("animate all 4 property types", () => {
+		test("animate all 6 property types", () => {
 			const node = ffi.tui_create_node(0);
 
 			// Opacity
@@ -1116,6 +1172,16 @@ describe("FFI integration", () => {
 
 			// BorderColor (RGB green)
 			expect(ffi.tui_animate(node, 3, 0x0100FF00, 300, 3)).toBeGreaterThan(0);
+
+			// PositionX (f32 bits)
+			const posX = new Float32Array([10.0]);
+			const posXBits = new Uint32Array(posX.buffer)[0]!;
+			expect(ffi.tui_animate(node, 4, posXBits, 300, 0)).toBeGreaterThan(0);
+
+			// PositionY (f32 bits)
+			const posY = new Float32Array([4.0]);
+			const posYBits = new Uint32Array(posY.buffer)[0]!;
+			expect(ffi.tui_animate(node, 5, posYBits, 300, 4)).toBeGreaterThan(0);
 
 			ffi.tui_destroy_node(node);
 		});
@@ -1257,7 +1323,7 @@ describe("FFI integration", () => {
 
 		test("all easing variants accepted by tui_start_progress", () => {
 			const node = ffi.tui_create_node(0);
-			for (const easing of [0, 1, 2, 3]) {
+			for (const easing of [0, 1, 2, 3, 4, 5, 6, 7]) {
 				const h = ffi.tui_start_progress(node, 500, easing);
 				expect(h).toBeGreaterThan(0);
 				ffi.tui_cancel_animation(h);
@@ -1409,6 +1475,53 @@ describe("FFI integration", () => {
 		});
 	});
 
+	// ── K11: Choreography groups ────────────────────────────────────────────
+
+	describe("animation choreography", () => {
+		test("group lifecycle APIs work", () => {
+			const node = ffi.tui_create_node(0);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const a = ffi.tui_animate(node, 0, zeroBits, 500, 0);
+			const b = ffi.tui_animate(node, 1, 0x01FF0000, 500, 0);
+			const group = ffi.tui_create_choreo_group();
+
+			expect(group).toBeGreaterThan(0);
+			expect(ffi.tui_choreo_add(group, a, 0)).toBe(0);
+			expect(ffi.tui_choreo_add(group, b, 200)).toBe(0);
+			expect(ffi.tui_choreo_start(group)).toBe(0);
+			expect(ffi.tui_choreo_cancel(group)).toBe(0);
+			expect(ffi.tui_destroy_choreo_group(group)).toBe(0);
+
+			ffi.tui_destroy_node(node);
+		});
+
+		test("cancelling group prevents delayed followers from starting", () => {
+			const node = ffi.tui_create_node(0);
+			ffi.tui_set_root(node);
+			ffi.tui_set_layout_dimension(node, 0, 80, 1);
+			ffi.tui_set_layout_dimension(node, 1, 24, 1);
+			const f32 = new Float32Array([0.0]);
+			const zeroBits = new Uint32Array(f32.buffer)[0]!;
+			const a = ffi.tui_animate(node, 0, zeroBits, 2000, 0);
+			const b = ffi.tui_animate(node, 1, 0x01FF0000, 2000, 0);
+			const group = ffi.tui_create_choreo_group();
+
+			expect(ffi.tui_choreo_add(group, a, 0)).toBe(0);
+			expect(ffi.tui_choreo_add(group, b, 1000)).toBe(0);
+			expect(ffi.tui_choreo_start(group)).toBe(0);
+			expect(ffi.tui_render()).toBe(0);
+			expect(ffi.tui_choreo_cancel(group)).toBe(0);
+			Bun.sleepSync(10);
+			expect(ffi.tui_render()).toBe(0);
+
+			// follower b should have been cancelled by group cancellation
+			expect(ffi.tui_cancel_animation(b)).toBe(-1);
+			expect(ffi.tui_destroy_choreo_group(group)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+	});
+
 	// ── Regression tests ───────────────────────────────────────────────────
 
 	describe("regressions", () => {
@@ -1465,9 +1578,10 @@ describe("FFI integration", () => {
 			// silently fall back to 0 (Opacity). The Widget layer throws TypeError; here
 			// we verify the underlying propMap lookup behavior the guard relies on.
 			const propMap: Record<string, number> = {
-				opacity: 0, fgColor: 1, bgColor: 2, borderColor: 3,
+				opacity: 0, fgColor: 1, bgColor: 2, borderColor: 3, positionX: 4, positionY: 5,
 			};
 			expect(propMap["opacity"]).toBe(0);
+			expect(propMap["positionX"]).toBe(4);
 			expect(propMap["unknownProp"]).toBeUndefined();
 			expect(propMap["OPACITY"]).toBeUndefined();
 			expect(propMap["fgcolor"]).toBeUndefined();
@@ -1479,10 +1593,12 @@ describe("FFI integration", () => {
 			// we verify the underlying easingMap lookup behavior the guard relies on.
 			const easingMap: Record<string, number> = {
 				linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3,
+				cubicIn: 4, cubicOut: 5, elastic: 6, bounce: 7,
 			};
 			expect(easingMap["linear"]).toBe(0);
+			expect(easingMap["bounce"]).toBe(7);
 			expect(easingMap["Linear"]).toBeUndefined();
-			expect(easingMap["bounce"]).toBeUndefined();
+			expect(easingMap["spring"]).toBeUndefined();
 			expect(easingMap["ease-in"]).toBeUndefined();
 		});
 

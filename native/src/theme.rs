@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::context::TuiContext;
-use crate::types::{BorderStyle, CellAttrs, VisualStyle};
+use crate::types::{BorderStyle, CellAttrs, NodeType, VisualStyle};
 
 /// A theme provides visual style defaults for a subtree.
 /// Properties are only applied as defaults if the corresponding mask bit is set.
@@ -22,6 +22,7 @@ pub struct Theme {
     pub attrs: CellAttrs,
     pub opacity: f32,
     pub mask: u8,
+    pub type_defaults: HashMap<NodeType, VisualStyle>,
 }
 
 impl Default for Theme {
@@ -34,6 +35,7 @@ impl Default for Theme {
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: 0,
+            type_defaults: HashMap::new(),
         }
     }
 }
@@ -57,6 +59,7 @@ pub(crate) fn create_builtin_themes(themes: &mut HashMap<u32, Theme>) {
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: VisualStyle::MASK_ALL,
+            type_defaults: HashMap::new(),
         },
     );
 
@@ -71,6 +74,7 @@ pub(crate) fn create_builtin_themes(themes: &mut HashMap<u32, Theme>) {
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: VisualStyle::MASK_ALL,
+            type_defaults: HashMap::new(),
         },
     );
 }
@@ -213,6 +217,125 @@ pub(crate) fn set_theme_opacity(
 
     theme.opacity = opacity.clamp(0.0, 1.0);
     theme.mask |= VisualStyle::MASK_OPACITY;
+
+    mark_dirty_theme_bindings(ctx, theme_handle);
+    Ok(())
+}
+
+/// Set a per-NodeType color default. prop: 0=fg, 1=bg, 2=border_color.
+pub(crate) fn set_theme_type_color(
+    ctx: &mut TuiContext,
+    theme_handle: u32,
+    node_type: u8,
+    prop: u8,
+    color: u32,
+) -> Result<(), String> {
+    let node_type =
+        NodeType::from_u8(node_type).ok_or_else(|| format!("Invalid node type: {node_type}"))?;
+
+    let theme = ctx
+        .themes
+        .get_mut(&theme_handle)
+        .ok_or_else(|| format!("Invalid theme handle: {theme_handle}"))?;
+    let style = theme.type_defaults.entry(node_type).or_default();
+
+    let mask_bit = match prop {
+        0 => {
+            style.fg_color = color;
+            VisualStyle::MASK_FG_COLOR
+        }
+        1 => {
+            style.bg_color = color;
+            VisualStyle::MASK_BG_COLOR
+        }
+        2 => {
+            style.border_color = color;
+            VisualStyle::MASK_BORDER_COLOR
+        }
+        _ => return Err(format!("Invalid color property: {prop}")),
+    };
+    style.style_mask |= mask_bit;
+
+    mark_dirty_theme_bindings(ctx, theme_handle);
+    Ok(())
+}
+
+/// Set a per-NodeType text decoration flag. prop: 0=bold, 1=italic, 2=underline.
+pub(crate) fn set_theme_type_flag(
+    ctx: &mut TuiContext,
+    theme_handle: u32,
+    node_type: u8,
+    prop: u8,
+    value: u8,
+) -> Result<(), String> {
+    let node_type =
+        NodeType::from_u8(node_type).ok_or_else(|| format!("Invalid node type: {node_type}"))?;
+
+    let theme = ctx
+        .themes
+        .get_mut(&theme_handle)
+        .ok_or_else(|| format!("Invalid theme handle: {theme_handle}"))?;
+    let style = theme.type_defaults.entry(node_type).or_default();
+
+    let flag = match prop {
+        0 => CellAttrs::BOLD,
+        1 => CellAttrs::ITALIC,
+        2 => CellAttrs::UNDERLINE,
+        _ => return Err(format!("Invalid flag property: {prop}")),
+    };
+
+    if value != 0 {
+        style.attrs |= flag;
+    } else {
+        style.attrs.remove(flag);
+    }
+    style.style_mask |= VisualStyle::MASK_ATTRS;
+
+    mark_dirty_theme_bindings(ctx, theme_handle);
+    Ok(())
+}
+
+/// Set a per-NodeType border style default.
+pub(crate) fn set_theme_type_border(
+    ctx: &mut TuiContext,
+    theme_handle: u32,
+    node_type: u8,
+    border_style: u8,
+) -> Result<(), String> {
+    let node_type =
+        NodeType::from_u8(node_type).ok_or_else(|| format!("Invalid node type: {node_type}"))?;
+    let bs = BorderStyle::from_u8(border_style)
+        .ok_or_else(|| format!("Invalid border style: {border_style}"))?;
+
+    let theme = ctx
+        .themes
+        .get_mut(&theme_handle)
+        .ok_or_else(|| format!("Invalid theme handle: {theme_handle}"))?;
+    let style = theme.type_defaults.entry(node_type).or_default();
+    style.border_style = bs;
+    style.style_mask |= VisualStyle::MASK_BORDER_STYLE;
+
+    mark_dirty_theme_bindings(ctx, theme_handle);
+    Ok(())
+}
+
+/// Set a per-NodeType opacity default.
+pub(crate) fn set_theme_type_opacity(
+    ctx: &mut TuiContext,
+    theme_handle: u32,
+    node_type: u8,
+    opacity: f32,
+) -> Result<(), String> {
+    let node_type =
+        NodeType::from_u8(node_type).ok_or_else(|| format!("Invalid node type: {node_type}"))?;
+
+    let theme = ctx
+        .themes
+        .get_mut(&theme_handle)
+        .ok_or_else(|| format!("Invalid theme handle: {theme_handle}"))?;
+    let style = theme.type_defaults.entry(node_type).or_default();
+    style.opacity = opacity.clamp(0.0, 1.0);
+    style.style_mask |= VisualStyle::MASK_OPACITY;
 
     mark_dirty_theme_bindings(ctx, theme_handle);
     Ok(())
@@ -505,5 +628,50 @@ mod tests {
         let mut ctx = test_ctx();
         let h = create_theme(&mut ctx).unwrap();
         assert!(set_theme_color(&mut ctx, h, 99, 0x01FF0000).is_err());
+    }
+
+    #[test]
+    fn test_set_theme_type_color_sets_mask() {
+        let mut ctx = test_ctx();
+        let h = create_theme(&mut ctx).unwrap();
+
+        set_theme_type_color(&mut ctx, h, NodeType::Text as u8, 0, 0x0100AAFF).unwrap();
+        let text_defaults = &ctx.themes[&h].type_defaults[&NodeType::Text];
+        assert_eq!(text_defaults.fg_color, 0x0100AAFF);
+        assert_ne!(text_defaults.style_mask & VisualStyle::MASK_FG_COLOR, 0);
+    }
+
+    #[test]
+    fn test_set_theme_type_flag_sets_mask() {
+        let mut ctx = test_ctx();
+        let h = create_theme(&mut ctx).unwrap();
+
+        set_theme_type_flag(&mut ctx, h, NodeType::Text as u8, 0, 1).unwrap();
+        let text_defaults = &ctx.themes[&h].type_defaults[&NodeType::Text];
+        assert!(text_defaults.attrs.contains(CellAttrs::BOLD));
+        assert_ne!(text_defaults.style_mask & VisualStyle::MASK_ATTRS, 0);
+    }
+
+    #[test]
+    fn test_set_theme_type_border_sets_mask() {
+        let mut ctx = test_ctx();
+        let h = create_theme(&mut ctx).unwrap();
+
+        set_theme_type_border(&mut ctx, h, NodeType::Text as u8, BorderStyle::Double as u8)
+            .unwrap();
+        let text_defaults = &ctx.themes[&h].type_defaults[&NodeType::Text];
+        assert_eq!(text_defaults.border_style, BorderStyle::Double);
+        assert_ne!(text_defaults.style_mask & VisualStyle::MASK_BORDER_STYLE, 0);
+    }
+
+    #[test]
+    fn test_set_theme_type_opacity_sets_mask() {
+        let mut ctx = test_ctx();
+        let h = create_theme(&mut ctx).unwrap();
+
+        set_theme_type_opacity(&mut ctx, h, NodeType::Text as u8, 0.33).unwrap();
+        let text_defaults = &ctx.themes[&h].type_defaults[&NodeType::Text];
+        assert!((text_defaults.opacity - 0.33).abs() < 0.001);
+        assert_ne!(text_defaults.style_mask & VisualStyle::MASK_OPACITY, 0);
     }
 }

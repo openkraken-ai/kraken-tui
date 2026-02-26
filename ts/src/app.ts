@@ -143,4 +143,44 @@ export class Kraken {
 	chainAnimation(afterAnim: number, nextAnim: number): void {
 		checkResult(ffi.tui_chain_animation(afterAnim, nextAnim), "chainAnimation");
 	}
+
+	/**
+	 * Create a choreography animation group.
+	 */
+	createChoreoGroup(): number {
+		const handle = ffi.tui_create_choreo_group();
+		if (handle === 0) throw new Error("Failed to create choreography group");
+		return handle;
+	}
+
+	/**
+	 * Add an animation to a choreography group at an absolute timeline offset.
+	 */
+	choreoAdd(group: number, animationHandle: number, startAtMs: number): void {
+		checkResult(
+			ffi.tui_choreo_add(group, animationHandle, startAtMs),
+			"choreoAdd",
+		);
+	}
+
+	/**
+	 * Start a choreography group timeline.
+	 */
+	startChoreo(group: number): void {
+		checkResult(ffi.tui_choreo_start(group), "startChoreo");
+	}
+
+	/**
+	 * Cancel a choreography group.
+	 */
+	cancelChoreo(group: number): void {
+		checkResult(ffi.tui_choreo_cancel(group), "cancelChoreo");
+	}
+
+	/**
+	 * Destroy a choreography group handle.
+	 */
+	destroyChoreoGroup(group: number): void {
+		checkResult(ffi.tui_destroy_choreo_group(group), "destroyChoreoGroup");
+	}
 }

@@ -96,4 +96,5 @@ export const NodeType = {
 	Input: 2,
 	Select: 3,
 	ScrollBox: 4,
+	TextArea: 5,
 } as const;

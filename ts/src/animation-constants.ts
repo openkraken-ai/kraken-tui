@@ -9,6 +9,8 @@ export const AnimProp = {
 	FgColor: 1,
 	BgColor: 2,
 	BorderColor: 3,
+	PositionX: 4,
+	PositionY: 5,
 } as const;
 
 export type AnimProp = (typeof AnimProp)[keyof typeof AnimProp];
@@ -18,6 +20,10 @@ export const Easing = {
 	EaseIn: 1,
 	EaseOut: 2,
 	EaseInOut: 3,
+	CubicIn: 4,
+	CubicOut: 5,
+	Elastic: 6,
+	Bounce: 7,
 } as const;
 
 export type Easing = (typeof Easing)[keyof typeof Easing];

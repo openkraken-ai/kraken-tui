@@ -10,7 +10,7 @@
 //! - Animation chaining: B starts when A completes (TASK-H2)
 
 use crate::context::TuiContext;
-use crate::types::{color_tag, AnimProp, Easing, VisualStyle};
+use crate::types::{color_tag, AnimProp, Easing, TuiNode, VisualStyle};
 
 /// Spinner frame cycling state for the built-in spinner primitive.
 #[derive(Debug, Clone)]
@@ -40,6 +40,22 @@ pub struct Animation {
     pub spinner: Option<SpinnerState>,
 }
 
+/// A choreography member links an animation handle to a group timeline offset.
+#[derive(Debug, Clone)]
+pub struct ChoreographyMember {
+    pub anim_id: u32,
+    pub start_at_ms: u32,
+    pub started: bool,
+}
+
+/// A choreography group controls a set of animations on a shared timeline.
+#[derive(Debug, Clone)]
+pub struct ChoreographyGroup {
+    pub running: bool,
+    pub elapsed_ms: f32,
+    pub members: Vec<ChoreographyMember>,
+}
+
 // ============================================================================
 // Easing Functions (ADR-T14)
 // ============================================================================
@@ -54,6 +70,32 @@ fn apply_easing(easing: Easing, t: f32) -> f32 {
                 2.0 * t * t
             } else {
                 1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+            }
+        }
+        Easing::CubicIn => t * t * t,
+        Easing::CubicOut => 1.0 - (1.0 - t).powi(3),
+        Easing::Elastic => {
+            if t <= 0.0 || t >= 1.0 {
+                t
+            } else {
+                let c4 = (2.0 * std::f32::consts::PI) / 3.0;
+                -(2.0_f32).powf(10.0 * t - 10.0) * ((t * 10.0 - 10.75) * c4).sin()
+            }
+        }
+        Easing::Bounce => {
+            let n1 = 7.5625;
+            let d1 = 2.75;
+            if t < 1.0 / d1 {
+                n1 * t * t
+            } else if t < 2.0 / d1 {
+                let x = t - 1.5 / d1;
+                n1 * x * x + 0.75
+            } else if t < 2.5 / d1 {
+                let x = t - 2.25 / d1;
+                n1 * x * x + 0.9375
+            } else {
+                let x = t - 2.625 / d1;
+                n1 * x * x + 0.984375
             }
         }
     }
@@ -103,7 +145,9 @@ fn interpolate_color(start: u32, end: u32, alpha: f32) -> u32 {
 /// Interpolate a property value based on its type.
 fn interpolate(property: AnimProp, start_bits: u32, end_bits: u32, alpha: f32) -> u32 {
     match property {
-        AnimProp::Opacity => interpolate_f32(start_bits, end_bits, alpha),
+        AnimProp::Opacity | AnimProp::PositionX | AnimProp::PositionY => {
+            interpolate_f32(start_bits, end_bits, alpha)
+        }
         AnimProp::FgColor | AnimProp::BgColor | AnimProp::BorderColor => {
             interpolate_color(start_bits, end_bits, alpha)
         }
@@ -115,17 +159,21 @@ fn interpolate(property: AnimProp, start_bits: u32, end_bits: u32, alpha: f32) -
 // ============================================================================
 
 /// Read the current value of an animatable property from a node's VisualStyle.
-fn read_property(style: &VisualStyle, property: AnimProp) -> u32 {
+fn read_property(node: &TuiNode, property: AnimProp) -> u32 {
+    let style = &node.visual_style;
     match property {
         AnimProp::Opacity => style.opacity.to_bits(),
         AnimProp::FgColor => style.fg_color,
         AnimProp::BgColor => style.bg_color,
         AnimProp::BorderColor => style.border_color,
+        AnimProp::PositionX => node.render_offset.0.to_bits(),
+        AnimProp::PositionY => node.render_offset.1.to_bits(),
     }
 }
 
 /// Write an interpolated value to a node's VisualStyle and set the style_mask bit.
-fn write_property(style: &mut VisualStyle, property: AnimProp, bits: u32) {
+fn write_property(node: &mut TuiNode, property: AnimProp, bits: u32) {
+    let style = &mut node.visual_style;
     match property {
         AnimProp::Opacity => {
             style.opacity = f32::from_bits(bits).clamp(0.0, 1.0);
@@ -142,6 +190,12 @@ fn write_property(style: &mut VisualStyle, property: AnimProp, bits: u32) {
         AnimProp::BorderColor => {
             style.border_color = bits;
             style.style_mask |= VisualStyle::MASK_BORDER_COLOR;
+        }
+        AnimProp::PositionX => {
+            node.render_offset.0 = f32::from_bits(bits);
+        }
+        AnimProp::PositionY => {
+            node.render_offset.1 = f32::from_bits(bits);
         }
     }
 }
@@ -191,7 +245,7 @@ pub(crate) fn start_animation(
             .nodes
             .get(&target)
             .ok_or_else(|| format!("Invalid handle: {target}"))?;
-        read_property(&node.visual_style, property)
+        read_property(node, property)
     };
 
     let id = ctx.next_anim_handle;
@@ -353,6 +407,170 @@ pub(crate) fn chain_animation(
     Ok(())
 }
 
+/// Create an empty choreography group.
+pub(crate) fn create_choreography_group(ctx: &mut TuiContext) -> Result<u32, String> {
+    let id = ctx.next_choreo_group_handle;
+    ctx.next_choreo_group_handle += 1;
+    ctx.choreo_groups.insert(
+        id,
+        ChoreographyGroup {
+            running: false,
+            elapsed_ms: 0.0,
+            members: Vec::new(),
+        },
+    );
+    Ok(id)
+}
+
+/// Add an animation to a choreography group with an absolute timeline offset.
+///
+/// The animation is immediately marked as pending so it does not advance until
+/// the group timeline reaches `start_at_ms`.
+pub(crate) fn choreography_add(
+    ctx: &mut TuiContext,
+    group_id: u32,
+    anim_id: u32,
+    start_at_ms: u32,
+) -> Result<(), String> {
+    let group = ctx
+        .choreo_groups
+        .get_mut(&group_id)
+        .ok_or_else(|| format!("Choreography group not found: {group_id}"))?;
+    if group.running {
+        return Err("Cannot mutate a running choreography group".to_string());
+    }
+    if group.members.iter().any(|m| m.anim_id == anim_id) {
+        return Err(format!(
+            "Animation {anim_id} is already part of group {group_id}"
+        ));
+    }
+
+    let anim = ctx
+        .animations
+        .iter_mut()
+        .find(|a| a.id == anim_id)
+        .ok_or_else(|| format!("Animation not found: {anim_id}"))?;
+    anim.pending = true;
+    anim.elapsed_ms = 0.0;
+
+    group.members.push(ChoreographyMember {
+        anim_id,
+        start_at_ms,
+        started: false,
+    });
+    group.members.sort_by_key(|m| m.start_at_ms);
+    Ok(())
+}
+
+/// Start a choreography group timeline from t=0.
+pub(crate) fn choreography_start(ctx: &mut TuiContext, group_id: u32) -> Result<(), String> {
+    let group = ctx
+        .choreo_groups
+        .get_mut(&group_id)
+        .ok_or_else(|| format!("Choreography group not found: {group_id}"))?;
+    if group.running {
+        return Ok(());
+    }
+
+    group.running = true;
+    group.elapsed_ms = 0.0;
+    for member in &mut group.members {
+        member.started = false;
+    }
+
+    // Start zero-offset members immediately.
+    for member in &mut group.members {
+        if member.start_at_ms == 0 {
+            if let Some(anim) = ctx.animations.iter_mut().find(|a| a.id == member.anim_id) {
+                anim.pending = false;
+            }
+            member.started = true;
+        }
+    }
+    Ok(())
+}
+
+/// Cancel a choreography group.
+///
+/// Already-started animations continue. Not-yet-started members are cancelled
+/// to guarantee they cannot start later.
+pub(crate) fn choreography_cancel(ctx: &mut TuiContext, group_id: u32) -> Result<(), String> {
+    let pending_ids: Vec<u32> = {
+        let group = ctx
+            .choreo_groups
+            .get(&group_id)
+            .ok_or_else(|| format!("Choreography group not found: {group_id}"))?;
+        group
+            .members
+            .iter()
+            .filter(|member| !member.started)
+            .map(|member| member.anim_id)
+            .collect()
+    };
+
+    for anim_id in pending_ids {
+        if let Some(anim) = ctx.animations.iter().find(|a| a.id == anim_id) {
+            if anim.pending {
+                let _ = cancel_animation(ctx, anim_id);
+            }
+        }
+    }
+    if let Some(group) = ctx.choreo_groups.get_mut(&group_id) {
+        group.running = false;
+    }
+    Ok(())
+}
+
+/// Destroy a choreography group.
+pub(crate) fn destroy_choreography_group(
+    ctx: &mut TuiContext,
+    group_id: u32,
+) -> Result<(), String> {
+    if ctx.choreo_groups.remove(&group_id).is_some() {
+        Ok(())
+    } else {
+        Err(format!("Choreography group not found: {group_id}"))
+    }
+}
+
+fn remove_animation_from_choreography(ctx: &mut TuiContext, anim_id: u32) {
+    for group in ctx.choreo_groups.values_mut() {
+        group.members.retain(|m| m.anim_id != anim_id);
+    }
+    ctx.choreo_groups
+        .retain(|_, group| !group.members.is_empty());
+}
+
+fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) {
+    let mut to_start: Vec<u32> = Vec::new();
+    for group in ctx.choreo_groups.values_mut() {
+        if !group.running {
+            continue;
+        }
+        group.elapsed_ms += elapsed_ms;
+
+        for member in &mut group.members {
+            if member.started {
+                continue;
+            }
+            if group.elapsed_ms >= member.start_at_ms as f32 {
+                to_start.push(member.anim_id);
+                member.started = true;
+            }
+        }
+
+        if group.members.iter().all(|m| m.started) {
+            group.running = false;
+        }
+    }
+
+    for anim_id in to_start {
+        if let Some(anim) = ctx.animations.iter_mut().find(|a| a.id == anim_id) {
+            anim.pending = false;
+        }
+    }
+}
+
 /// Advance all active animations by the given elapsed time.
 ///
 /// For each non-pending animation:
@@ -360,7 +578,13 @@ pub(crate) fn chain_animation(
 /// - Property (one-shot): interpolate, remove when complete, activate any chain
 /// - Property (looping): interpolate, reverse direction on completion
 pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
-    if ctx.animations.is_empty() || elapsed_ms <= 0.0 {
+    if elapsed_ms <= 0.0 {
+        return;
+    }
+
+    advance_choreography(ctx, elapsed_ms);
+
+    if ctx.animations.is_empty() {
         return;
     }
 
@@ -423,7 +647,7 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
     // Apply property updates to nodes
     for (target, property, bits) in updates {
         if let Some(node) = ctx.nodes.get_mut(&target) {
-            write_property(&mut node.visual_style, property, bits);
+            write_property(node, property, bits);
             node.dirty = true;
         }
     }
@@ -454,6 +678,9 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
 
     // Remove completed one-shot non-spinner animations
     ctx.animations.retain(|a| !completed_ids.contains(&a.id));
+    for completed_id in completed_ids {
+        remove_animation_from_choreography(ctx, completed_id);
+    }
 }
 
 /// Mark a running animation as looping (bidirectional oscillation).
@@ -485,6 +712,7 @@ pub(crate) fn cancel_animation(ctx: &mut TuiContext, anim_id: u32) -> Result<(),
     ctx.animations.remove(idx);
     // Prevent the chained successor from auto-starting
     ctx.animation_chains.remove(&anim_id);
+    remove_animation_from_choreography(ctx, anim_id);
     Ok(())
 }
 
@@ -508,6 +736,10 @@ pub(crate) fn cancel_all_for_node(ctx: &mut TuiContext, handle: u32) {
     // Remove chains where the cancelled animation was the successor
     ctx.animation_chains
         .retain(|_, next_id| !cancelled_ids.contains(next_id));
+
+    for id in cancelled_ids {
+        remove_animation_from_choreography(ctx, id);
+    }
 }
 
 #[cfg(test)]
@@ -560,6 +792,10 @@ mod tests {
             Easing::EaseIn,
             Easing::EaseOut,
             Easing::EaseInOut,
+            Easing::CubicIn,
+            Easing::CubicOut,
+            Easing::Elastic,
+            Easing::Bounce,
         ] {
             assert!(
                 (apply_easing(easing, 0.0)).abs() < 0.001,
@@ -570,6 +806,27 @@ mod tests {
                 "easing {easing:?} at t=1"
             );
         }
+    }
+
+    #[test]
+    fn test_position_animation_updates_render_offset() {
+        let mut ctx = test_ctx();
+        let h = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert_eq!(ctx.nodes[&h].render_offset.0, 0.0);
+
+        start_animation(
+            &mut ctx,
+            h,
+            AnimProp::PositionX,
+            10.0f32.to_bits(),
+            1000,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        advance_animations(&mut ctx, 500.0);
+        let x = ctx.nodes[&h].render_offset.0;
+        assert!((x - 5.0).abs() < 0.2);
     }
 
     // ── Interpolation tests ──────────────────────────────────────────────
@@ -1297,6 +1554,103 @@ mod tests {
         assert!(
             opacity_b > 0.0 && opacity_b < 1.0,
             "B should be partially visible, got {opacity_b}"
+        );
+    }
+
+    #[test]
+    fn test_choreography_offsets_activate_members() {
+        let mut ctx = test_ctx();
+        let a = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let b = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        let anim_a = start_animation(
+            &mut ctx,
+            a,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+        let anim_b = start_animation(
+            &mut ctx,
+            b,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        let group = create_choreography_group(&mut ctx).unwrap();
+        choreography_add(&mut ctx, group, anim_a, 0).unwrap();
+        choreography_add(&mut ctx, group, anim_b, 200).unwrap();
+        choreography_start(&mut ctx, group).unwrap();
+
+        // Immediate member starts at t=0, delayed member remains pending.
+        let a_pending = ctx
+            .animations
+            .iter()
+            .find(|an| an.id == anim_a)
+            .unwrap()
+            .pending;
+        let b_pending = ctx
+            .animations
+            .iter()
+            .find(|an| an.id == anim_b)
+            .unwrap()
+            .pending;
+        assert!(!a_pending);
+        assert!(b_pending);
+
+        advance_animations(&mut ctx, 250.0);
+        let b_pending_after = ctx
+            .animations
+            .iter()
+            .find(|an| an.id == anim_b)
+            .unwrap()
+            .pending;
+        assert!(!b_pending_after);
+    }
+
+    #[test]
+    fn test_choreography_cancel_prevents_unscheduled_followers() {
+        let mut ctx = test_ctx();
+        let a = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let b = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        let anim_a = start_animation(
+            &mut ctx,
+            a,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+        let anim_b = start_animation(
+            &mut ctx,
+            b,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        let group = create_choreography_group(&mut ctx).unwrap();
+        choreography_add(&mut ctx, group, anim_a, 0).unwrap();
+        choreography_add(&mut ctx, group, anim_b, 600).unwrap();
+        choreography_start(&mut ctx, group).unwrap();
+
+        advance_animations(&mut ctx, 100.0);
+        choreography_cancel(&mut ctx, group).unwrap();
+        advance_animations(&mut ctx, 1000.0);
+
+        // Delayed member should have been cancelled before scheduling.
+        assert!(
+            !ctx.animations.iter().any(|an| an.id == anim_b),
+            "unscheduled follower must be cancelled"
         );
     }
 }

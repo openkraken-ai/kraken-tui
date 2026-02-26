@@ -45,6 +45,12 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 continue;
                             }
                         }
+                        Some(crate::types::NodeType::TextArea) => {
+                            if handle_textarea_key(ctx, focused_handle, code, character) {
+                                count += 1;
+                                continue;
+                            }
+                        }
                         Some(crate::types::NodeType::Select) => {
                             if handle_select_key(ctx, focused_handle, code) {
                                 count += 1;
@@ -208,6 +214,187 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     }
 
     false
+}
+
+fn split_textarea_lines(content: &str) -> Vec<String> {
+    if content.is_empty() {
+        vec![String::new()]
+    } else {
+        content.split('\n').map(|line| line.to_string()).collect()
+    }
+}
+
+fn join_textarea_lines(lines: &[String]) -> String {
+    lines.join("\n")
+}
+
+fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
+    if char_idx == 0 {
+        return 0;
+    }
+    match s.char_indices().nth(char_idx) {
+        Some((idx, _)) => idx,
+        None => s.len(),
+    }
+}
+
+fn clamp_textarea_cursor(lines: &[String], row: &mut u32, col: &mut u32) {
+    let max_row = lines.len().saturating_sub(1) as u32;
+    if *row > max_row {
+        *row = max_row;
+    }
+    let line_len = lines[*row as usize].chars().count() as u32;
+    if *col > line_len {
+        *col = line_len;
+    }
+}
+
+/// Handle a key press on a focused TextArea widget. Returns true if consumed.
+fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: char) -> bool {
+    let mut emit_change = false;
+    let mut consumed = false;
+
+    {
+        let node = match ctx.nodes.get_mut(&handle) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        let mut lines = split_textarea_lines(&node.content);
+        clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+
+        match code {
+            key::ENTER => {
+                let row = node.cursor_row as usize;
+                let col = node.cursor_col as usize;
+                let split_at = char_to_byte_idx(&lines[row], col);
+                let before = lines[row][..split_at].to_string();
+                let after = lines[row][split_at..].to_string();
+                lines[row] = before;
+                lines.insert(row + 1, after);
+                node.cursor_row += 1;
+                node.cursor_col = 0;
+                emit_change = true;
+                consumed = true;
+            }
+            key::BACKSPACE => {
+                if node.cursor_col > 0 {
+                    let row = node.cursor_row as usize;
+                    let col = node.cursor_col as usize;
+                    let start = char_to_byte_idx(&lines[row], col - 1);
+                    let end = char_to_byte_idx(&lines[row], col);
+                    lines[row].replace_range(start..end, "");
+                    node.cursor_col -= 1;
+                    emit_change = true;
+                } else if node.cursor_row > 0 {
+                    let row = node.cursor_row as usize;
+                    let current_line = lines.remove(row);
+                    let prev_row = row - 1;
+                    let prev_len = lines[prev_row].chars().count() as u32;
+                    lines[prev_row].push_str(&current_line);
+                    node.cursor_row -= 1;
+                    node.cursor_col = prev_len;
+                    emit_change = true;
+                }
+                consumed = true;
+            }
+            key::DELETE => {
+                let row = node.cursor_row as usize;
+                let col = node.cursor_col as usize;
+                let line_len = lines[row].chars().count();
+                if col < line_len {
+                    let start = char_to_byte_idx(&lines[row], col);
+                    let end = char_to_byte_idx(&lines[row], col + 1);
+                    lines[row].replace_range(start..end, "");
+                    emit_change = true;
+                } else if row + 1 < lines.len() {
+                    let next_line = lines.remove(row + 1);
+                    lines[row].push_str(&next_line);
+                    emit_change = true;
+                }
+                consumed = true;
+            }
+            key::LEFT => {
+                if node.cursor_col > 0 {
+                    node.cursor_col -= 1;
+                } else if node.cursor_row > 0 {
+                    node.cursor_row -= 1;
+                    node.cursor_col = lines[node.cursor_row as usize].chars().count() as u32;
+                }
+                consumed = true;
+            }
+            key::RIGHT => {
+                let row = node.cursor_row as usize;
+                let line_len = lines[row].chars().count() as u32;
+                if node.cursor_col < line_len {
+                    node.cursor_col += 1;
+                } else if (node.cursor_row as usize) + 1 < lines.len() {
+                    node.cursor_row += 1;
+                    node.cursor_col = 0;
+                }
+                consumed = true;
+            }
+            key::UP => {
+                if node.cursor_row > 0 {
+                    node.cursor_row -= 1;
+                    clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                }
+                consumed = true;
+            }
+            key::DOWN => {
+                if (node.cursor_row as usize) + 1 < lines.len() {
+                    node.cursor_row += 1;
+                    clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                }
+                consumed = true;
+            }
+            key::HOME => {
+                node.cursor_col = 0;
+                consumed = true;
+            }
+            key::END => {
+                let row = node.cursor_row as usize;
+                node.cursor_col = lines[row].chars().count() as u32;
+                consumed = true;
+            }
+            _ => {}
+        }
+
+        if !consumed && character != '\0' && !character.is_control() {
+            let row = node.cursor_row as usize;
+            let col = node.cursor_col as usize;
+            let idx = char_to_byte_idx(&lines[row], col);
+            lines[row].insert(idx, character);
+            node.cursor_col += 1;
+            emit_change = true;
+            consumed = true;
+        }
+
+        if emit_change {
+            node.content = join_textarea_lines(&lines);
+        }
+        clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+
+        // Keep cursor-follow viewport sane; render module applies exact visibility.
+        if node.textarea_view_row > node.cursor_row {
+            node.textarea_view_row = node.cursor_row;
+        }
+        if node.wrap_mode != 0 {
+            node.textarea_view_col = 0;
+        } else if node.textarea_view_col > node.cursor_col {
+            node.textarea_view_col = node.cursor_col;
+        }
+
+        if consumed {
+            node.dirty = true;
+        }
+    }
+
+    if emit_change {
+        ctx.event_buffer.push(TuiEvent::change(handle, 0));
+    }
+
+    consumed
 }
 
 /// Handle a key press on a focused Select widget. Returns true if consumed.
@@ -398,6 +585,74 @@ mod tests {
         handle_input_key(&mut ctx, input, key::BACKSPACE, '\0');
         assert_eq!(ctx.nodes[&input].content, "h");
         assert_eq!(ctx.nodes[&input].cursor_position, 1);
+    }
+
+    #[test]
+    fn test_textarea_backspace_joins_lines_at_col_zero() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        tree::append_child(&mut ctx, root, textarea).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(textarea);
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abc\ndef".to_string();
+            node.cursor_row = 1;
+            node.cursor_col = 0;
+        }
+
+        assert!(handle_textarea_key(
+            &mut ctx,
+            textarea,
+            key::BACKSPACE,
+            '\0'
+        ));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "abcdef");
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 3);
+    }
+
+    #[test]
+    fn test_textarea_enter_inserts_newline() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 2;
+        }
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "he\nllo");
+        assert_eq!(node.cursor_row, 1);
+        assert_eq!(node.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_textarea_up_down_clamps_column() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abcd\nxy".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 4;
+        }
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::DOWN, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.cursor_row, 1);
+        assert_eq!(node.cursor_col, 2);
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::UP, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 2);
     }
 
     #[test]
