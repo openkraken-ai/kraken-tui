@@ -125,14 +125,19 @@ impl TuiContext {
 
 static CONTEXT: OnceLock<RwLock<Option<TuiContext>>> = OnceLock::new();
 #[cfg(not(test))]
-static OWNER_THREAD: OnceLock<ThreadId> = OnceLock::new();
+static OWNER_THREAD: OnceLock<RwLock<Option<ThreadId>>> = OnceLock::new();
 
 fn context_lock() -> &'static RwLock<Option<TuiContext>> {
     CONTEXT.get_or_init(|| RwLock::new(None))
 }
 
-fn lock_poisoned(name: &str) -> String {
-    format!("{name} lock poisoned after panic")
+#[cfg(not(test))]
+fn owner_thread_lock() -> &'static RwLock<Option<ThreadId>> {
+    OWNER_THREAD.get_or_init(|| RwLock::new(None))
+}
+
+fn lock_poisoned(name: &str, detail: impl std::fmt::Display) -> String {
+    format!("{name} lock poisoned after panic: {detail}")
 }
 
 fn ensure_thread_affinity() -> Result<(), String> {
@@ -144,12 +149,50 @@ fn ensure_thread_affinity() -> Result<(), String> {
     #[cfg(not(test))]
     {
         let current = std::thread::current().id();
-        let owner = OWNER_THREAD.get_or_init(|| current);
-        if *owner != current {
-            return Err("Context access from non-owner thread is unsupported".to_string());
+        let owner = owner_thread_lock()
+            .read()
+            .map_err(|e| lock_poisoned("owner_thread", e))?;
+        if let Some(owner_id) = *owner {
+            if owner_id != current {
+                return Err("Context access from non-owner thread is unsupported".to_string());
+            }
         }
         Ok(())
     }
+}
+
+#[cfg(not(test))]
+fn bind_owner_thread_current() -> Result<(), String> {
+    let current = std::thread::current().id();
+    let mut owner = owner_thread_lock()
+        .write()
+        .map_err(|e| lock_poisoned("owner_thread", e))?;
+    if let Some(owner_id) = *owner {
+        if owner_id != current {
+            return Err("Context access from non-owner thread is unsupported".to_string());
+        }
+    }
+    *owner = Some(current);
+    Ok(())
+}
+
+#[cfg(test)]
+fn bind_owner_thread_current() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn clear_owner_thread() -> Result<(), String> {
+    let mut owner = owner_thread_lock()
+        .write()
+        .map_err(|e| lock_poisoned("owner_thread", e))?;
+    *owner = None;
+    Ok(())
+}
+
+#[cfg(test)]
+fn clear_owner_thread() -> Result<(), String> {
+    Ok(())
 }
 
 pub struct ContextReadGuard<'a> {
@@ -193,7 +236,7 @@ pub fn context_read() -> Result<ContextReadGuard<'static>, String> {
     ensure_thread_affinity()?;
     let guard = context_lock()
         .read()
-        .map_err(|_| lock_poisoned("context"))?;
+        .map_err(|e| lock_poisoned("context", e))?;
     if guard.is_none() {
         return Err("Context not initialized. Call tui_init() first.".to_string());
     }
@@ -205,7 +248,7 @@ pub fn context_write() -> Result<ContextWriteGuard<'static>, String> {
     ensure_thread_affinity()?;
     let guard = context_lock()
         .write()
-        .map_err(|_| lock_poisoned("context"))?;
+        .map_err(|e| lock_poisoned("context", e))?;
     if guard.is_none() {
         return Err("Context not initialized. Call tui_init() first.".to_string());
     }
@@ -215,9 +258,11 @@ pub fn context_write() -> Result<ContextWriteGuard<'static>, String> {
 /// Initialize the global context with the given backend.
 pub fn init_context(backend: Box<dyn TerminalBackend>) -> Result<(), String> {
     ensure_thread_affinity()?;
+    bind_owner_thread_current()?;
+
     let mut guard = context_lock()
         .write()
-        .map_err(|_| lock_poisoned("context"))?;
+        .map_err(|e| lock_poisoned("context", e))?;
     if guard.is_some() {
         return Err("Context already initialized. Call tui_shutdown() first.".to_string());
     }
@@ -230,7 +275,7 @@ pub fn is_context_initialized() -> Result<bool, String> {
     ensure_thread_affinity()?;
     let guard = context_lock()
         .read()
-        .map_err(|_| lock_poisoned("context"))?;
+        .map_err(|e| lock_poisoned("context", e))?;
     Ok(guard.is_some())
 }
 
@@ -239,8 +284,11 @@ pub fn destroy_context() -> Result<Option<Box<dyn TerminalBackend>>, String> {
     ensure_thread_affinity()?;
     let mut guard = context_lock()
         .write()
-        .map_err(|_| lock_poisoned("context"))?;
-    Ok(guard.take().map(|ctx| ctx.backend))
+        .map_err(|e| lock_poisoned("context", e))?;
+    let backend = guard.take().map(|ctx| ctx.backend);
+    drop(guard);
+    clear_owner_thread()?;
+    Ok(backend)
 }
 
 /// Store an error message in the global context (best-effort; ignores if no context).
