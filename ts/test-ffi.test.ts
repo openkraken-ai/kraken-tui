@@ -25,6 +25,7 @@ const lib = dlopen(LIB_PATH, {
 	// Node Lifecycle
 	tui_create_node:     { args: ["u8"] as FFIType[],                            returns: "u32" as const },
 	tui_destroy_node:    { args: ["u32"] as FFIType[],                           returns: "i32" as const },
+	tui_destroy_subtree: { args: ["u32"] as FFIType[],                           returns: "i32" as const },
 	tui_get_node_type:   { args: ["u32"] as FFIType[],                           returns: "i32" as const },
 	tui_set_visible:     { args: ["u32", "u8"] as FFIType[],                     returns: "i32" as const },
 	tui_get_visible:     { args: ["u32"] as FFIType[],                           returns: "i32" as const },
@@ -33,6 +34,7 @@ const lib = dlopen(LIB_PATH, {
 	// Tree Structure
 	tui_set_root:        { args: ["u32"] as FFIType[],                           returns: "i32" as const },
 	tui_append_child:    { args: ["u32", "u32"] as FFIType[],                    returns: "i32" as const },
+	tui_insert_child:    { args: ["u32", "u32", "u32"] as FFIType[],             returns: "i32" as const },
 	tui_remove_child:    { args: ["u32", "u32"] as FFIType[],                    returns: "i32" as const },
 	tui_get_child_count: { args: ["u32"] as FFIType[],                           returns: "i32" as const },
 	tui_get_child_at:    { args: ["u32", "u32"] as FFIType[],                    returns: "u32" as const },
@@ -263,6 +265,96 @@ describe("FFI integration", () => {
 			expect(ffi.tui_get_parent(child2)).toBe(0);
 
 			for (const h of [child3, child2, child1, root]) ffi.tui_destroy_node(h);
+		});
+
+		test("insert_child supports indexed insert and append fallback", () => {
+			const parent = ffi.tui_create_node(0);
+			const a = ffi.tui_create_node(1);
+			const b = ffi.tui_create_node(1);
+			const c = ffi.tui_create_node(1);
+			const x = ffi.tui_create_node(1);
+			const y = ffi.tui_create_node(1);
+
+			expect(ffi.tui_append_child(parent, a)).toBe(0);
+			expect(ffi.tui_append_child(parent, b)).toBe(0);
+			expect(ffi.tui_append_child(parent, c)).toBe(0);
+
+			expect(ffi.tui_insert_child(parent, x, 1)).toBe(0);
+			expect(ffi.tui_get_child_count(parent)).toBe(4);
+			expect(ffi.tui_get_child_at(parent, 0)).toBe(a);
+			expect(ffi.tui_get_child_at(parent, 1)).toBe(x);
+			expect(ffi.tui_get_child_at(parent, 2)).toBe(b);
+			expect(ffi.tui_get_child_at(parent, 3)).toBe(c);
+
+			expect(ffi.tui_insert_child(parent, y, 999)).toBe(0);
+			expect(ffi.tui_get_child_count(parent)).toBe(5);
+			expect(ffi.tui_get_child_at(parent, 4)).toBe(y);
+
+			expect(ffi.tui_destroy_subtree(parent)).toBe(0);
+		});
+
+		test("insert_child reparents existing child and prevents duplicates", () => {
+			const oldParent = ffi.tui_create_node(0);
+			const newParent = ffi.tui_create_node(0);
+			const child = ffi.tui_create_node(1);
+
+			expect(ffi.tui_append_child(oldParent, child)).toBe(0);
+			expect(ffi.tui_insert_child(newParent, child, 0)).toBe(0);
+
+			expect(ffi.tui_get_parent(child)).toBe(newParent);
+			expect(ffi.tui_get_child_count(oldParent)).toBe(0);
+			expect(ffi.tui_get_child_count(newParent)).toBe(1);
+			expect(ffi.tui_get_child_at(newParent, 0)).toBe(child);
+
+			expect(ffi.tui_destroy_subtree(oldParent)).toBe(0);
+			expect(ffi.tui_destroy_subtree(newParent)).toBe(0);
+		});
+
+		test("insert_child reorders within same parent", () => {
+			const parent = ffi.tui_create_node(0);
+			const a = ffi.tui_create_node(1);
+			const b = ffi.tui_create_node(1);
+			const c = ffi.tui_create_node(1);
+
+			expect(ffi.tui_append_child(parent, a)).toBe(0);
+			expect(ffi.tui_append_child(parent, b)).toBe(0);
+			expect(ffi.tui_append_child(parent, c)).toBe(0);
+			expect(ffi.tui_insert_child(parent, c, 0)).toBe(0);
+
+			expect(ffi.tui_get_child_count(parent)).toBe(3);
+			expect(ffi.tui_get_child_at(parent, 0)).toBe(c);
+			expect(ffi.tui_get_child_at(parent, 1)).toBe(a);
+			expect(ffi.tui_get_child_at(parent, 2)).toBe(b);
+
+			expect(ffi.tui_destroy_subtree(parent)).toBe(0);
+		});
+
+		test("destroy_subtree cascades and invalidates destroyed handles", () => {
+			const root = ffi.tui_create_node(0);
+			const mid = ffi.tui_create_node(0);
+			const leaf = ffi.tui_create_node(1);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, mid)).toBe(0);
+			expect(ffi.tui_append_child(mid, leaf)).toBe(0);
+
+			const before = Number(ffi.tui_get_perf_counter(6));
+			const anim1 = ffi.tui_start_spinner(mid, 80);
+			const anim2 = ffi.tui_start_spinner(leaf, 80);
+			expect(anim1).toBeGreaterThan(0);
+			expect(anim2).toBeGreaterThan(0);
+			const afterStart = Number(ffi.tui_get_perf_counter(6));
+			expect(afterStart).toBeGreaterThanOrEqual(before + 2);
+
+			expect(ffi.tui_destroy_subtree(mid)).toBe(0);
+			expect(ffi.tui_get_child_count(root)).toBe(0);
+			expect(ffi.tui_get_node_type(mid)).toBe(-1);
+			expect(ffi.tui_get_node_type(leaf)).toBe(-1);
+			const afterDestroy = Number(ffi.tui_get_perf_counter(6));
+			expect(afterDestroy).toBeLessThanOrEqual(afterStart - 2);
+
+			expect(ffi.tui_destroy_subtree(999999)).toBe(-1);
+			expect(ffi.tui_destroy_node(root)).toBe(0);
 		});
 	});
 
