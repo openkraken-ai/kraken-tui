@@ -9,6 +9,7 @@
 
 use crate::context::TuiContext;
 use crate::types::{key, TerminalInputEvent, TuiEvent};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Read terminal input, classify events, store in buffer.
 /// Returns the number of events captured.
@@ -140,6 +141,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         None => return false,
     };
 
+    let content_len = grapheme_count(&node.content) as u32;
+    if node.cursor_position > content_len {
+        node.cursor_position = content_len;
+    }
+
     match code {
         key::ENTER => {
             ctx.event_buffer.push(TuiEvent::submit(handle));
@@ -148,9 +154,9 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         key::BACKSPACE => {
             let cursor = node.cursor_position as usize;
             if cursor > 0 {
-                let mut chars: Vec<char> = node.content.chars().collect();
-                chars.remove(cursor - 1);
-                node.content = chars.into_iter().collect();
+                let start = grapheme_to_byte_idx(&node.content, cursor - 1);
+                let end = grapheme_to_byte_idx(&node.content, cursor);
+                node.content.replace_range(start..end, "");
                 node.cursor_position -= 1;
                 node.dirty = true;
                 ctx.event_buffer.push(TuiEvent::change(handle, 0));
@@ -159,11 +165,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         }
         key::DELETE => {
             let cursor = node.cursor_position as usize;
-            let len = node.content.chars().count();
+            let len = grapheme_count(&node.content);
             if cursor < len {
-                let mut chars: Vec<char> = node.content.chars().collect();
-                chars.remove(cursor);
-                node.content = chars.into_iter().collect();
+                let start = grapheme_to_byte_idx(&node.content, cursor);
+                let end = grapheme_to_byte_idx(&node.content, cursor + 1);
+                node.content.replace_range(start..end, "");
                 node.dirty = true;
                 ctx.event_buffer.push(TuiEvent::change(handle, 0));
             }
@@ -177,7 +183,7 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
             return true;
         }
         key::RIGHT => {
-            let len = node.content.chars().count() as u32;
+            let len = grapheme_count(&node.content) as u32;
             if node.cursor_position < len {
                 node.cursor_position += 1;
                 node.dirty = true;
@@ -190,7 +196,7 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
             return true;
         }
         key::END => {
-            node.cursor_position = node.content.chars().count() as u32;
+            node.cursor_position = grapheme_count(&node.content) as u32;
             node.dirty = true;
             return true;
         }
@@ -200,12 +206,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     // Printable character insertion
     if character != '\0' && !character.is_control() {
         let max_len = node.max_length;
-        let current_len = node.content.chars().count() as u32;
+        let current_len = grapheme_count(&node.content) as u32;
         if max_len == 0 || current_len < max_len {
             let cursor = node.cursor_position as usize;
-            let mut chars: Vec<char> = node.content.chars().collect();
-            chars.insert(cursor, character);
-            node.content = chars.into_iter().collect();
+            let byte_idx = grapheme_to_byte_idx(&node.content, cursor);
+            node.content.insert(byte_idx, character);
             node.cursor_position += 1;
             node.dirty = true;
             ctx.event_buffer.push(TuiEvent::change(handle, 0));
@@ -228,11 +233,15 @@ fn join_textarea_lines(lines: &[String]) -> String {
     lines.join("\n")
 }
 
-fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
-    if char_idx == 0 {
+fn grapheme_count(s: &str) -> usize {
+    UnicodeSegmentation::graphemes(s, true).count()
+}
+
+fn grapheme_to_byte_idx(s: &str, grapheme_idx: usize) -> usize {
+    if grapheme_idx == 0 {
         return 0;
     }
-    match s.char_indices().nth(char_idx) {
+    match UnicodeSegmentation::grapheme_indices(s, true).nth(grapheme_idx) {
         Some((idx, _)) => idx,
         None => s.len(),
     }
@@ -243,7 +252,7 @@ fn clamp_textarea_cursor(lines: &[String], row: &mut u32, col: &mut u32) {
     if *row > max_row {
         *row = max_row;
     }
-    let line_len = lines[*row as usize].chars().count() as u32;
+    let line_len = grapheme_count(&lines[*row as usize]) as u32;
     if *col > line_len {
         *col = line_len;
     }
@@ -267,7 +276,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             key::ENTER => {
                 let row = node.cursor_row as usize;
                 let col = node.cursor_col as usize;
-                let split_at = char_to_byte_idx(&lines[row], col);
+                let split_at = grapheme_to_byte_idx(&lines[row], col);
                 let before = lines[row][..split_at].to_string();
                 let after = lines[row][split_at..].to_string();
                 lines[row] = before;
@@ -281,8 +290,8 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
                 if node.cursor_col > 0 {
                     let row = node.cursor_row as usize;
                     let col = node.cursor_col as usize;
-                    let start = char_to_byte_idx(&lines[row], col - 1);
-                    let end = char_to_byte_idx(&lines[row], col);
+                    let start = grapheme_to_byte_idx(&lines[row], col - 1);
+                    let end = grapheme_to_byte_idx(&lines[row], col);
                     lines[row].replace_range(start..end, "");
                     node.cursor_col -= 1;
                     emit_change = true;
@@ -290,7 +299,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
                     let row = node.cursor_row as usize;
                     let current_line = lines.remove(row);
                     let prev_row = row - 1;
-                    let prev_len = lines[prev_row].chars().count() as u32;
+                    let prev_len = grapheme_count(&lines[prev_row]) as u32;
                     lines[prev_row].push_str(&current_line);
                     node.cursor_row -= 1;
                     node.cursor_col = prev_len;
@@ -301,10 +310,10 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             key::DELETE => {
                 let row = node.cursor_row as usize;
                 let col = node.cursor_col as usize;
-                let line_len = lines[row].chars().count();
+                let line_len = grapheme_count(&lines[row]);
                 if col < line_len {
-                    let start = char_to_byte_idx(&lines[row], col);
-                    let end = char_to_byte_idx(&lines[row], col + 1);
+                    let start = grapheme_to_byte_idx(&lines[row], col);
+                    let end = grapheme_to_byte_idx(&lines[row], col + 1);
                     lines[row].replace_range(start..end, "");
                     emit_change = true;
                 } else if row + 1 < lines.len() {
@@ -319,13 +328,13 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
                     node.cursor_col -= 1;
                 } else if node.cursor_row > 0 {
                     node.cursor_row -= 1;
-                    node.cursor_col = lines[node.cursor_row as usize].chars().count() as u32;
+                    node.cursor_col = grapheme_count(&lines[node.cursor_row as usize]) as u32;
                 }
                 consumed = true;
             }
             key::RIGHT => {
                 let row = node.cursor_row as usize;
-                let line_len = lines[row].chars().count() as u32;
+                let line_len = grapheme_count(&lines[row]) as u32;
                 if node.cursor_col < line_len {
                     node.cursor_col += 1;
                 } else if (node.cursor_row as usize) + 1 < lines.len() {
@@ -354,7 +363,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             }
             key::END => {
                 let row = node.cursor_row as usize;
-                node.cursor_col = lines[row].chars().count() as u32;
+                node.cursor_col = grapheme_count(&lines[row]) as u32;
                 consumed = true;
             }
             _ => {}
@@ -363,7 +372,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         if !consumed && character != '\0' && !character.is_control() {
             let row = node.cursor_row as usize;
             let col = node.cursor_col as usize;
-            let idx = char_to_byte_idx(&lines[row], col);
+            let idx = grapheme_to_byte_idx(&lines[row], col);
             lines[row].insert(idx, character);
             node.cursor_col += 1;
             emit_change = true;
@@ -588,6 +597,22 @@ mod tests {
     }
 
     #[test]
+    fn test_input_backspace_removes_whole_grapheme_cluster() {
+        let mut ctx = test_ctx();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&input).unwrap();
+            node.content = "e\u{301}".to_string();
+            node.cursor_position = 1;
+        }
+
+        assert!(handle_input_key(&mut ctx, input, key::BACKSPACE, '\0'));
+        let node = &ctx.nodes[&input];
+        assert_eq!(node.content, "");
+        assert_eq!(node.cursor_position, 0);
+    }
+
+    #[test]
     fn test_textarea_backspace_joins_lines_at_col_zero() {
         let mut ctx = test_ctx();
         let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
@@ -613,6 +638,29 @@ mod tests {
         assert_eq!(node.content, "abcdef");
         assert_eq!(node.cursor_row, 0);
         assert_eq!(node.cursor_col, 3);
+    }
+
+    #[test]
+    fn test_textarea_backspace_removes_whole_grapheme_cluster() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "e\u{301}x".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        assert!(handle_textarea_key(
+            &mut ctx,
+            textarea,
+            key::BACKSPACE,
+            '\0'
+        ));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "x");
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 0);
     }
 
     #[test]

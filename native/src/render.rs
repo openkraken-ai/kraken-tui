@@ -8,7 +8,8 @@
 
 use crate::context::TuiContext;
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 // ============================================================================
 // Clip Rectangle
@@ -260,7 +261,7 @@ fn render_node(
         NodeType::Text | NodeType::Input => {
             let display_content = if mask_char != 0 && node_type == NodeType::Input {
                 let mask = char::from_u32(mask_char).unwrap_or('*');
-                mask.to_string().repeat(content.chars().count())
+                mask.to_string().repeat(grapheme_count(&content))
             } else {
                 content.clone()
             };
@@ -677,12 +678,11 @@ fn render_input_cursor(
 
     // Clamp cursor_pos to display content length to handle edge cases
     // where cursor_position exceeds content (e.g., content truncated externally)
-    let char_count = display_content.chars().count();
-    let cursor_pos = (node.cursor_position as usize).min(char_count);
+    let grapheme_len = grapheme_count(display_content);
+    let cursor_pos = (node.cursor_position as usize).min(grapheme_len);
 
-    // Calculate cursor x-offset by measuring width of content up to cursor_pos
-    let prefix: String = display_content.chars().take(cursor_pos).collect();
-    let cursor_x_offset = UnicodeWidthStr::width(prefix.as_str()) as i32;
+    // Calculate cursor x-offset by measuring width of graphemes up to cursor_pos.
+    let cursor_x_offset = display_width_of_prefix_graphemes(display_content, cursor_pos);
 
     if cursor_x_offset >= content_w {
         return; // Cursor is beyond visible area
@@ -692,7 +692,10 @@ fn render_input_cursor(
     let sy = content_y; // Single-line input, cursor always on row 0
 
     // Character under the cursor (or space if at end of content)
-    let cursor_char = display_content.chars().nth(cursor_pos).unwrap_or(' ');
+    let cursor_char = UnicodeSegmentation::graphemes(display_content, true)
+        .nth(cursor_pos)
+        .and_then(|g| g.chars().next())
+        .unwrap_or(' ');
 
     // Inverted colors: swap fg and bg
     let inv_fg = if bg != 0 { bg } else { 0x00000000 };
@@ -728,52 +731,77 @@ fn split_textarea_lines(content: &str) -> Vec<String> {
     }
 }
 
-fn display_width_of_char(ch: char) -> i32 {
-    (UnicodeWidthChar::width(ch).unwrap_or(0) as i32).max(1)
+fn grapheme_count(s: &str) -> usize {
+    UnicodeSegmentation::graphemes(s, true).count()
 }
 
-fn display_width_of_prefix_chars(s: &str, chars: usize) -> i32 {
-    s.chars().take(chars).map(display_width_of_char).sum()
+fn grapheme_to_byte_idx(s: &str, grapheme_idx: usize) -> usize {
+    if grapheme_idx == 0 {
+        return 0;
+    }
+    match UnicodeSegmentation::grapheme_indices(s, true).nth(grapheme_idx) {
+        Some((idx, _)) => idx,
+        None => s.len(),
+    }
 }
 
-fn display_width_of_text(s: &str) -> i32 {
-    s.chars().map(display_width_of_char).sum()
+fn slice_graphemes(s: &str, start: usize, end: usize) -> String {
+    let start_idx = grapheme_to_byte_idx(s, start);
+    let end_idx = grapheme_to_byte_idx(s, end);
+    s[start_idx..end_idx].to_string()
+}
+
+fn display_width_of_grapheme(grapheme: &str) -> i32 {
+    (UnicodeWidthStr::width(grapheme) as i32).max(1)
+}
+
+fn display_width_of_prefix_graphemes(s: &str, graphemes: usize) -> i32 {
+    UnicodeSegmentation::graphemes(s, true)
+        .take(graphemes)
+        .map(display_width_of_grapheme)
+        .sum()
+}
+
+fn display_width_of_text_graphemes(s: &str) -> i32 {
+    UnicodeSegmentation::graphemes(s, true)
+        .map(display_width_of_grapheme)
+        .sum()
 }
 
 fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
-    let char_len = line.chars().count();
-    if char_len == 0 {
+    let grapheme_len = grapheme_count(line);
+    if grapheme_len == 0 {
         return vec![(0, 0)];
     }
     if max_w <= 0 {
-        return vec![(0, char_len)];
+        return vec![(0, grapheme_len)];
     }
 
-    let chars: Vec<char> = line.chars().collect();
+    let graphemes: Vec<&str> = UnicodeSegmentation::graphemes(line, true).collect();
     let mut segments = Vec::new();
     let mut start = 0usize;
     let mut width = 0i32;
 
-    for (idx, ch) in chars.iter().enumerate() {
-        let ch_w = display_width_of_char(*ch);
-        if width + ch_w > max_w && idx > start {
+    for (idx, grapheme) in graphemes.iter().enumerate() {
+        let grapheme_w = display_width_of_grapheme(grapheme);
+        if width + grapheme_w > max_w && idx > start {
             segments.push((start, idx));
             start = idx;
             width = 0;
         }
-        width += ch_w;
+        width += grapheme_w;
         if width > max_w && idx == start {
             segments.push((start, idx + 1));
             start = idx + 1;
             width = 0;
         }
     }
-    if start < chars.len() {
-        segments.push((start, chars.len()));
+    if start < graphemes.len() {
+        segments.push((start, graphemes.len()));
     }
     // Non-empty lines must not emit empty wrapped segments (e.g. trailing
     // (len, len)); those create phantom visual rows in TextArea wrap mode.
-    if char_len > 0 {
+    if grapheme_len > 0 {
         segments.retain(|(seg_start, seg_end)| seg_start < seg_end);
     }
     if segments.is_empty() {
@@ -789,10 +817,9 @@ fn build_textarea_visual_lines(
 ) -> Vec<TextAreaVisualLine> {
     let mut visual = Vec::new();
     for (row, line) in lines.iter().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
         if wrap_mode != 0 {
             for (start, end) in wrap_line_segments(line, max_w) {
-                let text: String = chars[start..end].iter().collect();
+                let text = slice_graphemes(line, start, end);
                 visual.push(TextAreaVisualLine {
                     text,
                     logical_row: row,
@@ -805,7 +832,7 @@ fn build_textarea_visual_lines(
                 text: line.clone(),
                 logical_row: row,
                 start_col: 0,
-                end_col: chars.len(),
+                end_col: grapheme_count(line),
             });
         }
     }
@@ -840,13 +867,13 @@ fn cursor_to_visual(
             || (col == line.end_col && is_last_for_row)
         {
             let local_col = col.saturating_sub(line.start_col);
-            let x = display_width_of_prefix_chars(&line.text, local_col);
+            let x = display_width_of_prefix_graphemes(&line.text, local_col);
             return (idx, x);
         }
     }
 
     if let Some(idx) = last_for_row {
-        return (idx, display_width_of_text(&lines[idx].text));
+        return (idx, display_width_of_text_graphemes(&lines[idx].text));
     }
     (0, 0)
 }
@@ -871,7 +898,7 @@ fn update_textarea_viewport(
     let lines = split_textarea_lines(content);
     let max_row = lines.len().saturating_sub(1) as u32;
     let clamped_row = cursor_row.min(max_row);
-    let line_len = lines[clamped_row as usize].chars().count() as u32;
+    let line_len = grapheme_count(&lines[clamped_row as usize]) as u32;
     let clamped_col = cursor_col.min(line_len);
 
     if let Some(node) = ctx.nodes.get_mut(&handle) {
@@ -909,7 +936,7 @@ fn update_textarea_viewport(
         next_row = next_row.clamp(0, max_row as i32);
 
         let cursor_x =
-            display_width_of_prefix_chars(&lines[clamped_row as usize], clamped_col as usize);
+            display_width_of_prefix_graphemes(&lines[clamped_row as usize], clamped_col as usize);
         let mut next_col = view_col as i32;
         if content_w > 0 {
             if cursor_x < next_col {
@@ -948,9 +975,12 @@ fn draw_text_line_with_offset(
     let mut out_col = 0i32;
     let skip = skip_cells.max(0);
 
-    for ch in line.chars() {
-        let ch_w = display_width_of_char(ch);
-        let next_x = source_x + ch_w;
+    for grapheme in UnicodeSegmentation::graphemes(line, true) {
+        let Some(ch) = grapheme.chars().next() else {
+            continue;
+        };
+        let grapheme_w = display_width_of_grapheme(grapheme);
+        let next_x = source_x + grapheme_w;
 
         if next_x <= skip {
             source_x = next_x;
@@ -960,7 +990,7 @@ fn draw_text_line_with_offset(
             source_x = next_x;
             continue;
         }
-        if out_col + ch_w > max_w {
+        if out_col + grapheme_w > max_w {
             break;
         }
 
@@ -971,17 +1001,17 @@ fn draw_text_line_with_offset(
             Cell { ch, fg, bg, attrs },
             clip,
         );
-        out_col += ch_w;
+        out_col += grapheme_w;
         source_x = next_x;
     }
 }
 
-fn char_at_display_col(line: &str, col: i32) -> Option<char> {
+fn grapheme_char_at_display_col(line: &str, col: i32) -> Option<char> {
     let mut x = 0i32;
-    for ch in line.chars() {
-        let w = display_width_of_char(ch);
+    for grapheme in UnicodeSegmentation::graphemes(line, true) {
+        let w = display_width_of_grapheme(grapheme);
         if col >= x && col < x + w {
-            return Some(ch);
+            return grapheme.chars().next();
         }
         x += w;
     }
@@ -1040,7 +1070,7 @@ fn render_textarea(
         .get(cursor_visual_row)
         .map(|line| line.text.as_str())
         .unwrap_or("");
-    let cursor_char = char_at_display_col(cursor_line, cursor_visual_x).unwrap_or(' ');
+    let cursor_char = grapheme_char_at_display_col(cursor_line, cursor_visual_x).unwrap_or(' ');
     let inv_fg = if bg != 0 { bg } else { 0x00000000 };
     let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
 
@@ -1854,6 +1884,23 @@ mod tests {
         let (cursor_row, cursor_x) = cursor_to_visual(&visual, 0, 1);
         assert_eq!(cursor_row, 0);
         assert_eq!(cursor_x, 2);
+    }
+
+    #[test]
+    fn test_wrap_combining_grapheme_treated_as_single_column() {
+        let segments = wrap_line_segments("e\u{301}", 1);
+        assert_eq!(segments, vec![(0, 1)]);
+
+        let lines = vec!["e\u{301}".to_string()];
+        let visual = build_textarea_visual_lines(&lines, 1, 1);
+        assert_eq!(visual.len(), 1);
+        assert_eq!(visual[0].text, "e\u{301}");
+        assert_eq!(visual[0].start_col, 0);
+        assert_eq!(visual[0].end_col, 1);
+
+        let (cursor_row, cursor_x) = cursor_to_visual(&visual, 0, 1);
+        assert_eq!(cursor_row, 0);
+        assert_eq!(cursor_x, 1);
     }
 
     #[test]

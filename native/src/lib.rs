@@ -32,6 +32,7 @@ mod types;
 use std::cell::RefCell;
 use std::ffi::CString;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use unicode_segmentation::UnicodeSegmentation;
 
 use context::{
     clear_last_error, context_read, context_write, destroy_context, get_last_error_snapshot,
@@ -94,13 +95,17 @@ fn split_textarea_lines(content: &str) -> Vec<String> {
     }
 }
 
+fn grapheme_count(content: &str) -> u32 {
+    UnicodeSegmentation::graphemes(content, true).count() as u32
+}
+
 fn clamp_textarea_cursor(node: &mut types::TuiNode) {
     let lines = split_textarea_lines(&node.content);
     let max_row = lines.len().saturating_sub(1) as u32;
     if node.cursor_row > max_row {
         node.cursor_row = max_row;
     }
-    let line_len = lines[node.cursor_row as usize].chars().count() as u32;
+    let line_len = grapheme_count(&lines[node.cursor_row as usize]);
     if node.cursor_col > line_len {
         node.cursor_col = line_len;
     }
@@ -371,6 +376,11 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
         node.content = text;
         if node.node_type == NodeType::TextArea {
             clamp_textarea_cursor(node);
+        } else if node.node_type == NodeType::Input {
+            let len = grapheme_count(&node.content);
+            if node.cursor_position > len {
+                node.cursor_position = len;
+            }
         }
         node.dirty = true;
         Ok(0)
@@ -491,7 +501,7 @@ pub extern "C" fn tui_input_set_cursor(handle: u32, position: u32) -> i32 {
         if node.node_type != NodeType::Input {
             return Err(format!("Handle {handle} is not an Input widget"));
         }
-        node.cursor_position = position;
+        node.cursor_position = position.min(grapheme_count(&node.content));
         node.dirty = true;
         Ok(0)
     })
