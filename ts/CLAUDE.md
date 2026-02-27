@@ -26,7 +26,7 @@ bun run examples/demo.ts
 
 | File | Responsibility |
 |------|----------------|
-| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 78 public FFI functions (v1; v2 adds ~10 more). |
+| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 94 FFI functions. |
 | `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes, `#[repr(C)]`). Manual byte layout — no external FFI library (ADR-T06). |
 | `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`. Maintains `id → handle` map for developer-assigned IDs. |
 | `widget.ts` | Base `Widget` class — layout/style property setters, child management. Holds `handle: number`. v1: `animate()`, `cancelAnimation()`, primitive helpers. |
@@ -35,9 +35,10 @@ bun run examples/demo.ts
 | `widgets/input.ts` | Input widget (single-line text entry, cursor, password masking) |
 | `widgets/select.ts` | Select widget (option list, arrow key navigation, CRUD options). Fixed 256-byte buffer for `tui_select_get_option`. |
 | `widgets/scrollbox.ts` | ScrollBox widget (scrollable container, single child) |
+| `widgets/textarea.ts` | TextArea widget (multi-line text editing, 2D cursor, wrap mode) |
 | `events.ts` | Event types, drain loop (`while tui_next_event()` returns 1), dispatch. |
 | `style.ts` | Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → named lookup, `196` → `0x020000C4`). Dimension parsing, flexbox enum mapping. |
-| `theme.ts` | `Theme` class. `new Theme()` for custom themes. Static constants `Theme.DARK` (handle 1), `Theme.LIGHT` (handle 2). v2: per-NodeType setters. |
+| `theme.ts` | `Theme` class. `new Theme()` for custom themes. Static constants `Theme.DARK` (handle 1), `Theme.LIGHT` (handle 2). Per-NodeType setters (`setTypeColor`, `setTypeFlag`, etc.). |
 | `animation-constants.ts` | Animation property and easing enum constants for the TS API. |
 | `errors.ts` | `KrakenError` class, `checkResult()` — translates FFI error codes to typed exceptions. |
 | `index.ts` | Public API re-exports. |
@@ -85,10 +86,16 @@ lib.tui_animate(handle, 0, bits, 300, 2);
 - `FinalizationRegistry` / `WeakRef` — allowed as **safety net only** (leak detector + warning). `destroy()` remains the primary lifecycle API. Non-deterministic GC must never be the lifecycle contract. See Architecture Appendix B v2 decisions.
 - v1: Synchronous event loop — `while (running)` pattern. v2: async loop allowed with animation-aware sleep (`await Bun.sleep(16)` when animating, longer block when idle). See TechSpec §5.7 for both patterns.
 
-## v2 Additions
+## v2 Progress
 
-When implementing v2 TS features:
-- `widgets/textarea.ts` — new TextArea widget wrapping `tui_textarea_*` FFI functions
+**Shipped:**
+- `widgets/textarea.ts` — TextArea widget wrapping `tui_textarea_*` FFI functions
+- `theme.ts` — per-NodeType theme setters (`setTypeColor`, `setTypeFlag`, `setTypeBorder`, `setTypeOpacity`)
+- `ffi.ts` — all v2 FFI symbols bound (destroy_subtree, insert_child, textarea, theme type defaults, position animation, new easings)
+- `widget.ts` — `destroySubtree()`, `insertChild()` methods
+- `animation-constants.ts` — PositionX/Y properties, CubicIn/CubicOut/Elastic/Bounce easings
+
+**Remaining (Epic L):**
 - `jsx/jsx-runtime.ts` — custom JSX factory (`createElement`, `Fragment`) per ADR-T20
 - `jsx/reconciler.ts` — signal-driven reconciler using `@preact/signals-core`
 - ScrollBox auto-wrapping: intercept multiple children → wrap in hidden Box container (TS-layer convenience, not a native change)

@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 4.0
-**Status**: v1 Complete, v2 Planned (Detailed)
+**Status**: v1 Complete, v2 In Progress (Epics I/J/K Done, L/M Remaining)
 **Date**: February 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -101,7 +101,7 @@ flowchart LR
 
 ## 4. THE TICKET LIST
 
-### Epic I: Core Hardening (ADR-T16 + Budget Enforcement)
+### Epic I: Core Hardening (ADR-T16 + Budget Enforcement) — COMPLETE
 
 **[TASK-I0] Spike Safe Global State Migration Plan**
 
@@ -178,7 +178,7 @@ Then memory stays under documented limits for target workloads
 And regressions fail CI with actionable counter output
 ```
 
-### Epic J: Tree Operations for Reconciler (ADR-T17, ADR-T18)
+### Epic J: Tree Operations for Reconciler (ADR-T17, ADR-T18) — COMPLETE
 
 **[TASK-J1] Implement Native Post-Order `destroy_subtree()` in Tree Module**
 
@@ -255,7 +255,7 @@ Then child is detached from the old parent and inserted at index 0
 And no duplicate parent references exist
 ```
 
-### Epic K: Feature Expansions (ADR-T19, ADR-T21, ADR-T22 + Choreography)
+### Epic K: Feature Expansions (ADR-T19, ADR-T21, ADR-T22 + Choreography) — COMPLETE
 
 **[TASK-K0] Spike Animation Choreography Contract (TBD in TechSpec)**
 
@@ -563,36 +563,36 @@ And follow-on implementation tickets can be authored without undefined behavior
 
 ## 5. V2 SUMMARY TABLE
 
-| ID       | Epic | Type      | SP      | Dependencies |
-| -------- | ---- | --------- | ------- | ------------ |
-| TASK-I0  | I    | Spike     | 2       | None         |
-| TASK-I1  | I    | Feature   | 5       | I0           |
-| TASK-I2  | I    | Chore     | 3       | I1           |
-| TASK-I3  | I    | Chore     | 3       | I2           |
-| TASK-I4  | I    | Chore     | 5       | I3           |
-| TASK-J1  | J    | Feature   | 5       | I2           |
-| TASK-J2  | J    | Feature   | 5       | J1           |
-| TASK-J3  | J    | Feature   | 2       | J2           |
-| TASK-J4  | J    | Feature   | 5       | J2           |
-| TASK-J5  | J    | Feature   | 3       | J4           |
-| TASK-K0  | K    | Spike     | 2       | J5           |
-| TASK-K1  | K    | Feature   | 3       | J5           |
-| TASK-K2  | K    | Feature   | 3       | K1           |
-| TASK-K3  | K    | Feature   | 3       | K2           |
-| TASK-K4  | K    | Chore     | 2       | K3           |
-| TASK-K5  | K    | Feature   | 3       | J5           |
-| TASK-K6  | K    | Feature   | 5       | K5           |
-| TASK-K7  | K    | Feature   | 5       | K6           |
-| TASK-K8  | K    | Feature   | 3       | K7           |
-| TASK-K9  | K    | Feature   | 5       | J5           |
-| TASK-K10 | K    | Feature   | 3       | K9           |
-| TASK-K11 | K    | Feature   | 5       | K0, K10      |
-| TASK-L0  | L    | Spike     | 2       | K4, K8, K10  |
-| TASK-L1  | L    | Chore     | 3       | L0           |
-| TASK-L2  | L    | Feature   | 5       | L1           |
-| TASK-L3  | L    | Feature   | 5       | L2           |
-| TASK-L4  | L    | Feature   | 5       | L3           |
-| TASK-L5  | L    | Feature   | 3       | L4           |
-| TASK-L6  | L    | Chore     | 5       | L5           |
-| TASK-M0  | M    | Spike     | 3       | L6, K8       |
-|          |      | **TOTAL** | **111** |              |
+| ID       | Epic | Type      | SP      | Dependencies | Status |
+| -------- | ---- | --------- | ------- | ------------ | ------ |
+| TASK-I0  | I    | Spike     | 2       | None         | Done   |
+| TASK-I1  | I    | Feature   | 5       | I0           | Done   |
+| TASK-I2  | I    | Chore     | 3       | I1           | Done   |
+| TASK-I3  | I    | Chore     | 3       | I2           | Done   |
+| TASK-I4  | I    | Chore     | 5       | I3           | Done   |
+| TASK-J1  | J    | Feature   | 5       | I2           | Done   |
+| TASK-J2  | J    | Feature   | 5       | J1           | Done   |
+| TASK-J3  | J    | Feature   | 2       | J2           | Done   |
+| TASK-J4  | J    | Feature   | 5       | J2           | Done   |
+| TASK-J5  | J    | Feature   | 3       | J4           | Done   |
+| TASK-K0  | K    | Spike     | 2       | J5           | Done   |
+| TASK-K1  | K    | Feature   | 3       | J5           | Done   |
+| TASK-K2  | K    | Feature   | 3       | K1           | Done   |
+| TASK-K3  | K    | Feature   | 3       | K2           | Done   |
+| TASK-K4  | K    | Chore     | 2       | K3           | Done   |
+| TASK-K5  | K    | Feature   | 3       | J5           | Done   |
+| TASK-K6  | K    | Feature   | 5       | K5           | Done   |
+| TASK-K7  | K    | Feature   | 5       | K6           | Done   |
+| TASK-K8  | K    | Feature   | 3       | K7           | Done   |
+| TASK-K9  | K    | Feature   | 5       | J5           | Done   |
+| TASK-K10 | K    | Feature   | 3       | K9           | Done   |
+| TASK-K11 | K    | Feature   | 5       | K0, K10      | Done   |
+| TASK-L0  | L    | Spike     | 2       | K4, K8, K10  |        |
+| TASK-L1  | L    | Chore     | 3       | L0           |        |
+| TASK-L2  | L    | Feature   | 5       | L1           |        |
+| TASK-L3  | L    | Feature   | 5       | L2           |        |
+| TASK-L4  | L    | Feature   | 5       | L3           |        |
+| TASK-L5  | L    | Feature   | 3       | L4           |        |
+| TASK-L6  | L    | Chore     | 5       | L5           |        |
+| TASK-M0  | M    | Spike     | 3       | L6, K8       |        |
+|          |      | **TOTAL** | **111** |              |        |

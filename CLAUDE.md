@@ -10,7 +10,7 @@ Guidance for AI Agents working in this repository. Domain-specific details are i
 
 **Core invariant:** Rust owns all mutable state. TypeScript holds opaque `u32` handles. Unidirectional: TS calls Rust; Rust never calls back.
 
-**Status:** v0 and v1 delivered. v2 planned (TechSpec v4.0, ADRs T16–T22).
+**Status:** v0 and v1 delivered. v2 in progress — Epics I (safe state), J (tree ops), K (features) complete; Epic L (reconciler) and M (accessibility) remain.
 
 **Authority documents** (read in order for design questions):
 1. [PRD.md](./docs/PRD.md) — What and why
@@ -48,18 +48,20 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo
 
 ```
 TypeScript/Bun (thin command client)
-  ↓ 78 public C ABI functions via bun:ffi dlopen (v1; v2 adds ~10 more)
+  ↓ 94 public C ABI functions via bun:ffi dlopen
 Rust cdylib (native performance engine)
   ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal (v0)
   ├─ Theme (v1) — named style defaults, subtree binding, built-in dark/light
   ├─ Animation (v1) — timed property transitions, easing, delta-time advancement
-  └─ v2 planned: safe state (OnceLock), subtree destroy, indexed insert, TextArea,
-     position animation, per-NodeType themes, JSX reconciler
+  ├─ Safe state via OnceLock<RwLock> (v2, ADR-T16)
+  ├─ Subtree destroy + indexed insert (v2, ADR-T17/T18)
+  ├─ TextArea, position animation, per-NodeType themes, new easings (v2, ADR-T19/T21/T22)
+  └─ Planned: JSX reconciler (ADR-T20), accessibility foundation
 ```
 
 **FFI contract:** Return codes 0 = success, -1 = error (`tui_get_last_error()`), -2 = panic. Handle 0 = invalid sentinel. All `extern "C"` functions wrapped in `catch_unwind` (ADR-T03).
 
-**Key ADRs:** T01 (event drain), T03 (FFI safety), T04 (read-modify-write style patching), T05 (terminal backend trait), T06 (custom TS struct packing), T12 (theme style mask), T13 (animation delta-time), T14 (animatable property scope). **v2:** T16 (safe state), T17 (subtree destroy), T18 (indexed insert), T19 (TextArea), T20 (reconciler), T21 (theme inheritance), T22 (position animation).
+**Key ADRs:** T01 (event drain), T03 (FFI safety), T04 (read-modify-write style patching), T05 (terminal backend trait), T06 (custom TS struct packing), T12 (theme style mask), T13 (animation delta-time), T14 (animatable property scope). **v2 (implemented):** T16 (safe state), T17 (subtree destroy), T18 (indexed insert), T19 (TextArea), T21 (theme inheritance), T22 (position animation). **v2 (planned):** T20 (reconciler).
 
 ---
 
