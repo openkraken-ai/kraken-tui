@@ -25,6 +25,7 @@ mod scroll;
 mod style;
 mod terminal;
 mod text;
+mod text_utils;
 mod theme;
 mod tree;
 mod types;
@@ -32,13 +33,13 @@ mod types;
 use std::cell::RefCell;
 use std::ffi::CString;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use unicode_segmentation::UnicodeSegmentation;
 
 use context::{
     clear_last_error, context_read, context_write, destroy_context, get_last_error_snapshot,
     init_context, is_context_initialized, set_last_error,
 };
 use terminal::{CrosstermBackend, TerminalBackend};
+use text_utils::{clamp_textarea_cursor_lines, grapheme_count, split_textarea_lines_owned};
 use types::{NodeType, TuiEvent};
 
 // The snapshot pointer returned by `tui_get_last_error()` must outlive the
@@ -87,28 +88,9 @@ fn ffi_wrap_handle(f: impl FnOnce() -> Result<u32, String>) -> u32 {
     }
 }
 
-fn split_textarea_lines(content: &str) -> Vec<String> {
-    if content.is_empty() {
-        vec![String::new()]
-    } else {
-        content.split('\n').map(|line| line.to_string()).collect()
-    }
-}
-
-fn grapheme_count(content: &str) -> u32 {
-    UnicodeSegmentation::graphemes(content, true).count() as u32
-}
-
 fn clamp_textarea_cursor(node: &mut types::TuiNode) {
-    let lines = split_textarea_lines(&node.content);
-    let max_row = lines.len().saturating_sub(1) as u32;
-    if node.cursor_row > max_row {
-        node.cursor_row = max_row;
-    }
-    let line_len = grapheme_count(&lines[node.cursor_row as usize]);
-    if node.cursor_col > line_len {
-        node.cursor_col = line_len;
-    }
+    let lines = split_textarea_lines_owned(&node.content);
+    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
     if node.textarea_view_row > node.cursor_row {
         node.textarea_view_row = node.cursor_row;
     }
@@ -377,7 +359,7 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
         if node.node_type == NodeType::TextArea {
             clamp_textarea_cursor(node);
         } else if node.node_type == NodeType::Input {
-            let len = grapheme_count(&node.content);
+            let len = grapheme_count(&node.content) as u32;
             if node.cursor_position > len {
                 node.cursor_position = len;
             }
@@ -501,7 +483,7 @@ pub extern "C" fn tui_input_set_cursor(handle: u32, position: u32) -> i32 {
         if node.node_type != NodeType::Input {
             return Err(format!("Handle {handle} is not an Input widget"));
         }
-        node.cursor_position = position.min(grapheme_count(&node.content));
+        node.cursor_position = position.min(grapheme_count(&node.content) as u32);
         node.dirty = true;
         Ok(0)
     })
@@ -755,7 +737,7 @@ pub extern "C" fn tui_textarea_get_line_count(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        Ok(split_textarea_lines(&node.content).len() as i32)
+        Ok(split_textarea_lines_owned(&node.content).len() as i32)
     })
 }
 

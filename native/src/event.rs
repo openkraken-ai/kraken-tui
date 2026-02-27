@@ -8,8 +8,10 @@
 //! - Hit-testing for mouse events (delegates to Layout Module)
 
 use crate::context::TuiContext;
+use crate::text_utils::{
+    clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned,
+};
 use crate::types::{key, TerminalInputEvent, TuiEvent};
-use unicode_segmentation::UnicodeSegmentation;
 
 /// Read terminal input, classify events, store in buffer.
 /// Returns the number of events captured.
@@ -221,41 +223,8 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     false
 }
 
-fn split_textarea_lines(content: &str) -> Vec<String> {
-    if content.is_empty() {
-        vec![String::new()]
-    } else {
-        content.split('\n').map(|line| line.to_string()).collect()
-    }
-}
-
 fn join_textarea_lines(lines: &[String]) -> String {
     lines.join("\n")
-}
-
-fn grapheme_count(s: &str) -> usize {
-    UnicodeSegmentation::graphemes(s, true).count()
-}
-
-fn grapheme_to_byte_idx(s: &str, grapheme_idx: usize) -> usize {
-    if grapheme_idx == 0 {
-        return 0;
-    }
-    match UnicodeSegmentation::grapheme_indices(s, true).nth(grapheme_idx) {
-        Some((idx, _)) => idx,
-        None => s.len(),
-    }
-}
-
-fn clamp_textarea_cursor(lines: &[String], row: &mut u32, col: &mut u32) {
-    let max_row = lines.len().saturating_sub(1) as u32;
-    if *row > max_row {
-        *row = max_row;
-    }
-    let line_len = grapheme_count(&lines[*row as usize]) as u32;
-    if *col > line_len {
-        *col = line_len;
-    }
 }
 
 /// Handle a key press on a focused TextArea widget. Returns true if consumed.
@@ -269,8 +238,8 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             None => return false,
         };
 
-        let mut lines = split_textarea_lines(&node.content);
-        clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+        let mut lines = split_textarea_lines_owned(&node.content);
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
         match code {
             key::ENTER => {
@@ -346,14 +315,14 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             key::UP => {
                 if node.cursor_row > 0 {
                     node.cursor_row -= 1;
-                    clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
                 }
                 consumed = true;
             }
             key::DOWN => {
                 if (node.cursor_row as usize) + 1 < lines.len() {
                     node.cursor_row += 1;
-                    clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
                 }
                 consumed = true;
             }
@@ -382,7 +351,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         if emit_change {
             node.content = join_textarea_lines(&lines);
         }
-        clamp_textarea_cursor(&lines, &mut node.cursor_row, &mut node.cursor_col);
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
         // Keep cursor-follow viewport sane; render module applies exact visibility.
         if node.textarea_view_row > node.cursor_row {

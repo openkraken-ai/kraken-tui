@@ -11,7 +11,7 @@
 
 use crate::context::TuiContext;
 use crate::types::{color_tag, AnimProp, Easing, TuiNode, VisualStyle};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Spinner frame cycling state for the built-in spinner primitive.
 #[derive(Debug, Clone)]
@@ -508,12 +508,16 @@ pub(crate) fn choreography_cancel(ctx: &mut TuiContext, group_id: u32) -> Result
             .map(|member| member.anim_id)
             .collect()
     };
+    let pending_anim_ids: HashSet<u32> = ctx
+        .animations
+        .iter()
+        .filter(|anim| anim.pending)
+        .map(|anim| anim.id)
+        .collect();
 
     for anim_id in pending_ids {
-        if let Some(anim) = ctx.animations.iter().find(|a| a.id == anim_id) {
-            if anim.pending {
-                let _ = cancel_animation(ctx, anim_id);
-            }
+        if pending_anim_ids.contains(&anim_id) {
+            let _ = cancel_animation(ctx, anim_id);
         }
     }
     if let Some(group) = ctx.choreo_groups.get_mut(&group_id) {
@@ -538,15 +542,15 @@ pub(crate) fn destroy_choreography_group(
         .filter(|member| !member.started)
         .map(|member| member.anim_id)
         .collect();
+    let pending_anim_ids: HashSet<u32> = ctx
+        .animations
+        .iter()
+        .filter(|anim| anim.pending)
+        .map(|anim| anim.id)
+        .collect();
 
     for anim_id in pending_ids {
-        let is_pending = ctx
-            .animations
-            .iter()
-            .find(|anim| anim.id == anim_id)
-            .map(|anim| anim.pending)
-            .unwrap_or(false);
-        if is_pending {
+        if pending_anim_ids.contains(&anim_id) {
             let _ = cancel_animation(ctx, anim_id);
         }
     }

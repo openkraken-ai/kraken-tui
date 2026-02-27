@@ -7,6 +7,10 @@
 //! - Swap buffers, clear dirty flags
 
 use crate::context::TuiContext;
+use crate::text_utils::{
+    clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx,
+    split_textarea_lines_borrowed,
+};
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -303,8 +307,7 @@ fn render_node(
             }
         }
         NodeType::TextArea => {
-            let lines = split_textarea_lines(&content);
-            let line_count = lines.len();
+            let lines = split_textarea_lines_borrowed(&content);
             update_textarea_viewport(
                 ctx,
                 handle,
@@ -347,7 +350,6 @@ fn render_node(
                 attrs,
                 clip,
                 ctx.focused == Some(handle),
-                line_count as u32,
             );
         }
         NodeType::Select => {
@@ -724,28 +726,6 @@ struct TextAreaVisualLine {
     end_col: usize,
 }
 
-fn split_textarea_lines(content: &str) -> Vec<&str> {
-    if content.is_empty() {
-        vec![""]
-    } else {
-        content.split('\n').collect()
-    }
-}
-
-fn grapheme_count(s: &str) -> usize {
-    UnicodeSegmentation::graphemes(s, true).count()
-}
-
-fn grapheme_to_byte_idx(s: &str, grapheme_idx: usize) -> usize {
-    if grapheme_idx == 0 {
-        return 0;
-    }
-    match UnicodeSegmentation::grapheme_indices(s, true).nth(grapheme_idx) {
-        Some((idx, _)) => idx,
-        None => s.len(),
-    }
-}
-
 fn slice_graphemes(s: &str, start: usize, end: usize) -> String {
     let start_idx = grapheme_to_byte_idx(s, start);
     let end_idx = grapheme_to_byte_idx(s, end);
@@ -897,9 +877,9 @@ fn update_textarea_viewport(
     }
 
     let max_row = lines.len().saturating_sub(1) as u32;
-    let clamped_row = cursor_row.min(max_row);
-    let line_len = grapheme_count(lines[clamped_row as usize]) as u32;
-    let clamped_col = cursor_col.min(line_len);
+    let mut clamped_row = cursor_row.min(max_row);
+    let mut clamped_col = cursor_col;
+    clamp_textarea_cursor_lines(lines, &mut clamped_row, &mut clamped_col);
 
     if let Some(node) = ctx.nodes.get_mut(&handle) {
         node.cursor_row = clamped_row;
@@ -1036,7 +1016,6 @@ fn render_textarea(
     attrs: CellAttrs,
     clip: ClipRect,
     focused: bool,
-    _line_count: u32,
 ) {
     if max_w <= 0 || max_h <= 0 {
         return;

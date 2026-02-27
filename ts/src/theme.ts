@@ -15,6 +15,16 @@ import type { Widget } from "./widget";
 export const DARK_THEME = 1;
 export const LIGHT_THEME = 2;
 
+type NodeTypeInput =
+	| keyof typeof NodeType
+	| "box"
+	| "text"
+	| "input"
+	| "select"
+	| "scrollBox"
+	| "textarea"
+	| number;
+
 export class Theme {
 	public readonly handle: number;
 
@@ -119,15 +129,7 @@ export class Theme {
 
 	/** Set a NodeType-specific color default. */
 	setTypeColor(
-		nodeType:
-			| keyof typeof NodeType
-			| "box"
-			| "text"
-			| "input"
-			| "select"
-			| "scrollBox"
-			| "textarea"
-			| number,
+		nodeType: NodeTypeInput,
 		prop: "fg" | "bg" | "borderColor",
 		color: string | number,
 	): void {
@@ -145,15 +147,7 @@ export class Theme {
 
 	/** Set a NodeType-specific text decoration default. */
 	setTypeFlag(
-		nodeType:
-			| keyof typeof NodeType
-			| "box"
-			| "text"
-			| "input"
-			| "select"
-			| "scrollBox"
-			| "textarea"
-			| number,
+		nodeType: NodeTypeInput,
 		prop: "bold" | "italic" | "underline",
 		enabled: boolean,
 	): void {
@@ -171,15 +165,7 @@ export class Theme {
 
 	/** Set a NodeType-specific border style default. */
 	setTypeBorderStyle(
-		nodeType:
-			| keyof typeof NodeType
-			| "box"
-			| "text"
-			| "input"
-			| "select"
-			| "scrollBox"
-			| "textarea"
-			| number,
+		nodeType: NodeTypeInput,
 		style: "none" | "single" | "double" | "rounded" | "bold",
 	): void {
 		const map: Record<string, number> = {
@@ -201,15 +187,7 @@ export class Theme {
 
 	/** Set a NodeType-specific opacity default. */
 	setTypeOpacity(
-		nodeType:
-			| keyof typeof NodeType
-			| "box"
-			| "text"
-			| "input"
-			| "select"
-			| "scrollBox"
-			| "textarea"
-			| number,
+		nodeType: NodeTypeInput,
 		value: number,
 	): void {
 		checkResult(
@@ -236,17 +214,7 @@ export class Theme {
 	}
 }
 
-function normalizeNodeType(
-	nodeType:
-		| keyof typeof NodeType
-		| "box"
-		| "text"
-		| "input"
-		| "select"
-		| "scrollBox"
-		| "textarea"
-		| number,
-): number {
+function normalizeNodeType(nodeType: NodeTypeInput): number {
 	if (typeof nodeType === "number") return nodeType;
 	const key = nodeType.toLowerCase();
 	switch (key) {
