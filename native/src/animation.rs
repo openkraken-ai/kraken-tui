@@ -558,8 +558,6 @@ fn remove_animation_from_choreography(ctx: &mut TuiContext, anim_id: u32) {
     for group in ctx.choreo_groups.values_mut() {
         group.members.retain(|m| m.anim_id != anim_id);
     }
-    ctx.choreo_groups
-        .retain(|_, group| !group.members.is_empty());
 }
 
 fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) -> HashMap<u32, f32> {
@@ -1758,6 +1756,49 @@ mod tests {
         assert!(
             !ctx.animations.iter().any(|an| an.id == anim_b),
             "pending delayed member should be cancelled"
+        );
+    }
+
+    #[test]
+    fn test_empty_choreography_group_survives_unrelated_animation_cleanup() {
+        let mut ctx = test_ctx();
+        let a = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let b = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        // Group starts empty and must remain valid until explicit destroy.
+        let group = create_choreography_group(&mut ctx).unwrap();
+
+        let unrelated = start_animation(
+            &mut ctx,
+            a,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+        advance_animations(&mut ctx, 600.0);
+        assert!(
+            !ctx.animations.iter().any(|an| an.id == unrelated),
+            "unrelated one-shot animation should complete and be removed"
+        );
+        assert!(
+            ctx.choreo_groups.contains_key(&group),
+            "empty choreography group must not be auto-destroyed by unrelated animation cleanup"
+        );
+
+        let member = start_animation(
+            &mut ctx,
+            b,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+        assert!(
+            choreography_add(&mut ctx, group, member, 0).is_ok(),
+            "group should remain usable after unrelated animation completion"
         );
     }
 }
