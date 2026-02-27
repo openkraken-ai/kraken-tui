@@ -771,6 +771,11 @@ fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
     if start < chars.len() {
         segments.push((start, chars.len()));
     }
+    // Non-empty lines must not emit empty wrapped segments (e.g. trailing
+    // (len, len)); those create phantom visual rows in TextArea wrap mode.
+    if char_len > 0 {
+        segments.retain(|(seg_start, seg_end)| seg_start < seg_end);
+    }
     if segments.is_empty() {
         segments.push((0, 0));
     }
@@ -1859,6 +1864,37 @@ mod tests {
         assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'f');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().ch, 'i');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_render_textarea_wrap_wide_char_narrow_width_no_phantom_row() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(10, 3);
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        ctx.focused = Some(textarea);
+
+        layout::set_dimension(&mut ctx, textarea, 0, 1.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 1.0, 1).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "中".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+            node.wrap_mode = 1;
+            node.textarea_view_row = 0;
+            node.textarea_view_col = 0;
+        }
+
+        render(&mut ctx).unwrap();
+
+        let node = ctx.nodes.get(&textarea).unwrap();
+        assert_eq!(
+            node.textarea_view_row, 0,
+            "wide-glyph wrapping must not create a phantom trailing visual row"
+        );
     }
 
     // =========================================================================
