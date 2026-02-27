@@ -10,6 +10,7 @@ export { Widget } from "./widget";
 export { Box } from "./widgets/box";
 export { Text } from "./widgets/text";
 export { Input } from "./widgets/input";
+export { TextArea } from "./widgets/textarea";
 export { Select } from "./widgets/select";
 export { ScrollBox } from "./widgets/scrollbox";
 export { Theme, DARK_THEME, LIGHT_THEME } from "./theme";

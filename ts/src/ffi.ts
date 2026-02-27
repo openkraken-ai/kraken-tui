@@ -119,6 +119,22 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_textarea_set_cursor: {
+		args: ["u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_get_cursor: {
+		args: ["u32", "ptr", "ptr"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_get_line_count: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_set_wrap: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
 
 	// Widget Properties (Select)
 	tui_select_add_option: {
@@ -213,6 +229,22 @@ const symbols = {
 		args: ["u32", "f32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_set_theme_type_color: {
+		args: ["u32", "u8", "u8", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_type_flag: {
+		args: ["u32", "u8", "u8", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_type_border: {
+		args: ["u32", "u8", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_theme_type_opacity: {
+		args: ["u32", "u8", "f32"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_apply_theme: {
 		args: ["u32", "u32"] as FFIType[],
 		returns: "i32" as const,
@@ -252,6 +284,26 @@ const symbols = {
 		returns: "i32" as const,
 	},
 	tui_set_animation_looping: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_create_choreo_group: {
+		args: [] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_choreo_add: {
+		args: ["u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_choreo_start: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_choreo_cancel: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_destroy_choreo_group: {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},

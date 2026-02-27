@@ -25,6 +25,7 @@ mod scroll;
 mod style;
 mod terminal;
 mod text;
+mod text_utils;
 mod theme;
 mod tree;
 mod types;
@@ -38,6 +39,7 @@ use context::{
     init_context, is_context_initialized, set_last_error,
 };
 use terminal::{CrosstermBackend, TerminalBackend};
+use text_utils::{clamp_textarea_cursor_lines, grapheme_count, split_textarea_lines_owned};
 use types::{NodeType, TuiEvent};
 
 // The snapshot pointer returned by `tui_get_last_error()` must outlive the
@@ -83,6 +85,17 @@ fn ffi_wrap_handle(f: impl FnOnce() -> Result<u32, String>) -> u32 {
             set_last_error("internal panic".to_string());
             0
         }
+    }
+}
+
+fn clamp_textarea_cursor(node: &mut types::TuiNode) {
+    let lines = split_textarea_lines_owned(&node.content);
+    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+    if node.textarea_view_row > node.cursor_row {
+        node.textarea_view_row = node.cursor_row;
+    }
+    if node.textarea_view_col > node.cursor_col {
+        node.textarea_view_col = node.cursor_col;
     }
 }
 
@@ -343,6 +356,14 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
 
         let node = ctx.nodes.get_mut(&handle).unwrap();
         node.content = text;
+        if node.node_type == NodeType::TextArea {
+            clamp_textarea_cursor(node);
+        } else if node.node_type == NodeType::Input {
+            let len = grapheme_count(&node.content) as u32;
+            if node.cursor_position > len {
+                node.cursor_position = len;
+            }
+        }
         node.dirty = true;
         Ok(0)
     })
@@ -450,7 +471,7 @@ pub extern "C" fn tui_get_code_language(handle: u32, buffer: *mut u8, buffer_len
 }
 
 // ============================================================================
-// 4.6 Widget Properties (Input/Select)
+// 4.6 Widget Properties (Input/Select/TextArea)
 // ============================================================================
 
 #[no_mangle]
@@ -462,7 +483,7 @@ pub extern "C" fn tui_input_set_cursor(handle: u32, position: u32) -> i32 {
         if node.node_type != NodeType::Input {
             return Err(format!("Handle {handle} is not an Input widget"));
         }
-        node.cursor_position = position;
+        node.cursor_position = position.min(grapheme_count(&node.content) as u32);
         node.dirty = true;
         Ok(0)
     })
@@ -665,6 +686,81 @@ pub extern "C" fn tui_select_get_selected(handle: u32) -> i32 {
             return Err(format!("Handle {handle} is not a Select widget"));
         }
         Ok(node.selected_index.map(|i| i as i32).unwrap_or(-1))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_set_cursor(handle: u32, row: u32, col: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        node.cursor_row = row;
+        node.cursor_col = col;
+        clamp_textarea_cursor(node);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_get_cursor(handle: u32, row: *mut u32, col: *mut u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+
+        unsafe {
+            if !row.is_null() {
+                *row = node.cursor_row;
+            }
+            if !col.is_null() {
+                *col = node.cursor_col;
+            }
+        }
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_get_line_count(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        Ok(split_textarea_lines_owned(&node.content).len() as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_set_wrap(handle: u32, wrap_mode: u8) -> i32 {
+    ffi_wrap(|| {
+        if wrap_mode > 1 {
+            return Err(format!("Invalid wrap mode: {wrap_mode}"));
+        }
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+
+        node.wrap_mode = wrap_mode;
+        if wrap_mode != 0 {
+            node.textarea_view_col = 0;
+        }
+        node.dirty = true;
+        Ok(0)
     })
 }
 
@@ -871,6 +967,60 @@ pub extern "C" fn tui_set_theme_opacity(theme_handle: u32, opacity: f32) -> i32 
 }
 
 #[no_mangle]
+pub extern "C" fn tui_set_theme_type_color(
+    theme_handle: u32,
+    node_type: u8,
+    prop: u8,
+    color: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        theme::set_theme_type_color(&mut ctx, theme_handle, node_type, prop, color)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_type_flag(
+    theme_handle: u32,
+    node_type: u8,
+    prop: u8,
+    value: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        theme::set_theme_type_flag(&mut ctx, theme_handle, node_type, prop, value)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_type_border(
+    theme_handle: u32,
+    node_type: u8,
+    border_style: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        theme::set_theme_type_border(&mut ctx, theme_handle, node_type, border_style)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_theme_type_opacity(
+    theme_handle: u32,
+    node_type: u8,
+    opacity: f32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        theme::set_theme_type_opacity(&mut ctx, theme_handle, node_type, opacity)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_apply_theme(theme_handle: u32, node_handle: u32) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
@@ -974,6 +1124,50 @@ pub extern "C" fn tui_chain_animation(after_anim: u32, next_anim: u32) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         animation::chain_animation(&mut ctx, after_anim, next_anim)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_create_choreo_group() -> u32 {
+    ffi_wrap_handle(|| {
+        let mut ctx = context_write()?;
+        animation::create_choreography_group(&mut ctx)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_choreo_add(group_id: u32, anim_id: u32, start_at_ms: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        animation::choreography_add(&mut ctx, group_id, anim_id, start_at_ms)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_choreo_start(group_id: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        animation::choreography_start(&mut ctx, group_id)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_choreo_cancel(group_id: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        animation::choreography_cancel(&mut ctx, group_id)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_destroy_choreo_group(group_id: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        animation::destroy_choreography_group(&mut ctx, group_id)?;
         Ok(0)
     })
 }

@@ -8,6 +8,9 @@
 //! - Hit-testing for mouse events (delegates to Layout Module)
 
 use crate::context::TuiContext;
+use crate::text_utils::{
+    clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned,
+};
 use crate::types::{key, TerminalInputEvent, TuiEvent};
 
 /// Read terminal input, classify events, store in buffer.
@@ -41,6 +44,12 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     match focused_type {
                         Some(crate::types::NodeType::Input) => {
                             if handle_input_key(ctx, focused_handle, code, character) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::TextArea) => {
+                            if handle_textarea_key(ctx, focused_handle, code, character) {
                                 count += 1;
                                 continue;
                             }
@@ -134,6 +143,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         None => return false,
     };
 
+    let content_len = grapheme_count(&node.content) as u32;
+    if node.cursor_position > content_len {
+        node.cursor_position = content_len;
+    }
+
     match code {
         key::ENTER => {
             ctx.event_buffer.push(TuiEvent::submit(handle));
@@ -142,9 +156,9 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         key::BACKSPACE => {
             let cursor = node.cursor_position as usize;
             if cursor > 0 {
-                let mut chars: Vec<char> = node.content.chars().collect();
-                chars.remove(cursor - 1);
-                node.content = chars.into_iter().collect();
+                let start = grapheme_to_byte_idx(&node.content, cursor - 1);
+                let end = grapheme_to_byte_idx(&node.content, cursor);
+                node.content.replace_range(start..end, "");
                 node.cursor_position -= 1;
                 node.dirty = true;
                 ctx.event_buffer.push(TuiEvent::change(handle, 0));
@@ -153,11 +167,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
         }
         key::DELETE => {
             let cursor = node.cursor_position as usize;
-            let len = node.content.chars().count();
+            let len = grapheme_count(&node.content);
             if cursor < len {
-                let mut chars: Vec<char> = node.content.chars().collect();
-                chars.remove(cursor);
-                node.content = chars.into_iter().collect();
+                let start = grapheme_to_byte_idx(&node.content, cursor);
+                let end = grapheme_to_byte_idx(&node.content, cursor + 1);
+                node.content.replace_range(start..end, "");
                 node.dirty = true;
                 ctx.event_buffer.push(TuiEvent::change(handle, 0));
             }
@@ -171,7 +185,7 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
             return true;
         }
         key::RIGHT => {
-            let len = node.content.chars().count() as u32;
+            let len = grapheme_count(&node.content) as u32;
             if node.cursor_position < len {
                 node.cursor_position += 1;
                 node.dirty = true;
@@ -184,7 +198,7 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
             return true;
         }
         key::END => {
-            node.cursor_position = node.content.chars().count() as u32;
+            node.cursor_position = grapheme_count(&node.content) as u32;
             node.dirty = true;
             return true;
         }
@@ -194,12 +208,11 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     // Printable character insertion
     if character != '\0' && !character.is_control() {
         let max_len = node.max_length;
-        let current_len = node.content.chars().count() as u32;
+        let current_len = grapheme_count(&node.content) as u32;
         if max_len == 0 || current_len < max_len {
             let cursor = node.cursor_position as usize;
-            let mut chars: Vec<char> = node.content.chars().collect();
-            chars.insert(cursor, character);
-            node.content = chars.into_iter().collect();
+            let byte_idx = grapheme_to_byte_idx(&node.content, cursor);
+            node.content.insert(byte_idx, character);
             node.cursor_position += 1;
             node.dirty = true;
             ctx.event_buffer.push(TuiEvent::change(handle, 0));
@@ -208,6 +221,158 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     }
 
     false
+}
+
+fn join_textarea_lines(lines: &[String]) -> String {
+    lines.join("\n")
+}
+
+/// Handle a key press on a focused TextArea widget. Returns true if consumed.
+fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: char) -> bool {
+    let mut emit_change = false;
+    let mut consumed = false;
+
+    {
+        let node = match ctx.nodes.get_mut(&handle) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        let mut lines = split_textarea_lines_owned(&node.content);
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+
+        match code {
+            key::ENTER => {
+                let row = node.cursor_row as usize;
+                let col = node.cursor_col as usize;
+                let split_at = grapheme_to_byte_idx(&lines[row], col);
+                let before = lines[row][..split_at].to_string();
+                let after = lines[row][split_at..].to_string();
+                lines[row] = before;
+                lines.insert(row + 1, after);
+                node.cursor_row += 1;
+                node.cursor_col = 0;
+                emit_change = true;
+                consumed = true;
+            }
+            key::BACKSPACE => {
+                if node.cursor_col > 0 {
+                    let row = node.cursor_row as usize;
+                    let col = node.cursor_col as usize;
+                    let start = grapheme_to_byte_idx(&lines[row], col - 1);
+                    let end = grapheme_to_byte_idx(&lines[row], col);
+                    lines[row].replace_range(start..end, "");
+                    node.cursor_col -= 1;
+                    emit_change = true;
+                } else if node.cursor_row > 0 {
+                    let row = node.cursor_row as usize;
+                    let current_line = lines.remove(row);
+                    let prev_row = row - 1;
+                    let prev_len = grapheme_count(&lines[prev_row]) as u32;
+                    lines[prev_row].push_str(&current_line);
+                    node.cursor_row -= 1;
+                    node.cursor_col = prev_len;
+                    emit_change = true;
+                }
+                consumed = true;
+            }
+            key::DELETE => {
+                let row = node.cursor_row as usize;
+                let col = node.cursor_col as usize;
+                let line_len = grapheme_count(&lines[row]);
+                if col < line_len {
+                    let start = grapheme_to_byte_idx(&lines[row], col);
+                    let end = grapheme_to_byte_idx(&lines[row], col + 1);
+                    lines[row].replace_range(start..end, "");
+                    emit_change = true;
+                } else if row + 1 < lines.len() {
+                    let next_line = lines.remove(row + 1);
+                    lines[row].push_str(&next_line);
+                    emit_change = true;
+                }
+                consumed = true;
+            }
+            key::LEFT => {
+                if node.cursor_col > 0 {
+                    node.cursor_col -= 1;
+                } else if node.cursor_row > 0 {
+                    node.cursor_row -= 1;
+                    node.cursor_col = grapheme_count(&lines[node.cursor_row as usize]) as u32;
+                }
+                consumed = true;
+            }
+            key::RIGHT => {
+                let row = node.cursor_row as usize;
+                let line_len = grapheme_count(&lines[row]) as u32;
+                if node.cursor_col < line_len {
+                    node.cursor_col += 1;
+                } else if (node.cursor_row as usize) + 1 < lines.len() {
+                    node.cursor_row += 1;
+                    node.cursor_col = 0;
+                }
+                consumed = true;
+            }
+            key::UP => {
+                if node.cursor_row > 0 {
+                    node.cursor_row -= 1;
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                }
+                consumed = true;
+            }
+            key::DOWN => {
+                if (node.cursor_row as usize) + 1 < lines.len() {
+                    node.cursor_row += 1;
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                }
+                consumed = true;
+            }
+            key::HOME => {
+                node.cursor_col = 0;
+                consumed = true;
+            }
+            key::END => {
+                let row = node.cursor_row as usize;
+                node.cursor_col = grapheme_count(&lines[row]) as u32;
+                consumed = true;
+            }
+            _ => {}
+        }
+
+        if !consumed && character != '\0' && !character.is_control() {
+            let row = node.cursor_row as usize;
+            let col = node.cursor_col as usize;
+            let idx = grapheme_to_byte_idx(&lines[row], col);
+            lines[row].insert(idx, character);
+            node.cursor_col += 1;
+            emit_change = true;
+            consumed = true;
+        }
+
+        if emit_change {
+            node.content = join_textarea_lines(&lines);
+        }
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+
+        // Keep cursor-follow viewport sane; render module applies exact visibility.
+        if node.textarea_view_row > node.cursor_row {
+            node.textarea_view_row = node.cursor_row;
+        }
+        if node.wrap_mode != 0 {
+            node.textarea_view_col = 0;
+        } else if node.textarea_view_col > node.cursor_col {
+            node.textarea_view_col = node.cursor_col;
+        }
+
+        if consumed {
+            node.dirty = true;
+        }
+    }
+
+    if emit_change {
+        ctx.event_buffer.push(TuiEvent::change(handle, 0));
+    }
+
+    consumed
 }
 
 /// Handle a key press on a focused Select widget. Returns true if consumed.
@@ -398,6 +563,113 @@ mod tests {
         handle_input_key(&mut ctx, input, key::BACKSPACE, '\0');
         assert_eq!(ctx.nodes[&input].content, "h");
         assert_eq!(ctx.nodes[&input].cursor_position, 1);
+    }
+
+    #[test]
+    fn test_input_backspace_removes_whole_grapheme_cluster() {
+        let mut ctx = test_ctx();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&input).unwrap();
+            node.content = "e\u{301}".to_string();
+            node.cursor_position = 1;
+        }
+
+        assert!(handle_input_key(&mut ctx, input, key::BACKSPACE, '\0'));
+        let node = &ctx.nodes[&input];
+        assert_eq!(node.content, "");
+        assert_eq!(node.cursor_position, 0);
+    }
+
+    #[test]
+    fn test_textarea_backspace_joins_lines_at_col_zero() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        tree::append_child(&mut ctx, root, textarea).unwrap();
+        ctx.root = Some(root);
+        ctx.focused = Some(textarea);
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abc\ndef".to_string();
+            node.cursor_row = 1;
+            node.cursor_col = 0;
+        }
+
+        assert!(handle_textarea_key(
+            &mut ctx,
+            textarea,
+            key::BACKSPACE,
+            '\0'
+        ));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "abcdef");
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 3);
+    }
+
+    #[test]
+    fn test_textarea_backspace_removes_whole_grapheme_cluster() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "e\u{301}x".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        assert!(handle_textarea_key(
+            &mut ctx,
+            textarea,
+            key::BACKSPACE,
+            '\0'
+        ));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "x");
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_textarea_enter_inserts_newline() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 2;
+        }
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.content, "he\nllo");
+        assert_eq!(node.cursor_row, 1);
+        assert_eq!(node.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_textarea_up_down_clamps_column() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abcd\nxy".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 4;
+        }
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::DOWN, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.cursor_row, 1);
+        assert_eq!(node.cursor_col, 2);
+
+        assert!(handle_textarea_key(&mut ctx, textarea, key::UP, '\0'));
+        let node = &ctx.nodes[&textarea];
+        assert_eq!(node.cursor_row, 0);
+        assert_eq!(node.cursor_col, 2);
     }
 
     #[test]

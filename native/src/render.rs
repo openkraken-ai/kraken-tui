@@ -7,7 +7,12 @@
 //! - Swap buffers, clear dirty flags
 
 use crate::context::TuiContext;
+use crate::text_utils::{
+    clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx,
+    split_textarea_lines_borrowed,
+};
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 // ============================================================================
@@ -198,8 +203,8 @@ fn render_node(
         .layout(taffy_node)
         .map_err(|e| format!("Layout not computed for handle {handle}: {e:?}"))?;
 
-    let abs_x = parent_x + layout.location.x as i32;
-    let abs_y = parent_y + layout.location.y as i32;
+    let abs_x = parent_x + layout.location.x as i32 + node.render_offset.0.round() as i32;
+    let abs_y = parent_y + layout.location.y as i32 + node.render_offset.1.round() as i32;
     let w = layout.size.width as i32;
     let h = layout.size.height as i32;
 
@@ -215,6 +220,11 @@ fn render_node(
     let content_format = node.content_format;
     let scroll_x = node.scroll_x;
     let scroll_y = node.scroll_y;
+    let cursor_row = node.cursor_row;
+    let cursor_col = node.cursor_col;
+    let wrap_mode = node.wrap_mode;
+    let textarea_view_row = node.textarea_view_row;
+    let textarea_view_col = node.textarea_view_col;
     let mask_char = node.mask_char;
     let children: Vec<u32> = node.children.clone();
 
@@ -255,7 +265,7 @@ fn render_node(
         NodeType::Text | NodeType::Input => {
             let display_content = if mask_char != 0 && node_type == NodeType::Input {
                 let mask = char::from_u32(mask_char).unwrap_or('*');
-                mask.to_string().repeat(content.chars().count())
+                mask.to_string().repeat(grapheme_count(&content))
             } else {
                 content.clone()
             };
@@ -295,6 +305,54 @@ fn render_node(
                     clip,
                 );
             }
+        }
+        NodeType::TextArea => {
+            let lines = split_textarea_lines_borrowed(&content);
+            let visual = build_textarea_visual_lines(&lines, wrap_mode, content_w.max(1));
+            update_textarea_viewport(
+                ctx,
+                handle,
+                &lines,
+                &visual,
+                cursor_row,
+                cursor_col,
+                wrap_mode,
+                textarea_view_row,
+                textarea_view_col,
+                content_w,
+                content_h,
+            );
+            let textarea_state = ctx
+                .nodes
+                .get(&handle)
+                .map(|n| {
+                    (
+                        n.cursor_row,
+                        n.cursor_col,
+                        n.textarea_view_row,
+                        n.textarea_view_col,
+                    )
+                })
+                .unwrap_or((0, 0, 0, 0));
+
+            render_textarea(
+                ctx,
+                &visual,
+                textarea_state.0,
+                textarea_state.1,
+                wrap_mode,
+                textarea_state.2,
+                textarea_state.3,
+                content_x,
+                content_y,
+                content_w,
+                content_h,
+                fg,
+                bg,
+                attrs,
+                clip,
+                ctx.focused == Some(handle),
+            );
         }
         NodeType::Select => {
             render_select_options(
@@ -625,14 +683,13 @@ fn render_input_cursor(
 
     // Clamp cursor_pos to display content length to handle edge cases
     // where cursor_position exceeds content (e.g., content truncated externally)
-    let char_count = display_content.chars().count();
-    let cursor_pos = (node.cursor_position as usize).min(char_count);
+    let grapheme_len = grapheme_count(display_content);
+    let cursor_pos = (node.cursor_position as usize).min(grapheme_len);
 
-    // Calculate cursor x-offset by measuring width of content up to cursor_pos
-    let prefix: String = display_content.chars().take(cursor_pos).collect();
-    let cursor_x_offset = UnicodeWidthStr::width(prefix.as_str()) as i32;
+    // Calculate cursor x-offset by measuring width of graphemes up to cursor_pos.
+    let cursor_x_offset = display_width_of_prefix_graphemes(display_content, cursor_pos);
 
-    if cursor_x_offset > content_w {
+    if cursor_x_offset >= content_w {
         return; // Cursor is beyond visible area
     }
 
@@ -640,7 +697,10 @@ fn render_input_cursor(
     let sy = content_y; // Single-line input, cursor always on row 0
 
     // Character under the cursor (or space if at end of content)
-    let cursor_char = display_content.chars().nth(cursor_pos).unwrap_or(' ');
+    let cursor_char = UnicodeSegmentation::graphemes(display_content, true)
+        .nth(cursor_pos)
+        .and_then(|g| g.chars().next())
+        .unwrap_or(' ');
 
     // Inverted colors: swap fg and bg
     let inv_fg = if bg != 0 { bg } else { 0x00000000 };
@@ -650,6 +710,353 @@ fn render_input_cursor(
         &mut ctx.front_buffer,
         sx,
         sy,
+        Cell {
+            ch: cursor_char,
+            fg: inv_fg,
+            bg: inv_bg,
+            attrs: CellAttrs::empty(),
+        },
+        clip,
+    );
+}
+
+#[derive(Debug, Clone)]
+struct TextAreaVisualLine {
+    text: String,
+    logical_row: usize,
+    start_col: usize,
+    end_col: usize,
+}
+
+fn slice_graphemes(s: &str, start: usize, end: usize) -> String {
+    let start_idx = grapheme_to_byte_idx(s, start);
+    let end_idx = grapheme_to_byte_idx(s, end);
+    s[start_idx..end_idx].to_string()
+}
+
+fn display_width_of_grapheme(grapheme: &str) -> i32 {
+    (UnicodeWidthStr::width(grapheme) as i32).max(1)
+}
+
+fn display_width_of_prefix_graphemes(s: &str, graphemes: usize) -> i32 {
+    UnicodeSegmentation::graphemes(s, true)
+        .take(graphemes)
+        .map(display_width_of_grapheme)
+        .sum()
+}
+
+fn display_width_of_text_graphemes(s: &str) -> i32 {
+    UnicodeSegmentation::graphemes(s, true)
+        .map(display_width_of_grapheme)
+        .sum()
+}
+
+fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
+    let grapheme_len = grapheme_count(line);
+    if grapheme_len == 0 {
+        return vec![(0, 0)];
+    }
+    if max_w <= 0 {
+        return vec![(0, grapheme_len)];
+    }
+
+    let graphemes: Vec<&str> = UnicodeSegmentation::graphemes(line, true).collect();
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    let mut width = 0i32;
+
+    for (idx, grapheme) in graphemes.iter().enumerate() {
+        let grapheme_w = display_width_of_grapheme(grapheme);
+        if width + grapheme_w > max_w && idx > start {
+            segments.push((start, idx));
+            start = idx;
+            width = 0;
+        }
+        width += grapheme_w;
+        if width > max_w && idx == start {
+            segments.push((start, idx + 1));
+            start = idx + 1;
+            width = 0;
+        }
+    }
+    if start < graphemes.len() {
+        segments.push((start, graphemes.len()));
+    }
+    // Non-empty lines must not emit empty wrapped segments (e.g. trailing
+    // (len, len)); those create phantom visual rows in TextArea wrap mode.
+    if grapheme_len > 0 {
+        segments.retain(|(seg_start, seg_end)| seg_start < seg_end);
+    }
+    if segments.is_empty() {
+        segments.push((0, 0));
+    }
+    segments
+}
+
+fn build_textarea_visual_lines(
+    lines: &[&str],
+    wrap_mode: u8,
+    max_w: i32,
+) -> Vec<TextAreaVisualLine> {
+    let mut visual = Vec::new();
+    for (row, line) in lines.iter().enumerate() {
+        if wrap_mode != 0 {
+            for (start, end) in wrap_line_segments(line, max_w) {
+                let text = slice_graphemes(line, start, end);
+                visual.push(TextAreaVisualLine {
+                    text,
+                    logical_row: row,
+                    start_col: start,
+                    end_col: end,
+                });
+            }
+        } else {
+            visual.push(TextAreaVisualLine {
+                text: (*line).to_string(),
+                logical_row: row,
+                start_col: 0,
+                end_col: grapheme_count(line),
+            });
+        }
+    }
+    if visual.is_empty() {
+        visual.push(TextAreaVisualLine {
+            text: String::new(),
+            logical_row: 0,
+            start_col: 0,
+            end_col: 0,
+        });
+    }
+    visual
+}
+
+fn cursor_to_visual(
+    lines: &[TextAreaVisualLine],
+    cursor_row: u32,
+    cursor_col: u32,
+) -> (usize, i32) {
+    let row = cursor_row as usize;
+    let col = cursor_col as usize;
+    let mut last_for_row = None;
+
+    for (idx, line) in lines.iter().enumerate() {
+        if line.logical_row != row {
+            continue;
+        }
+        last_for_row = Some(idx);
+        let is_last_for_row = idx + 1 == lines.len() || lines[idx + 1].logical_row != row;
+        if (line.start_col == line.end_col && col == 0)
+            || col < line.end_col
+            || (col == line.end_col && is_last_for_row)
+        {
+            let local_col = col.saturating_sub(line.start_col);
+            let x = display_width_of_prefix_graphemes(&line.text, local_col);
+            return (idx, x);
+        }
+    }
+
+    if let Some(idx) = last_for_row {
+        return (idx, display_width_of_text_graphemes(&lines[idx].text));
+    }
+    (0, 0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_textarea_viewport(
+    ctx: &mut TuiContext,
+    handle: u32,
+    lines: &[&str],
+    visual: &[TextAreaVisualLine],
+    cursor_row: u32,
+    cursor_col: u32,
+    wrap_mode: u8,
+    view_row: u32,
+    view_col: u32,
+    content_w: i32,
+    content_h: i32,
+) {
+    if content_h <= 0 {
+        return;
+    }
+
+    let max_row = lines.len().saturating_sub(1) as u32;
+    let mut clamped_row = cursor_row.min(max_row);
+    let mut clamped_col = cursor_col;
+    clamp_textarea_cursor_lines(lines, &mut clamped_row, &mut clamped_col);
+
+    if let Some(node) = ctx.nodes.get_mut(&handle) {
+        node.cursor_row = clamped_row;
+        node.cursor_col = clamped_col;
+    }
+
+    if wrap_mode != 0 {
+        let (cursor_vrow, _) = cursor_to_visual(visual, clamped_row, clamped_col);
+        let mut next_row = view_row as usize;
+        let viewport_h = content_h as usize;
+
+        if cursor_vrow < next_row {
+            next_row = cursor_vrow;
+        } else if cursor_vrow >= next_row + viewport_h {
+            next_row = cursor_vrow + 1 - viewport_h;
+        }
+        next_row = next_row.min(visual.len().saturating_sub(1));
+
+        if let Some(node) = ctx.nodes.get_mut(&handle) {
+            node.textarea_view_row = next_row as u32;
+            node.textarea_view_col = 0;
+        }
+    } else {
+        let mut next_row = view_row as i32;
+        let viewport_h = content_h;
+        let cursor_row_i = clamped_row as i32;
+
+        if cursor_row_i < next_row {
+            next_row = cursor_row_i;
+        } else if cursor_row_i >= next_row + viewport_h {
+            next_row = cursor_row_i - viewport_h + 1;
+        }
+        next_row = next_row.clamp(0, max_row as i32);
+
+        let cursor_x =
+            display_width_of_prefix_graphemes(lines[clamped_row as usize], clamped_col as usize);
+        let mut next_col = view_col as i32;
+        if content_w > 0 {
+            if cursor_x < next_col {
+                next_col = cursor_x;
+            } else if cursor_x >= next_col + content_w {
+                next_col = cursor_x - content_w + 1;
+            }
+        }
+        next_col = next_col.max(0);
+
+        if let Some(node) = ctx.nodes.get_mut(&handle) {
+            node.textarea_view_row = next_row as u32;
+            node.textarea_view_col = next_col as u32;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_text_line_with_offset(
+    ctx: &mut TuiContext,
+    line: &str,
+    x: i32,
+    y: i32,
+    skip_cells: i32,
+    max_w: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    if max_w <= 0 {
+        return;
+    }
+
+    let mut source_x = 0i32;
+    let mut out_col = 0i32;
+    let skip = skip_cells.max(0);
+
+    for grapheme in UnicodeSegmentation::graphemes(line, true) {
+        let Some(ch) = grapheme.chars().next() else {
+            continue;
+        };
+        let grapheme_w = display_width_of_grapheme(grapheme);
+        let next_x = source_x + grapheme_w;
+
+        if next_x <= skip {
+            source_x = next_x;
+            continue;
+        }
+        if source_x < skip {
+            source_x = next_x;
+            continue;
+        }
+        if out_col + grapheme_w > max_w {
+            break;
+        }
+
+        clip_set(
+            &mut ctx.front_buffer,
+            x + out_col,
+            y,
+            Cell { ch, fg, bg, attrs },
+            clip,
+        );
+        out_col += grapheme_w;
+        source_x = next_x;
+    }
+}
+
+fn grapheme_char_at_display_col(line: &str, col: i32) -> Option<char> {
+    let mut x = 0i32;
+    for grapheme in UnicodeSegmentation::graphemes(line, true) {
+        let w = display_width_of_grapheme(grapheme);
+        if col >= x && col < x + w {
+            return grapheme.chars().next();
+        }
+        x += w;
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_textarea(
+    ctx: &mut TuiContext,
+    visual: &[TextAreaVisualLine],
+    cursor_row: u32,
+    cursor_col: u32,
+    wrap_mode: u8,
+    view_row: u32,
+    view_col: u32,
+    x: i32,
+    y: i32,
+    max_w: i32,
+    max_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+    focused: bool,
+) {
+    if max_w <= 0 || max_h <= 0 {
+        return;
+    }
+
+    let (cursor_visual_row, cursor_visual_x) = cursor_to_visual(visual, cursor_row, cursor_col);
+
+    for row in 0..max_h {
+        let src_row = view_row as usize + row as usize;
+        if src_row >= visual.len() {
+            break;
+        }
+        let line = &visual[src_row].text;
+        let skip = if wrap_mode != 0 { 0 } else { view_col as i32 };
+        draw_text_line_with_offset(ctx, line, x, y + row, skip, max_w, fg, bg, attrs, clip);
+    }
+
+    if !focused {
+        return;
+    }
+
+    let screen_y = cursor_visual_row as i32 - view_row as i32;
+    let screen_x = cursor_visual_x - if wrap_mode != 0 { 0 } else { view_col as i32 };
+    if screen_y < 0 || screen_y >= max_h || screen_x < 0 || screen_x >= max_w {
+        return;
+    }
+
+    let cursor_line = visual
+        .get(cursor_visual_row)
+        .map(|line| line.text.as_str())
+        .unwrap_or("");
+    let cursor_char = grapheme_char_at_display_col(cursor_line, cursor_visual_x).unwrap_or(' ');
+    let inv_fg = if bg != 0 { bg } else { 0x00000000 };
+    let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+
+    clip_set(
+        &mut ctx.front_buffer,
+        x + screen_x,
+        y + screen_y,
         Cell {
             ch: cursor_char,
             fg: inv_fg,
@@ -1053,6 +1460,24 @@ mod tests {
     }
 
     #[test]
+    fn test_input_cursor_does_not_render_past_content_width() {
+        use crate::terminal::MockBackend;
+        use crate::tree;
+
+        let mut ctx = TuiContext::new(Box::new(MockBackend::new(10, 1)));
+        let h = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        ctx.nodes.get_mut(&h).unwrap().content = "hi".to_string();
+        ctx.nodes.get_mut(&h).unwrap().cursor_position = 2; // at end
+        ctx.focused = Some(h);
+
+        let clip = ClipRect::full(10, 1);
+        render_input_cursor(&mut ctx, h, "hi", 0, 0, 2, 0x01FFFFFF, 0x01000000, clip);
+
+        // Cursor at x=2 is outside the 2-cell content area [0,1].
+        assert_eq!(ctx.front_buffer.get(2, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
     fn test_input_cursor_unfocused() {
         use crate::terminal::MockBackend;
         use crate::tree;
@@ -1392,6 +1817,128 @@ mod tests {
         assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, ' ');
         assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, ' ');
         assert_eq!(ctx.back_buffer.get(5, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn test_render_textarea_wrap_keeps_cursor_visible() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(20, 5);
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        ctx.focused = Some(textarea);
+
+        layout::set_dimension(&mut ctx, textarea, 0, 5.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 1.0, 1).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abcdefghij".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 8;
+            node.wrap_mode = 1;
+        }
+
+        render(&mut ctx).unwrap();
+
+        // Cursor should be visible on the only viewport row after wrap viewport adjustment.
+        let cursor_cell = ctx.back_buffer.get(3, 0).unwrap();
+        assert_eq!(cursor_cell.ch, 'i');
+        assert_eq!(cursor_cell.bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_wrap_wide_char_narrow_width_does_not_emit_empty_tail_segment() {
+        let segments = wrap_line_segments("中", 1);
+        assert_eq!(segments, vec![(0, 1)]);
+
+        let lines = vec!["中"];
+        let visual = build_textarea_visual_lines(&lines, 1, 1);
+        assert_eq!(visual.len(), 1);
+        assert_eq!(visual[0].text, "中");
+        assert_eq!(visual[0].start_col, 0);
+        assert_eq!(visual[0].end_col, 1);
+
+        // Cursor-after-glyph should still map to the same visual row.
+        let (cursor_row, cursor_x) = cursor_to_visual(&visual, 0, 1);
+        assert_eq!(cursor_row, 0);
+        assert_eq!(cursor_x, 2);
+    }
+
+    #[test]
+    fn test_wrap_combining_grapheme_treated_as_single_column() {
+        let segments = wrap_line_segments("e\u{301}", 1);
+        assert_eq!(segments, vec![(0, 1)]);
+
+        let lines = vec!["e\u{301}"];
+        let visual = build_textarea_visual_lines(&lines, 1, 1);
+        assert_eq!(visual.len(), 1);
+        assert_eq!(visual[0].text, "e\u{301}");
+        assert_eq!(visual[0].start_col, 0);
+        assert_eq!(visual[0].end_col, 1);
+
+        let (cursor_row, cursor_x) = cursor_to_visual(&visual, 0, 1);
+        assert_eq!(cursor_row, 0);
+        assert_eq!(cursor_x, 1);
+    }
+
+    #[test]
+    fn test_render_textarea_horizontal_follow_when_wrap_off() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(20, 5);
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        ctx.focused = Some(textarea);
+
+        layout::set_dimension(&mut ctx, textarea, 0, 4.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 1.0, 1).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abcdefghij".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 8;
+            node.wrap_mode = 0;
+        }
+
+        render(&mut ctx).unwrap();
+
+        // Viewport should follow rightward cursor: visible slice ends at cursor.
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'f');
+        assert_eq!(ctx.back_buffer.get(3, 0).unwrap().ch, 'i');
+        assert_eq!(ctx.back_buffer.get(3, 0).unwrap().bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_render_textarea_wrap_wide_char_narrow_width_no_phantom_row() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(10, 3);
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        ctx.focused = Some(textarea);
+
+        layout::set_dimension(&mut ctx, textarea, 0, 1.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 1.0, 1).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "中".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+            node.wrap_mode = 1;
+            node.textarea_view_row = 0;
+            node.textarea_view_col = 0;
+        }
+
+        render(&mut ctx).unwrap();
+
+        let node = ctx.nodes.get(&textarea).unwrap();
+        assert_eq!(
+            node.textarea_view_row, 0,
+            "wide-glyph wrapping must not create a phantom trailing visual row"
+        );
     }
 
     // =========================================================================

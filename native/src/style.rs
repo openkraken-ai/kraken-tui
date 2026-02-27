@@ -105,14 +105,14 @@ pub(crate) fn set_opacity(ctx: &mut TuiContext, handle: u32, opacity: f32) -> Re
     Ok(())
 }
 
-/// Resolve the effective visual style for a node, merging explicit node
-/// styles with the nearest ancestor theme defaults (ADR-T12).
+/// Resolve the effective visual style for a node, merging explicit node styles
+/// with nearest-ancestor theme defaults.
 ///
-/// Algorithm per property:
-/// 1. If node's style_mask bit is set -> use node's explicit value
-/// 2. Else if a theme is found (on node or nearest ancestor) and theme's
-///    mask bit is set -> use theme's value
-/// 3. Else -> use node's stored value (default)
+/// Precedence per property (ADR-T21):
+/// 1. Explicit node style (node.style_mask bit set)
+/// 2. Theme NodeType-specific default (theme.type_defaults[node_type] + mask bit)
+/// 3. Theme global default (theme.mask bit set)
+/// 4. Node stored value
 pub(crate) fn resolve_style(handle: u32, ctx: &TuiContext) -> VisualStyle {
     let node = match ctx.nodes.get(&handle) {
         Some(n) => n,
@@ -138,30 +138,67 @@ pub(crate) fn resolve_style(handle: u32, ctx: &TuiContext) -> VisualStyle {
         None => return node_style.clone(),
     };
 
-    // Merge: for each property, explicit node style wins over theme default
+    let type_defaults = theme.type_defaults.get(&node.node_type);
+
+    // Merge: for each property, explicit node style wins over type default,
+    // then global theme default.
     let mut resolved = node_style.clone();
 
-    if mask & VisualStyle::MASK_FG_COLOR == 0 && theme.mask & VisualStyle::MASK_FG_COLOR != 0 {
-        resolved.fg_color = theme.fg_color;
+    if mask & VisualStyle::MASK_FG_COLOR == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_FG_COLOR != 0 => {
+                resolved.fg_color = td.fg_color
+            }
+            _ if theme.mask & VisualStyle::MASK_FG_COLOR != 0 => resolved.fg_color = theme.fg_color,
+            _ => {}
+        }
     }
-    if mask & VisualStyle::MASK_BG_COLOR == 0 && theme.mask & VisualStyle::MASK_BG_COLOR != 0 {
-        resolved.bg_color = theme.bg_color;
+    if mask & VisualStyle::MASK_BG_COLOR == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_BG_COLOR != 0 => {
+                resolved.bg_color = td.bg_color
+            }
+            _ if theme.mask & VisualStyle::MASK_BG_COLOR != 0 => resolved.bg_color = theme.bg_color,
+            _ => {}
+        }
     }
-    if mask & VisualStyle::MASK_BORDER_COLOR == 0
-        && theme.mask & VisualStyle::MASK_BORDER_COLOR != 0
-    {
-        resolved.border_color = theme.border_color;
+    if mask & VisualStyle::MASK_BORDER_COLOR == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_BORDER_COLOR != 0 => {
+                resolved.border_color = td.border_color
+            }
+            _ if theme.mask & VisualStyle::MASK_BORDER_COLOR != 0 => {
+                resolved.border_color = theme.border_color
+            }
+            _ => {}
+        }
     }
-    if mask & VisualStyle::MASK_BORDER_STYLE == 0
-        && theme.mask & VisualStyle::MASK_BORDER_STYLE != 0
-    {
-        resolved.border_style = theme.border_style;
+    if mask & VisualStyle::MASK_BORDER_STYLE == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_BORDER_STYLE != 0 => {
+                resolved.border_style = td.border_style
+            }
+            _ if theme.mask & VisualStyle::MASK_BORDER_STYLE != 0 => {
+                resolved.border_style = theme.border_style
+            }
+            _ => {}
+        }
     }
-    if mask & VisualStyle::MASK_ATTRS == 0 && theme.mask & VisualStyle::MASK_ATTRS != 0 {
-        resolved.attrs = theme.attrs;
+    if mask & VisualStyle::MASK_ATTRS == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_ATTRS != 0 => resolved.attrs = td.attrs,
+            _ if theme.mask & VisualStyle::MASK_ATTRS != 0 => resolved.attrs = theme.attrs,
+            _ => {}
+        }
     }
-    if mask & VisualStyle::MASK_OPACITY == 0 && theme.mask & VisualStyle::MASK_OPACITY != 0 {
-        resolved.opacity = theme.opacity;
+    if mask & VisualStyle::MASK_OPACITY == 0 {
+        match type_defaults {
+            Some(td) if td.style_mask & VisualStyle::MASK_OPACITY != 0 => {
+                resolved.opacity = td.opacity
+            }
+            _ if theme.mask & VisualStyle::MASK_OPACITY != 0 => resolved.opacity = theme.opacity,
+            _ => {}
+        }
     }
 
     resolved
@@ -386,5 +423,43 @@ mod tests {
         assert_eq!(resolved.fg_color, 0x01110000);
         assert_eq!(resolved.bg_color, 0x01220000);
         assert_eq!(resolved.border_style, BorderStyle::Double);
+    }
+
+    #[test]
+    fn test_resolve_style_type_defaults_win_over_global_theme() {
+        use crate::theme;
+
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        let theme_handle = theme::create_theme(&mut ctx).unwrap();
+        theme::set_theme_color(&mut ctx, theme_handle, 0, 0x01FF0000).unwrap(); // global fg red
+        theme::set_theme_type_color(&mut ctx, theme_handle, NodeType::Text as u8, 0, 0x0100AAFF)
+            .unwrap(); // text fg cyan-ish
+        theme::apply_theme(&mut ctx, theme_handle, root).unwrap();
+
+        let resolved = resolve_style(text, &ctx);
+        assert_eq!(resolved.fg_color, 0x0100AAFF);
+    }
+
+    #[test]
+    fn test_resolve_style_explicit_wins_over_type_defaults() {
+        use crate::theme;
+
+        let mut ctx = test_ctx();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        ctx.root = Some(text);
+
+        let theme_handle = theme::create_theme(&mut ctx).unwrap();
+        theme::set_theme_type_color(&mut ctx, theme_handle, NodeType::Text as u8, 0, 0x0100AAFF)
+            .unwrap();
+        theme::apply_theme(&mut ctx, theme_handle, text).unwrap();
+        set_color(&mut ctx, text, 0, 0x01FFFFFF).unwrap();
+
+        let resolved = resolve_style(text, &ctx);
+        assert_eq!(resolved.fg_color, 0x01FFFFFF);
     }
 }

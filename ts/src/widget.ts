@@ -141,10 +141,24 @@ export abstract class Widget {
 	 * @returns Animation handle (for cancellation)
 	 */
 	animate(options: {
-		property: "opacity" | "fgColor" | "bgColor" | "borderColor";
+		property:
+			| "opacity"
+			| "fgColor"
+			| "bgColor"
+			| "borderColor"
+			| "positionX"
+			| "positionY";
 		target: number | string;
 		duration: number;
-		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+		easing?:
+			| "linear"
+			| "easeIn"
+			| "easeOut"
+			| "easeInOut"
+			| "cubicIn"
+			| "cubicOut"
+			| "elastic"
+			| "bounce";
 		/** If true, the animation reverses and repeats indefinitely (oscillates). */
 		loop?: boolean;
 	}): number {
@@ -153,36 +167,46 @@ export abstract class Widget {
 			fgColor: 1,
 			bgColor: 2,
 			borderColor: 3,
+			positionX: 4,
+			positionY: 5,
 		};
 		const easingMap: Record<string, number> = {
 			linear: 0,
 			easeIn: 1,
 			easeOut: 2,
 			easeInOut: 3,
+			cubicIn: 4,
+			cubicOut: 5,
+			elastic: 6,
+			bounce: 7,
 		};
 
 		const prop = propMap[options.property];
 		if (prop === undefined) {
 			throw new TypeError(
 				`animate: invalid property "${options.property}". ` +
-					`Expected one of: opacity, fgColor, bgColor, borderColor`,
+					`Expected one of: opacity, fgColor, bgColor, borderColor, positionX, positionY`,
 			);
 		}
 		let targetBits: number;
 
-		if (options.property === "opacity") {
-			let opacityValue: number;
+		if (
+			options.property === "opacity" ||
+			options.property === "positionX" ||
+			options.property === "positionY"
+		) {
+			let numericValue: number;
 			if (typeof options.target === "number") {
-				opacityValue = options.target;
+				numericValue = options.target;
 			} else {
-				opacityValue = parseFloat(options.target);
-				if (isNaN(opacityValue)) {
+				numericValue = parseFloat(options.target);
+				if (isNaN(numericValue)) {
 					throw new TypeError(
-						`animate: opacity target must be a number or numeric string, got "${options.target}"`,
+						`animate: ${options.property} target must be a number or numeric string, got "${options.target}"`,
 					);
 				}
 			}
-			const f32 = new Float32Array([opacityValue]);
+			const f32 = new Float32Array([numericValue]);
 			targetBits = new Uint32Array(f32.buffer)[0]!;
 		} else {
 			targetBits = parseColor(options.target);
@@ -193,7 +217,7 @@ export abstract class Widget {
 		if (easing === undefined) {
 			throw new TypeError(
 				`animate: invalid easing "${easingKey}". ` +
-					`Expected one of: linear, easeIn, easeOut, easeInOut`,
+					`Expected one of: linear, easeIn, easeOut, easeInOut, cubicIn, cubicOut, elastic, bounce`,
 			);
 		}
 
@@ -245,9 +269,26 @@ export abstract class Widget {
 	 */
 	progress(options: {
 		duration: number;
-		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+		easing?:
+			| "linear"
+			| "easeIn"
+			| "easeOut"
+			| "easeInOut"
+			| "cubicIn"
+			| "cubicOut"
+			| "elastic"
+			| "bounce";
 	}): number {
-		const easingMap = { linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3 } as const;
+		const easingMap = {
+			linear: 0,
+			easeIn: 1,
+			easeOut: 2,
+			easeInOut: 3,
+			cubicIn: 4,
+			cubicOut: 5,
+			elastic: 6,
+			bounce: 7,
+		} as const;
 		const easingKey = options.easing ?? "linear";
 		const easing = easingMap[easingKey] ?? 0;
 		const handle = ffi.tui_start_progress(this.handle, options.duration, easing);
@@ -263,9 +304,26 @@ export abstract class Widget {
 	 */
 	pulse(options: {
 		duration: number;
-		easing?: "linear" | "easeIn" | "easeOut" | "easeInOut";
+		easing?:
+			| "linear"
+			| "easeIn"
+			| "easeOut"
+			| "easeInOut"
+			| "cubicIn"
+			| "cubicOut"
+			| "elastic"
+			| "bounce";
 	}): number {
-		const easingMap = { linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3 } as const;
+		const easingMap = {
+			linear: 0,
+			easeIn: 1,
+			easeOut: 2,
+			easeInOut: 3,
+			cubicIn: 4,
+			cubicOut: 5,
+			elastic: 6,
+			bounce: 7,
+		} as const;
 		const easingKey = options.easing ?? "easeInOut";
 		const easing = easingMap[easingKey] ?? 3;
 		const handle = ffi.tui_start_pulse(this.handle, options.duration, easing);

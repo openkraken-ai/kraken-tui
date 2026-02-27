@@ -8,11 +8,22 @@
 import { ffi } from "./ffi";
 import { checkResult } from "./errors";
 import { parseColor } from "./style";
+import { NodeType } from "./ffi/structs";
 import type { Widget } from "./widget";
 
 /** Built-in theme handle constants */
 export const DARK_THEME = 1;
 export const LIGHT_THEME = 2;
+
+type NodeTypeInput =
+	| keyof typeof NodeType
+	| "box"
+	| "text"
+	| "input"
+	| "select"
+	| "scrollBox"
+	| "textarea"
+	| number;
 
 export class Theme {
 	public readonly handle: number;
@@ -116,6 +127,79 @@ export class Theme {
 		);
 	}
 
+	/** Set a NodeType-specific color default. */
+	setTypeColor(
+		nodeType: NodeTypeInput,
+		prop: "fg" | "bg" | "borderColor",
+		color: string | number,
+	): void {
+		const propMap: Record<string, number> = { fg: 0, bg: 1, borderColor: 2 };
+		checkResult(
+			ffi.tui_set_theme_type_color(
+				this.handle,
+				normalizeNodeType(nodeType),
+				propMap[prop] ?? 0,
+				parseColor(color),
+			),
+			"Theme.setTypeColor",
+		);
+	}
+
+	/** Set a NodeType-specific text decoration default. */
+	setTypeFlag(
+		nodeType: NodeTypeInput,
+		prop: "bold" | "italic" | "underline",
+		enabled: boolean,
+	): void {
+		const propMap: Record<string, number> = { bold: 0, italic: 1, underline: 2 };
+		checkResult(
+			ffi.tui_set_theme_type_flag(
+				this.handle,
+				normalizeNodeType(nodeType),
+				propMap[prop] ?? 0,
+				enabled ? 1 : 0,
+			),
+			"Theme.setTypeFlag",
+		);
+	}
+
+	/** Set a NodeType-specific border style default. */
+	setTypeBorderStyle(
+		nodeType: NodeTypeInput,
+		style: "none" | "single" | "double" | "rounded" | "bold",
+	): void {
+		const map: Record<string, number> = {
+			none: 0,
+			single: 1,
+			double: 2,
+			rounded: 3,
+			bold: 4,
+		};
+		checkResult(
+			ffi.tui_set_theme_type_border(
+				this.handle,
+				normalizeNodeType(nodeType),
+				map[style] ?? 0,
+			),
+			"Theme.setTypeBorderStyle",
+		);
+	}
+
+	/** Set a NodeType-specific opacity default. */
+	setTypeOpacity(
+		nodeType: NodeTypeInput,
+		value: number,
+	): void {
+		checkResult(
+			ffi.tui_set_theme_type_opacity(
+				this.handle,
+				normalizeNodeType(nodeType),
+				value,
+			),
+			"Theme.setTypeOpacity",
+		);
+	}
+
 	/** Apply this theme to a widget subtree. */
 	applyTo(widget: Widget): void {
 		checkResult(
@@ -127,5 +211,26 @@ export class Theme {
 	/** Remove theme binding from a widget. */
 	static clearFrom(widget: Widget): void {
 		checkResult(ffi.tui_clear_theme(widget.handle), "Theme.clearFrom");
+	}
+}
+
+function normalizeNodeType(nodeType: NodeTypeInput): number {
+	if (typeof nodeType === "number") return nodeType;
+	const key = nodeType.toLowerCase();
+	switch (key) {
+		case "box":
+			return NodeType.Box;
+		case "text":
+			return NodeType.Text;
+		case "input":
+			return NodeType.Input;
+		case "select":
+			return NodeType.Select;
+		case "scrollbox":
+			return NodeType.ScrollBox;
+		case "textarea":
+			return NodeType.TextArea;
+		default:
+			throw new TypeError(`Invalid node type: ${String(nodeType)}`);
 	}
 }

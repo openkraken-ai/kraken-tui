@@ -10,13 +10,14 @@ use bitflags::bitflags;
 // ============================================================================
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeType {
     Box = 0,
     Text = 1,
     Input = 2,
     Select = 3,
     ScrollBox = 4,
+    TextArea = 5,
 }
 
 impl NodeType {
@@ -27,13 +28,17 @@ impl NodeType {
             2 => Some(Self::Input),
             3 => Some(Self::Select),
             4 => Some(Self::ScrollBox),
+            5 => Some(Self::TextArea),
             _ => None,
         }
     }
 
     /// Whether this node type is a leaf (cannot have children).
     pub fn is_leaf(self) -> bool {
-        matches!(self, Self::Text | Self::Input | Self::Select)
+        matches!(
+            self,
+            Self::Text | Self::Input | Self::Select | Self::TextArea
+        )
     }
 }
 
@@ -415,6 +420,8 @@ pub enum AnimProp {
     FgColor = 1,
     BgColor = 2,
     BorderColor = 3,
+    PositionX = 4,
+    PositionY = 5,
 }
 
 impl AnimProp {
@@ -424,6 +431,8 @@ impl AnimProp {
             1 => Some(Self::FgColor),
             2 => Some(Self::BgColor),
             3 => Some(Self::BorderColor),
+            4 => Some(Self::PositionX),
+            5 => Some(Self::PositionY),
             _ => None,
         }
     }
@@ -436,6 +445,10 @@ pub enum Easing {
     EaseIn = 1,
     EaseOut = 2,
     EaseInOut = 3,
+    CubicIn = 4,
+    CubicOut = 5,
+    Elastic = 6,
+    Bounce = 7,
 }
 
 impl Easing {
@@ -445,6 +458,10 @@ impl Easing {
             1 => Some(Self::EaseIn),
             2 => Some(Self::EaseOut),
             3 => Some(Self::EaseInOut),
+            4 => Some(Self::CubicIn),
+            5 => Some(Self::CubicOut),
+            6 => Some(Self::Elastic),
+            7 => Some(Self::Bounce),
             _ => None,
         }
     }
@@ -481,10 +498,17 @@ pub struct TuiNode {
     pub visible: bool,
     pub scroll_x: i32,
     pub scroll_y: i32,
+    pub render_offset: (f32, f32),
     // Input widget state
     pub cursor_position: u32,
     pub max_length: u32,
     pub mask_char: u32,
+    // TextArea widget state
+    pub cursor_row: u32,
+    pub cursor_col: u32,
+    pub wrap_mode: u8,
+    pub textarea_view_row: u32,
+    pub textarea_view_col: u32,
     // Select widget state
     pub options: Vec<String>,
     pub selected_index: Option<u32>,
@@ -492,7 +516,10 @@ pub struct TuiNode {
 
 impl TuiNode {
     pub fn new(node_type: NodeType, taffy_node: taffy::NodeId) -> Self {
-        let focusable = matches!(node_type, NodeType::Input | NodeType::Select);
+        let focusable = matches!(
+            node_type,
+            NodeType::Input | NodeType::Select | NodeType::TextArea
+        );
         Self {
             node_type,
             taffy_node,
@@ -507,9 +534,15 @@ impl TuiNode {
             visible: true,
             scroll_x: 0,
             scroll_y: 0,
+            render_offset: (0.0, 0.0),
             cursor_position: 0,
             max_length: 0,
             mask_char: 0,
+            cursor_row: 0,
+            cursor_col: 0,
+            wrap_mode: 0,
+            textarea_view_row: 0,
+            textarea_view_col: 0,
             options: Vec::new(),
             selected_index: None,
         }
@@ -525,7 +558,8 @@ mod tests {
         assert_eq!(NodeType::from_u8(0), Some(NodeType::Box));
         assert_eq!(NodeType::from_u8(1), Some(NodeType::Text));
         assert_eq!(NodeType::from_u8(4), Some(NodeType::ScrollBox));
-        assert_eq!(NodeType::from_u8(5), None);
+        assert_eq!(NodeType::from_u8(5), Some(NodeType::TextArea));
+        assert_eq!(NodeType::from_u8(6), None);
     }
 
     #[test]
@@ -592,5 +626,23 @@ mod tests {
         assert_eq!(tl, '┌');
         assert_eq!(h, '─');
         assert_eq!(v, '│');
+    }
+
+    #[test]
+    fn test_anim_prop_from_u8_v2_values() {
+        assert_eq!(AnimProp::from_u8(0), Some(AnimProp::Opacity));
+        assert_eq!(AnimProp::from_u8(4), Some(AnimProp::PositionX));
+        assert_eq!(AnimProp::from_u8(5), Some(AnimProp::PositionY));
+        assert_eq!(AnimProp::from_u8(6), None);
+    }
+
+    #[test]
+    fn test_easing_from_u8_v2_values() {
+        assert_eq!(Easing::from_u8(0), Some(Easing::Linear));
+        assert_eq!(Easing::from_u8(4), Some(Easing::CubicIn));
+        assert_eq!(Easing::from_u8(5), Some(Easing::CubicOut));
+        assert_eq!(Easing::from_u8(6), Some(Easing::Elastic));
+        assert_eq!(Easing::from_u8(7), Some(Easing::Bounce));
+        assert_eq!(Easing::from_u8(8), None);
     }
 }

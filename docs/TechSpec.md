@@ -1764,12 +1764,12 @@ The following v2 features are now fully specified with ADRs and FFI contracts in
 | **Per-NodeType Themes**  | Specified | ADR-T21. `type_defaults` on Theme, 4 new FFI functions in §4.15. |
 | **Position Animation**   | Specified | ADR-T22. `AnimProp::PositionX/Y`, `render_offset` on TuiNode. |
 | **Additional Easings**   | Specified | Extended `Easing` enum (cubic, elastic, bounce) in §3.2. No new FFI functions. |
+| **Animation Choreography** | Specified (MVP) | Contract in `docs/spikes/TASK-K0-animation-choreography-contract.md`. Group lifecycle + timeline offsets + cancellation semantics. |
 
 **Remaining extension points (not yet fully specified — require additional ADRs):**
 
 | Feature                    | Integration Point |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Animation Choreography** | Extend chaining beyond pairwise links: fan-in/fan-out timelines, cancellation groups, parallel animation batches. New FFI functions TBD. |
 | **Scrollbar Rendering**    | Native Core renders scrollbar indicators based on scroll position and content overflow. Render Module enhancement — no FFI surface change. |
 | **Accessibility (a11y)**   | New fields on TuiNode (role, label). Event Module extension for screen reader output. FFI functions for setting ARIA-like attributes. Requires a dedicated ADR. |
 | **Async Event Loop**       | Host Layer refactoring: animation-aware sleep, `await Bun.sleep(16)` when animating. ts/CLAUDE.md constraint amendment needed. No Native Core change. |

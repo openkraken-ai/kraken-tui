@@ -10,7 +10,7 @@ use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::ThreadId;
 use std::time::Instant;
 
-use crate::animation::Animation;
+use crate::animation::{Animation, ChoreographyGroup};
 use crate::terminal::TerminalBackend;
 use crate::theme::Theme;
 use crate::types::{Buffer, TuiEvent, TuiNode};
@@ -43,7 +43,9 @@ pub struct TuiContext {
     // Animation Module (v1)
     pub animations: Vec<Animation>,
     pub animation_chains: HashMap<u32, u32>, // after_anim_id → next_anim_id
+    pub choreo_groups: HashMap<u32, ChoreographyGroup>,
     pub next_anim_handle: u32,
+    pub next_choreo_group_handle: u32,
     pub last_render_time: Option<Instant>,
 
     // Diagnostics
@@ -90,7 +92,9 @@ impl TuiContext {
 
             animations: Vec::new(),
             animation_chains: HashMap::new(),
+            choreo_groups: HashMap::new(),
             next_anim_handle: 1,
+            next_choreo_group_handle: 1,
             last_render_time: None,
 
             last_error: String::new(),
