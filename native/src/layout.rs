@@ -309,8 +309,10 @@ fn hit_test_recursive(
     }
 
     let layout = ctx.tree.layout(node.taffy_node).ok()?;
-    let abs_x = offset_x + layout.location.x;
-    let abs_y = offset_y + layout.location.y;
+    // Keep hit-testing aligned with render-space coordinates, including
+    // per-node render offset.
+    let abs_x = offset_x + layout.location.x + node.render_offset.0.round();
+    let abs_y = offset_y + layout.location.y + node.render_offset.1.round();
 
     // Check if point is within this node's bounds
     if x < abs_x || y < abs_y || x >= abs_x + layout.size.width || y >= abs_y + layout.size.height {
@@ -375,5 +377,29 @@ mod tests {
 
         let (x, y, w, h) = get_layout(&ctx, child).unwrap();
         assert_eq!((x, y, w, h), (0, 0, 20, 5));
+    }
+
+    #[test]
+    fn test_hit_test_accounts_for_render_offset() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let child = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, child).unwrap();
+        ctx.root = Some(root);
+
+        set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        set_dimension(&mut ctx, child, 0, 10.0, 1).unwrap();
+        set_dimension(&mut ctx, child, 1, 2.0, 1).unwrap();
+        compute_layout(&mut ctx).unwrap();
+
+        // Shift child by +5 columns/+2 rows in render space.
+        ctx.nodes.get_mut(&child).unwrap().render_offset = (5.0, 2.0);
+
+        // Hit inside shifted visual bounds.
+        assert_eq!(hit_test(&ctx, 6, 2), Some(child));
+        // Old pre-shift location should not hit child anymore.
+        assert_ne!(hit_test(&ctx, 1, 0), Some(child));
     }
 }

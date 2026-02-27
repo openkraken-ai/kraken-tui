@@ -303,11 +303,12 @@ fn render_node(
             }
         }
         NodeType::TextArea => {
-            let line_count = split_textarea_lines(&content).len();
+            let lines = split_textarea_lines(&content);
+            let line_count = lines.len();
             update_textarea_viewport(
                 ctx,
                 handle,
-                &content,
+                &lines,
                 cursor_row,
                 cursor_col,
                 wrap_mode,
@@ -331,7 +332,7 @@ fn render_node(
 
             render_textarea(
                 ctx,
-                &content,
+                &lines,
                 textarea_state.0,
                 textarea_state.1,
                 wrap_mode,
@@ -723,11 +724,11 @@ struct TextAreaVisualLine {
     end_col: usize,
 }
 
-fn split_textarea_lines(content: &str) -> Vec<String> {
+fn split_textarea_lines(content: &str) -> Vec<&str> {
     if content.is_empty() {
-        vec![String::new()]
+        vec![""]
     } else {
-        content.split('\n').map(|line| line.to_string()).collect()
+        content.split('\n').collect()
     }
 }
 
@@ -811,7 +812,7 @@ fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
 }
 
 fn build_textarea_visual_lines(
-    lines: &[String],
+    lines: &[&str],
     wrap_mode: u8,
     max_w: i32,
 ) -> Vec<TextAreaVisualLine> {
@@ -829,7 +830,7 @@ fn build_textarea_visual_lines(
             }
         } else {
             visual.push(TextAreaVisualLine {
-                text: line.clone(),
+                text: (*line).to_string(),
                 logical_row: row,
                 start_col: 0,
                 end_col: grapheme_count(line),
@@ -882,7 +883,7 @@ fn cursor_to_visual(
 fn update_textarea_viewport(
     ctx: &mut TuiContext,
     handle: u32,
-    content: &str,
+    lines: &[&str],
     cursor_row: u32,
     cursor_col: u32,
     wrap_mode: u8,
@@ -895,10 +896,9 @@ fn update_textarea_viewport(
         return;
     }
 
-    let lines = split_textarea_lines(content);
     let max_row = lines.len().saturating_sub(1) as u32;
     let clamped_row = cursor_row.min(max_row);
-    let line_len = grapheme_count(&lines[clamped_row as usize]) as u32;
+    let line_len = grapheme_count(lines[clamped_row as usize]) as u32;
     let clamped_col = cursor_col.min(line_len);
 
     if let Some(node) = ctx.nodes.get_mut(&handle) {
@@ -907,7 +907,7 @@ fn update_textarea_viewport(
     }
 
     if wrap_mode != 0 {
-        let visual = build_textarea_visual_lines(&lines, wrap_mode, content_w.max(1));
+        let visual = build_textarea_visual_lines(lines, wrap_mode, content_w.max(1));
         let (cursor_vrow, _) = cursor_to_visual(&visual, clamped_row, clamped_col);
         let mut next_row = view_row as usize;
         let viewport_h = content_h as usize;
@@ -936,7 +936,7 @@ fn update_textarea_viewport(
         next_row = next_row.clamp(0, max_row as i32);
 
         let cursor_x =
-            display_width_of_prefix_graphemes(&lines[clamped_row as usize], clamped_col as usize);
+            display_width_of_prefix_graphemes(lines[clamped_row as usize], clamped_col as usize);
         let mut next_col = view_col as i32;
         if content_w > 0 {
             if cursor_x < next_col {
@@ -1021,7 +1021,7 @@ fn grapheme_char_at_display_col(line: &str, col: i32) -> Option<char> {
 #[allow(clippy::too_many_arguments)]
 fn render_textarea(
     ctx: &mut TuiContext,
-    content: &str,
+    lines: &[&str],
     cursor_row: u32,
     cursor_col: u32,
     wrap_mode: u8,
@@ -1042,8 +1042,7 @@ fn render_textarea(
         return;
     }
 
-    let lines = split_textarea_lines(content);
-    let visual = build_textarea_visual_lines(&lines, wrap_mode, max_w.max(1));
+    let visual = build_textarea_visual_lines(lines, wrap_mode, max_w.max(1));
     let (cursor_visual_row, cursor_visual_x) = cursor_to_visual(&visual, cursor_row, cursor_col);
 
     for row in 0..max_h {
@@ -1873,7 +1872,7 @@ mod tests {
         let segments = wrap_line_segments("中", 1);
         assert_eq!(segments, vec![(0, 1)]);
 
-        let lines = vec!["中".to_string()];
+        let lines = vec!["中"];
         let visual = build_textarea_visual_lines(&lines, 1, 1);
         assert_eq!(visual.len(), 1);
         assert_eq!(visual[0].text, "中");
@@ -1891,7 +1890,7 @@ mod tests {
         let segments = wrap_line_segments("e\u{301}", 1);
         assert_eq!(segments, vec![(0, 1)]);
 
-        let lines = vec!["e\u{301}".to_string()];
+        let lines = vec!["e\u{301}"];
         let visual = build_textarea_visual_lines(&lines, 1, 1);
         assert_eq!(visual.len(), 1);
         assert_eq!(visual[0].text, "e\u{301}");
