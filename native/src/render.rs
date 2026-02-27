@@ -768,7 +768,7 @@ fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
             width = 0;
         }
     }
-    if start <= chars.len() {
+    if start < chars.len() {
         segments.push((start, chars.len()));
     }
     if segments.is_empty() {
@@ -1813,6 +1813,24 @@ mod tests {
         let cursor_cell = ctx.back_buffer.get(3, 0).unwrap();
         assert_eq!(cursor_cell.ch, 'i');
         assert_eq!(cursor_cell.bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_wrap_wide_char_narrow_width_does_not_emit_empty_tail_segment() {
+        let segments = wrap_line_segments("中", 1);
+        assert_eq!(segments, vec![(0, 1)]);
+
+        let lines = vec!["中".to_string()];
+        let visual = build_textarea_visual_lines(&lines, 1, 1);
+        assert_eq!(visual.len(), 1);
+        assert_eq!(visual[0].text, "中");
+        assert_eq!(visual[0].start_col, 0);
+        assert_eq!(visual[0].end_col, 1);
+
+        // Cursor-after-glyph should still map to the same visual row.
+        let (cursor_row, cursor_x) = cursor_to_visual(&visual, 0, 1);
+        assert_eq!(cursor_row, 0);
+        assert_eq!(cursor_x, 2);
     }
 
     #[test]
