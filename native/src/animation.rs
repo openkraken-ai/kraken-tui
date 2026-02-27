@@ -11,6 +11,7 @@
 
 use crate::context::TuiContext;
 use crate::types::{color_tag, AnimProp, Easing, TuiNode, VisualStyle};
+use std::collections::HashMap;
 
 /// Spinner frame cycling state for the built-in spinner primitive.
 #[derive(Debug, Clone)]
@@ -526,11 +527,31 @@ pub(crate) fn destroy_choreography_group(
     ctx: &mut TuiContext,
     group_id: u32,
 ) -> Result<(), String> {
-    if ctx.choreo_groups.remove(&group_id).is_some() {
-        Ok(())
-    } else {
-        Err(format!("Choreography group not found: {group_id}"))
+    let group = ctx
+        .choreo_groups
+        .remove(&group_id)
+        .ok_or_else(|| format!("Choreography group not found: {group_id}"))?;
+
+    let pending_ids: Vec<u32> = group
+        .members
+        .iter()
+        .filter(|member| !member.started)
+        .map(|member| member.anim_id)
+        .collect();
+
+    for anim_id in pending_ids {
+        let is_pending = ctx
+            .animations
+            .iter()
+            .find(|anim| anim.id == anim_id)
+            .map(|anim| anim.pending)
+            .unwrap_or(false);
+        if is_pending {
+            let _ = cancel_animation(ctx, anim_id);
+        }
     }
+
+    Ok(())
 }
 
 fn remove_animation_from_choreography(ctx: &mut TuiContext, anim_id: u32) {
@@ -541,20 +562,27 @@ fn remove_animation_from_choreography(ctx: &mut TuiContext, anim_id: u32) {
         .retain(|_, group| !group.members.is_empty());
 }
 
-fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) {
-    let mut to_start: Vec<u32> = Vec::new();
+fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) -> HashMap<u32, f32> {
+    let mut to_start: Vec<(u32, f32)> = Vec::new();
     for group in ctx.choreo_groups.values_mut() {
         if !group.running {
             continue;
         }
-        group.elapsed_ms += elapsed_ms;
+        let prev_elapsed = group.elapsed_ms;
+        let next_elapsed = prev_elapsed + elapsed_ms;
+        group.elapsed_ms = next_elapsed;
 
         for member in &mut group.members {
             if member.started {
                 continue;
             }
-            if group.elapsed_ms >= member.start_at_ms as f32 {
-                to_start.push(member.anim_id);
+            let start_at_ms = member.start_at_ms as f32;
+            if next_elapsed >= start_at_ms {
+                // Newly activated members only consume the in-frame time after
+                // their start offset is crossed, preserving choreography timing.
+                let active_elapsed =
+                    (next_elapsed - prev_elapsed.max(start_at_ms)).clamp(0.0, elapsed_ms);
+                to_start.push((member.anim_id, active_elapsed));
                 member.started = true;
             }
         }
@@ -564,11 +592,18 @@ fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) {
         }
     }
 
-    for anim_id in to_start {
+    let mut activation_elapsed_by_anim: HashMap<u32, f32> = HashMap::new();
+    for (anim_id, active_elapsed) in to_start {
         if let Some(anim) = ctx.animations.iter_mut().find(|a| a.id == anim_id) {
             anim.pending = false;
+            activation_elapsed_by_anim
+                .entry(anim_id)
+                .and_modify(|existing| *existing = existing.max(active_elapsed))
+                .or_insert(active_elapsed);
         }
     }
+
+    activation_elapsed_by_anim
 }
 
 /// Advance all active animations by the given elapsed time.
@@ -582,7 +617,7 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
         return;
     }
 
-    advance_choreography(ctx, elapsed_ms);
+    let activation_elapsed_by_anim = advance_choreography(ctx, elapsed_ms);
 
     if ctx.animations.is_empty() {
         return;
@@ -598,10 +633,14 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
         if anim.pending {
             continue;
         }
+        let anim_elapsed_ms = activation_elapsed_by_anim
+            .get(&anim.id)
+            .copied()
+            .unwrap_or(elapsed_ms);
 
         if let Some(ref mut spinner) = anim.spinner {
             // Spinner mode: advance frame timer and cycle through frames
-            spinner.frame_elapsed += elapsed_ms;
+            spinner.frame_elapsed += anim_elapsed_ms;
             while spinner.frame_elapsed >= spinner.interval_ms as f32 {
                 spinner.frame_elapsed -= spinner.interval_ms as f32;
                 spinner.frame_idx = (spinner.frame_idx + 1) % spinner.frames.len();
@@ -610,7 +649,7 @@ pub(crate) fn advance_animations(ctx: &mut TuiContext, elapsed_ms: f32) {
             dirty_nodes.push(anim.target);
         } else {
             // Property animation (standard or looping)
-            anim.elapsed_ms += elapsed_ms;
+            anim.elapsed_ms += anim_elapsed_ms;
 
             let completed = anim.elapsed_ms >= anim.duration_ms as f32;
 
@@ -1611,6 +1650,27 @@ mod tests {
             .unwrap()
             .pending;
         assert!(!b_pending_after);
+
+        let a_elapsed = ctx
+            .animations
+            .iter()
+            .find(|an| an.id == anim_a)
+            .unwrap()
+            .elapsed_ms;
+        let b_elapsed = ctx
+            .animations
+            .iter()
+            .find(|an| an.id == anim_b)
+            .unwrap()
+            .elapsed_ms;
+        assert!(
+            (a_elapsed - 250.0).abs() < 0.001,
+            "immediate member should consume full frame delta, got {a_elapsed}"
+        );
+        assert!(
+            (b_elapsed - 50.0).abs() < 0.001,
+            "delayed member should only consume post-offset delta, got {b_elapsed}"
+        );
     }
 
     #[test]
@@ -1651,6 +1711,53 @@ mod tests {
         assert!(
             !ctx.animations.iter().any(|an| an.id == anim_b),
             "unscheduled follower must be cancelled"
+        );
+    }
+
+    #[test]
+    fn test_destroy_choreography_group_cancels_pending_members() {
+        let mut ctx = test_ctx();
+        let a = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+        let b = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        let anim_a = start_animation(
+            &mut ctx,
+            a,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+        let anim_b = start_animation(
+            &mut ctx,
+            b,
+            AnimProp::Opacity,
+            0.0f32.to_bits(),
+            500,
+            Easing::Linear,
+        )
+        .unwrap();
+
+        let group = create_choreography_group(&mut ctx).unwrap();
+        choreography_add(&mut ctx, group, anim_a, 0).unwrap();
+        choreography_add(&mut ctx, group, anim_b, 600).unwrap();
+        choreography_start(&mut ctx, group).unwrap();
+
+        advance_animations(&mut ctx, 100.0);
+        destroy_choreography_group(&mut ctx, group).unwrap();
+
+        assert!(
+            !ctx.choreo_groups.contains_key(&group),
+            "group should be removed"
+        );
+        assert!(
+            ctx.animations.iter().any(|an| an.id == anim_a),
+            "already-started member should continue"
+        );
+        assert!(
+            !ctx.animations.iter().any(|an| an.id == anim_b),
+            "pending delayed member should be cancelled"
         );
     }
 }
