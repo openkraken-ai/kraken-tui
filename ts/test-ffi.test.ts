@@ -527,6 +527,10 @@ describe("FFI integration", () => {
 			expect(ffi.tui_input_get_cursor(h)).toBe(0);
 
 			ffi.tui_input_set_cursor(h, 5);
+			expect(ffi.tui_input_get_cursor(h)).toBe(0); // empty content clamps cursor
+
+			expect(setContent(h, "hello world")).toBe(0);
+			ffi.tui_input_set_cursor(h, 5);
 			expect(ffi.tui_input_get_cursor(h)).toBe(5);
 
 			expect(ffi.tui_input_set_max_len(h, 100)).toBe(0);

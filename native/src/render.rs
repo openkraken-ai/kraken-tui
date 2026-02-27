@@ -308,10 +308,12 @@ fn render_node(
         }
         NodeType::TextArea => {
             let lines = split_textarea_lines_borrowed(&content);
+            let visual = build_textarea_visual_lines(&lines, wrap_mode, content_w.max(1));
             update_textarea_viewport(
                 ctx,
                 handle,
                 &lines,
+                &visual,
                 cursor_row,
                 cursor_col,
                 wrap_mode,
@@ -335,7 +337,7 @@ fn render_node(
 
             render_textarea(
                 ctx,
-                &lines,
+                &visual,
                 textarea_state.0,
                 textarea_state.1,
                 wrap_mode,
@@ -864,6 +866,7 @@ fn update_textarea_viewport(
     ctx: &mut TuiContext,
     handle: u32,
     lines: &[&str],
+    visual: &[TextAreaVisualLine],
     cursor_row: u32,
     cursor_col: u32,
     wrap_mode: u8,
@@ -887,8 +890,7 @@ fn update_textarea_viewport(
     }
 
     if wrap_mode != 0 {
-        let visual = build_textarea_visual_lines(lines, wrap_mode, content_w.max(1));
-        let (cursor_vrow, _) = cursor_to_visual(&visual, clamped_row, clamped_col);
+        let (cursor_vrow, _) = cursor_to_visual(visual, clamped_row, clamped_col);
         let mut next_row = view_row as usize;
         let viewport_h = content_h as usize;
 
@@ -1001,7 +1003,7 @@ fn grapheme_char_at_display_col(line: &str, col: i32) -> Option<char> {
 #[allow(clippy::too_many_arguments)]
 fn render_textarea(
     ctx: &mut TuiContext,
-    lines: &[&str],
+    visual: &[TextAreaVisualLine],
     cursor_row: u32,
     cursor_col: u32,
     wrap_mode: u8,
@@ -1021,8 +1023,7 @@ fn render_textarea(
         return;
     }
 
-    let visual = build_textarea_visual_lines(lines, wrap_mode, max_w.max(1));
-    let (cursor_visual_row, cursor_visual_x) = cursor_to_visual(&visual, cursor_row, cursor_col);
+    let (cursor_visual_row, cursor_visual_x) = cursor_to_visual(visual, cursor_row, cursor_col);
 
     for row in 0..max_h {
         let src_row = view_row as usize + row as usize;

@@ -195,18 +195,18 @@ export abstract class Widget {
 			options.property === "positionX" ||
 			options.property === "positionY"
 		) {
-			let opacityValue: number;
+			let numericValue: number;
 			if (typeof options.target === "number") {
-				opacityValue = options.target;
+				numericValue = options.target;
 			} else {
-				opacityValue = parseFloat(options.target);
-				if (isNaN(opacityValue)) {
+				numericValue = parseFloat(options.target);
+				if (isNaN(numericValue)) {
 					throw new TypeError(
 						`animate: ${options.property} target must be a number or numeric string, got "${options.target}"`,
 					);
 				}
 			}
-			const f32 = new Float32Array([opacityValue]);
+			const f32 = new Float32Array([numericValue]);
 			targetBits = new Uint32Array(f32.buffer)[0]!;
 		} else {
 			targetBits = parseColor(options.target);

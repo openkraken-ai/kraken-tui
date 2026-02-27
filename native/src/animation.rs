@@ -508,18 +508,7 @@ pub(crate) fn choreography_cancel(ctx: &mut TuiContext, group_id: u32) -> Result
             .map(|member| member.anim_id)
             .collect()
     };
-    let pending_anim_ids: HashSet<u32> = ctx
-        .animations
-        .iter()
-        .filter(|anim| anim.pending)
-        .map(|anim| anim.id)
-        .collect();
-
-    for anim_id in pending_ids {
-        if pending_anim_ids.contains(&anim_id) {
-            let _ = cancel_animation(ctx, anim_id);
-        }
-    }
+    cancel_pending_animation_members(ctx, &pending_ids);
     if let Some(group) = ctx.choreo_groups.get_mut(&group_id) {
         group.running = false;
     }
@@ -542,6 +531,12 @@ pub(crate) fn destroy_choreography_group(
         .filter(|member| !member.started)
         .map(|member| member.anim_id)
         .collect();
+    cancel_pending_animation_members(ctx, &pending_ids);
+
+    Ok(())
+}
+
+fn cancel_pending_animation_members(ctx: &mut TuiContext, anim_ids: &[u32]) {
     let pending_anim_ids: HashSet<u32> = ctx
         .animations
         .iter()
@@ -549,13 +544,11 @@ pub(crate) fn destroy_choreography_group(
         .map(|anim| anim.id)
         .collect();
 
-    for anim_id in pending_ids {
-        if pending_anim_ids.contains(&anim_id) {
-            let _ = cancel_animation(ctx, anim_id);
+    for anim_id in anim_ids {
+        if pending_anim_ids.contains(anim_id) {
+            let _ = cancel_animation(ctx, *anim_id);
         }
     }
-
-    Ok(())
 }
 
 fn remove_animation_from_choreography(ctx: &mut TuiContext, anim_id: u32) {
@@ -596,12 +589,14 @@ fn advance_choreography(ctx: &mut TuiContext, elapsed_ms: f32) -> HashMap<u32, f
 
     let mut activation_elapsed_by_anim: HashMap<u32, f32> = HashMap::new();
     for (anim_id, active_elapsed) in to_start {
-        if let Some(anim) = ctx.animations.iter_mut().find(|a| a.id == anim_id) {
+        activation_elapsed_by_anim
+            .entry(anim_id)
+            .and_modify(|existing| *existing = existing.max(active_elapsed))
+            .or_insert(active_elapsed);
+    }
+    for anim in &mut ctx.animations {
+        if activation_elapsed_by_anim.contains_key(&anim.id) {
             anim.pending = false;
-            activation_elapsed_by_anim
-                .entry(anim_id)
-                .and_modify(|existing| *existing = existing.max(active_elapsed))
-                .or_insert(active_elapsed);
         }
     }
 
