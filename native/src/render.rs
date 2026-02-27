@@ -684,7 +684,7 @@ fn render_input_cursor(
     let prefix: String = display_content.chars().take(cursor_pos).collect();
     let cursor_x_offset = UnicodeWidthStr::width(prefix.as_str()) as i32;
 
-    if cursor_x_offset > content_w {
+    if cursor_x_offset >= content_w {
         return; // Cursor is beyond visible area
     }
 
@@ -1448,6 +1448,24 @@ mod tests {
         let cell = ctx.front_buffer.get(2, 0).unwrap();
         assert_eq!(cell.ch, ' ');
         assert_eq!(cell.bg, 0x01FFFFFF); // inverted
+    }
+
+    #[test]
+    fn test_input_cursor_does_not_render_past_content_width() {
+        use crate::terminal::MockBackend;
+        use crate::tree;
+
+        let mut ctx = TuiContext::new(Box::new(MockBackend::new(10, 1)));
+        let h = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        ctx.nodes.get_mut(&h).unwrap().content = "hi".to_string();
+        ctx.nodes.get_mut(&h).unwrap().cursor_position = 2; // at end
+        ctx.focused = Some(h);
+
+        let clip = ClipRect::full(10, 1);
+        render_input_cursor(&mut ctx, h, "hi", 0, 0, 2, 0x01FFFFFF, 0x01000000, clip);
+
+        // Cursor at x=2 is outside the 2-cell content area [0,1].
+        assert_eq!(ctx.front_buffer.get(2, 0).unwrap().ch, ' ');
     }
 
     #[test]
