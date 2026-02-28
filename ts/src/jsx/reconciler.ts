@@ -412,19 +412,20 @@ export function reconcileChildren(
 		}
 	}
 
-	// Unmount remaining old children
+	// Unmount remaining old children.
+	// destroySubtree detaches from native parent internally — no removeChild needed.
 	for (const [, instance] of oldKeyMap) {
-		if (instance.widget && parentWidget) {
-			parentWidget.removeChild(instance.widget);
-		}
 		unmount(instance);
 	}
 
-	// Fix native child ordering via insert_child
+	// Fix native child ordering — only call insertChild when position is wrong
 	for (let i = 0; i < newChildren.length; i++) {
 		const child = newChildren[i]!;
 		if (child.widget) {
-			parentWidget.insertChild(child.widget, i);
+			const currentHandle = ffi.tui_get_child_at(parentWidget.handle, i);
+			if (currentHandle !== child.widget.handle) {
+				parentWidget.insertChild(child.widget, i);
+			}
 		}
 	}
 
