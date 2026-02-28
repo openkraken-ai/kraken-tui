@@ -2,11 +2,22 @@
   "name": "kraken-tui",
   "version": "0.1.0",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./jsx-runtime": "./src/jsx/jsx-runtime.ts",
+    "./jsx-dev-runtime": "./src/jsx/jsx-runtime.ts",
+    "./effect": "./src/effect/index.ts"
+  },
   "scripts": {
     "test": "bun test test-ffi.test.ts",
     "bench": "bun run bench-ffi.ts",
     "guardrails": "bun run guardrails-ffi.ts",
-    "guardrails:report": "bun run guardrails-ffi.ts --report-only"
+    "guardrails:report": "bun run guardrails-ffi.ts --report-only",
+    "test:jsx": "bun test test-jsx.test.ts",
+    "check-bundle": "bun run check-bundle.ts"
+  },
+  "dependencies": {
+    "@preact/signals-core": "^1.8.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

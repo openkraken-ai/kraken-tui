@@ -13,11 +13,18 @@ cargo build --manifest-path native/Cargo.toml --release
 # FFI integration tests
 bun test ts/test-ffi.test.ts
 
+# JSX reconciler tests (v2)
+bun test ts/test-jsx.test.ts
+
 # FFI benchmarks
 bun run ts/bench-ffi.ts
 
-# Interactive demo
-bun run examples/demo.ts
+# Bundle budget check
+bun run ts/check-bundle.ts
+
+# Interactive demos
+bun run examples/demo.ts           # Imperative API
+bun run examples/migration-jsx.tsx  # JSX reconciler (v2)
 ```
 
 ---
@@ -42,6 +49,11 @@ bun run examples/demo.ts
 | `animation-constants.ts` | Animation property and easing enum constants for the TS API. |
 | `errors.ts` | `KrakenError` class, `checkResult()` — translates FFI error codes to typed exceptions. |
 | `index.ts` | Public API re-exports. |
+| `loop.ts` | Animation-aware async event loop utility (`createLoop`). v2. |
+| `jsx/jsx-runtime.ts` | Custom JSX factory (`jsx`, `jsxs`, `Fragment`). v2 ADR-T20. |
+| `jsx/reconciler.ts` | Signal-driven reconciler: `render`, `mount`, `unmount`, `reconcileChildren`. v2 ADR-T20. |
+| `jsx/types.ts` | VNode, Instance, JSX namespace type definitions. v2. |
+| `effect/index.ts` | Optional Effect integration stubs (`kraken-tui/effect` subpath). v2. |
 
 ---
 
@@ -95,8 +107,16 @@ lib.tui_animate(handle, 0, bits, 300, 2);
 - `widget.ts` — `destroySubtree()`, `insertChild()` methods
 - `animation-constants.ts` — PositionX/Y properties, CubicIn/CubicOut/Elastic/Bounce easings
 
-**Remaining (Epic L):**
-- `jsx/jsx-runtime.ts` — custom JSX factory (`createElement`, `Fragment`) per ADR-T20
-- `jsx/reconciler.ts` — signal-driven reconciler using `@preact/signals-core`
+**Shipped (Epic L — reconciler):**
+- `jsx/jsx-runtime.ts` — custom JSX factory (`jsx`, `jsxs`, `Fragment`) per ADR-T20
+- `jsx/reconciler.ts` — signal-driven reconciler: mount, unmount, keyed reconciliation, signal effect binding
+- `jsx/types.ts` — VNode, Instance, JSX namespace, per-widget prop interfaces
+- `loop.ts` — animation-aware async event loop (`createLoop`)
+- `effect/index.ts` — optional Effect integration stubs
+- `@preact/signals-core` dependency — signal/computed/effect/batch re-exported from index.ts
+- Package split: subpath exports (`./jsx-runtime`, `./jsx-dev-runtime`, `./effect`)
+- Bundle budget: 30KB / 50KB (60% of budget)
+
+**Remaining:**
 - ScrollBox auto-wrapping: intercept multiple children → wrap in hidden Box container (TS-layer convenience, not a native change)
 - Input `setValue(text)` — ergonomic wrapper around `tui_set_content()` (already works at FFI level)
