@@ -49,12 +49,14 @@ export function getEventHandlers(handle: number): Map<string, EventHandler> | un
 // Signal detection
 // ---------------------------------------------------------------------------
 
-function isSignal(value: unknown): value is { readonly value: unknown; subscribe: Function } {
+const PREACT_SIGNAL_BRAND = Symbol.for("preact-signals");
+
+function isSignal(value: unknown): value is { readonly value: unknown } {
 	return (
 		value != null &&
 		typeof value === "object" &&
-		"value" in value &&
-		"subscribe" in value
+		"brand" in value &&
+		(value as { brand: unknown }).brand === PREACT_SIGNAL_BRAND
 	);
 }
 
@@ -430,14 +432,15 @@ export function reconcileChildren(
  * Update an existing instance with new VNode props.
  */
 function updateInstance(instance: Instance, newVNode: VNode): void {
-	const type = (typeof instance.vnode.type === "string" ? instance.vnode.type : "Box") as string;
+	const type = (typeof newVNode.type === "string" ? newVNode.type : "Box") as string;
 
 	if (!instance.widget) return;
 
 	// Dispose old effects
 	disposeEffects(instance);
 
-	// Clear old event handlers
+	// Clear old event handlers and remove stale registry entry
+	eventRegistry.delete(instance.widget.handle);
 	instance.eventHandlers.clear();
 
 	// Re-apply all new props (rebinds signals)
