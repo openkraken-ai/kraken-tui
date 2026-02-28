@@ -508,6 +508,37 @@ describe("keyed reconciliation", () => {
 
 		unmount(instance);
 	});
+
+	test("component function children update on reconcile", () => {
+		function Item(props: Record<string, unknown>) {
+			return jsx("Text", { content: props.label as string });
+		}
+
+		const parent = jsxs("Box", {
+			children: [
+				jsx(Item, { label: "first", key: "a" }),
+				jsx(Item, { label: "second", key: "b" }),
+			],
+		});
+		const instance = mount(parent, null);
+
+		const handleA = instance.children[0]!.widget.handle;
+		expect(getContent(handleA)).toBe("first");
+		expect(getContent(instance.children[1]!.widget.handle)).toBe("second");
+
+		// Update: change props, reorder
+		reconcileChildren(instance, [
+			jsx(Item, { label: "updated-b", key: "b" }),
+			jsx(Item, { label: "updated-a", key: "a" }),
+		]);
+
+		// Widget handles preserved, props updated via re-invoking component
+		expect(instance.children[1]!.widget.handle).toBe(handleA);
+		expect(getContent(instance.children[0]!.widget.handle)).toBe("updated-b");
+		expect(getContent(instance.children[1]!.widget.handle)).toBe("updated-a");
+
+		unmount(instance);
+	});
 });
 
 // ── Unmount ──────────────────────────────────────────────────────────────────

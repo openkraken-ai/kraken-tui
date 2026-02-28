@@ -49,6 +49,9 @@ export function getEventHandlers(handle: number): Map<string, EventHandler> | un
 // Signal detection
 // ---------------------------------------------------------------------------
 
+// Well-known symbol registered via Symbol.for() — a public contract, not a
+// private internal. All @preact/signals-core Signal instances stamp this on
+// their prototype.brand. More reliable than duck-typing (value+subscribe).
 const PREACT_SIGNAL_BRAND = Symbol.for("preact-signals");
 
 function isSignal(value: unknown): value is { readonly value: unknown } {
@@ -432,7 +435,33 @@ export function reconcileChildren(
  * Update an existing instance with new VNode props.
  */
 function updateInstance(instance: Instance, newVNode: VNode): void {
-	const type = (typeof newVNode.type === "string" ? newVNode.type : "Box") as string;
+	// Component function — re-invoke and reconcile the returned tree
+	if (typeof newVNode.type === "function") {
+		const fn = newVNode.type as ComponentFunction;
+		const childrenProp = newVNode.children.length > 0 ? newVNode.children : undefined;
+		const propsWithChildren = childrenProp
+			? { ...newVNode.props, children: childrenProp }
+			: newVNode.props;
+		const resultVNode = fn(propsWithChildren);
+		// The instance's widget came from the previous render of this component.
+		// Update it in place by reconciling its children.
+		if (instance.widget) {
+			disposeEffects(instance);
+			eventRegistry.delete(instance.widget.handle);
+			instance.eventHandlers.clear();
+			// Re-apply props from the component's returned VNode to the widget
+			if (typeof resultVNode.type === "string") {
+				applyProps(instance, resultVNode.type, resultVNode.props);
+			}
+			instance.vnode = newVNode;
+			if (resultVNode.children.length > 0 || instance.children.length > 0) {
+				reconcileChildren(instance, resultVNode.children);
+			}
+		}
+		return;
+	}
+
+	const type = newVNode.type as string;
 
 	if (!instance.widget) return;
 
