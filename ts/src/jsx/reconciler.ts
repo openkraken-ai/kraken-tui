@@ -340,7 +340,11 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		case "scrollY": {
 			const xBuf = new Int32Array(1);
 			const yBuf = new Int32Array(1);
-			ffi.tui_get_scroll(handle, xBuf, yBuf);
+			const scrollResult = ffi.tui_get_scroll(handle, xBuf, yBuf);
+			if (scrollResult !== 0) {
+				xBuf[0] = 0;
+				yBuf[0] = 0;
+			}
 			const x = prop === "scrollX" ? (value as number) : xBuf[0]!;
 			const y = prop === "scrollY" ? (value as number) : yBuf[0]!;
 			checkResult(ffi.tui_set_scroll(handle, x, y));
