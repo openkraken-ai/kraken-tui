@@ -451,14 +451,23 @@ function updateInstance(instance: Instance, newVNode: VNode): void {
 		const propsWithChildren = childrenProp
 			? { ...newVNode.props, children: childrenProp }
 			: newVNode.props;
-		const resultVNode = fn(propsWithChildren);
+		let resultVNode = fn(propsWithChildren);
+		// Resolve nested component functions until we reach an intrinsic element
+		while (typeof resultVNode.type === "function") {
+			const nestedFn = resultVNode.type as ComponentFunction;
+			const nestedChildren = resultVNode.children.length > 0 ? resultVNode.children : undefined;
+			const nestedProps = nestedChildren
+				? { ...resultVNode.props, children: nestedChildren }
+				: resultVNode.props;
+			resultVNode = nestedFn(nestedProps);
+		}
 		// The instance's widget came from the previous render of this component.
 		// Update it in place by reconciling its children.
 		if (instance.widget) {
 			disposeEffects(instance);
 			eventRegistry.delete(instance.widget.handle);
 			instance.eventHandlers.clear();
-			// Re-apply props from the component's returned VNode to the widget
+			// Re-apply props from the resolved VNode to the widget
 			if (typeof resultVNode.type === "string") {
 				applyProps(instance, resultVNode.type, resultVNode.props);
 			}

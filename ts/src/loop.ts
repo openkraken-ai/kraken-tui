@@ -31,6 +31,9 @@ export interface Loop {
 	stop: () => void;
 }
 
+/** Perf counter ID for active animation count (TechSpec §5.7, lib.rs:1397). */
+const PERF_ACTIVE_ANIMATIONS = 6;
+
 // Maps event type string to JSX handler prop name
 const EVENT_TYPE_TO_PROP: Record<string, string> = {
 	key: "onKey",
@@ -72,7 +75,7 @@ export function createLoop(options: LoopOptions): Loop {
 	async function start(): Promise<void> {
 		running = true;
 		while (running) {
-			const animating = app.getPerfCounter(6) > 0n;
+			const animating = app.getPerfCounter(PERF_ACTIVE_ANIMATIONS) > 0n;
 
 			if (animating) {
 				app.readInput(0);

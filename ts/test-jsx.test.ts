@@ -541,6 +541,35 @@ describe("keyed reconciliation", () => {
 
 		unmount(instance);
 	});
+
+	test("nested component functions resolve correctly on update", () => {
+		function Inner(props: Record<string, unknown>) {
+			return jsx("Text", { content: props.label as string });
+		}
+		function Outer(props: Record<string, unknown>) {
+			return jsx(Inner, { label: props.label });
+		}
+
+		const parent = jsxs("Box", {
+			children: [
+				jsx(Outer, { label: "hello", key: "a" }),
+			],
+		});
+		const instance = mount(parent, null);
+		const handle = instance.children[0]!.widget.handle;
+
+		expect(getContent(handle)).toBe("hello");
+
+		// Update the nested component with new props
+		reconcileChildren(instance, [
+			jsx(Outer, { label: "updated", key: "a" }),
+		]);
+
+		expect(instance.children[0]!.widget.handle).toBe(handle); // same widget
+		expect(getContent(handle)).toBe("updated");
+
+		unmount(instance);
+	});
 });
 
 // ── Unmount ──────────────────────────────────────────────────────────────────
