@@ -7,6 +7,7 @@
 
 import type { Signal } from "@preact/signals-core";
 import type { Widget } from "../widget";
+import type { KrakenEvent } from "../events";
 
 // ---------------------------------------------------------------------------
 // Prop value types — static or signal-wrapped
@@ -25,7 +26,7 @@ export type ContentFormat = "plain" | "markdown" | "code";
 // Event handler types
 // ---------------------------------------------------------------------------
 
-export type EventHandler = (event: { target: number; data: [number, number, number, number] }) => void;
+export type EventHandler = (event: KrakenEvent) => void;
 
 export interface EventHandlerProps {
 	onKey?: EventHandler;

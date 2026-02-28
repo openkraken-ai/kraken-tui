@@ -81,7 +81,11 @@ export function render(element: VNode, app: Kraken): Instance {
  * Children are mounted recursively in declaration order.
  */
 export function mount(vnode: VNode, parentInstance: Instance | null): Instance {
-	// Fragment — flatten children into parent
+	// Fragment — flatten children into parent (no native node).
+	// Children are mounted with parentInstance (not fragmentInstance) as their
+	// parent. This is intentional: Fragments have no widget, so children must
+	// reference the nearest widget-bearing ancestor for append/insert operations
+	// and for reconcileChildren to work correctly.
 	if (vnode.type === Fragment) {
 		const fragmentInstance: Instance = {
 			widget: null as unknown as Widget,

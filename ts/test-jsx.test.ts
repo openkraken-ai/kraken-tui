@@ -18,9 +18,11 @@ import { ffi } from "./src/ffi";
 
 // Import reconciler
 import { jsx, jsxs, Fragment } from "./src/jsx/jsx-runtime";
-import { render, mount, unmount, reconcileChildren } from "./src/jsx/reconciler";
+import { render, mount, unmount, reconcileChildren, getEventHandlers } from "./src/jsx/reconciler";
+import { dispatchToJsxHandlers } from "./src/loop";
 import type { VNode, Instance } from "./src/jsx/types";
 import type { Kraken } from "./src/app";
+import type { KrakenEvent } from "./src/events";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -580,6 +582,89 @@ describe("unmount", () => {
 		// Signal changes after unmount should not throw
 		s1.value = "dead1";
 		s2.value = "dead2";
+	});
+});
+
+// ── Event handler props ──────────────────────────────────────────────────────
+
+describe("event handler props", () => {
+	test("onSubmit handler registered in event registry", () => {
+		const handler = (_e: KrakenEvent) => {};
+		const vnode = jsx("Input", { onSubmit: handler });
+		const instance = mount(vnode, null);
+		const handle = instance.widget.handle;
+
+		const handlers = getEventHandlers(handle);
+		expect(handlers).toBeTruthy();
+		expect(handlers!.get("onSubmit")).toBe(handler);
+
+		instance.widget.destroy();
+	});
+
+	test("multiple event handlers registered", () => {
+		const h1 = (_e: KrakenEvent) => {};
+		const h2 = (_e: KrakenEvent) => {};
+		const vnode = jsx("Select", { onChange: h1, onSubmit: h2 });
+		const instance = mount(vnode, null);
+		const handle = instance.widget.handle;
+
+		const handlers = getEventHandlers(handle);
+		expect(handlers!.get("onChange")).toBe(h1);
+		expect(handlers!.get("onSubmit")).toBe(h2);
+
+		instance.widget.destroy();
+	});
+
+	test("dispatchToJsxHandlers calls matching handler", () => {
+		let received: KrakenEvent | null = null;
+		const handler = (e: KrakenEvent) => { received = e; };
+		const vnode = jsx("Input", { onSubmit: handler });
+		const instance = mount(vnode, null);
+		const handle = instance.widget.handle;
+
+		const event: KrakenEvent = { type: "submit", target: handle };
+		dispatchToJsxHandlers(event);
+
+		expect(received).toBeTruthy();
+		expect(received!.type).toBe("submit");
+		expect(received!.target).toBe(handle);
+
+		instance.widget.destroy();
+	});
+
+	test("dispatchToJsxHandlers ignores unmatched event types", () => {
+		let called = false;
+		const handler = (_e: KrakenEvent) => { called = true; };
+		const vnode = jsx("Input", { onSubmit: handler });
+		const instance = mount(vnode, null);
+		const handle = instance.widget.handle;
+
+		// Send a "change" event — no onChange handler registered
+		const event: KrakenEvent = { type: "change", target: handle };
+		dispatchToJsxHandlers(event);
+
+		expect(called).toBe(false);
+
+		instance.widget.destroy();
+	});
+
+	test("dispatchToJsxHandlers ignores unknown targets", () => {
+		const event: KrakenEvent = { type: "submit", target: 99999 };
+		// Should not throw
+		dispatchToJsxHandlers(event);
+	});
+
+	test("event handlers cleared on unmount", () => {
+		const handler = (_e: KrakenEvent) => {};
+		const vnode = jsx("Input", { onSubmit: handler });
+		const instance = mount(vnode, null);
+		const handle = instance.widget.handle;
+
+		expect(getEventHandlers(handle)).toBeTruthy();
+
+		unmount(instance);
+
+		expect(getEventHandlers(handle)).toBeUndefined();
 	});
 });
 

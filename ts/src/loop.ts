@@ -7,11 +7,12 @@
 
 import type { Kraken } from "./app";
 import type { KrakenEvent } from "./events";
+import { getEventHandlers } from "./jsx/reconciler";
 
 export interface LoopOptions {
 	/** The Kraken application instance. */
 	app: Kraken;
-	/** Called for each event during drain. */
+	/** Called for each event during drain. Fires before JSX handler dispatch. */
 	onEvent?: (event: KrakenEvent) => void;
 	/** Called each tick after events are drained, before render. */
 	onTick?: () => void;
@@ -19,6 +20,8 @@ export interface LoopOptions {
 	fps?: number;
 	/** Input poll timeout (ms) when idle. Default: 100. */
 	idleTimeout?: number;
+	/** Disable automatic dispatch to JSX event handler props. Default: false. */
+	disableJsxDispatch?: boolean;
 }
 
 export interface Loop {
@@ -26,6 +29,28 @@ export interface Loop {
 	start: () => Promise<void>;
 	/** Signal the loop to stop after the current tick. */
 	stop: () => void;
+}
+
+// Maps event type string to JSX handler prop name
+const EVENT_TYPE_TO_PROP: Record<string, string> = {
+	key: "onKey",
+	mouse: "onMouse",
+	focus: "onFocus",
+	change: "onChange",
+	submit: "onSubmit",
+};
+
+/**
+ * Dispatch an event to JSX event handler props registered on the target widget.
+ * Exported for users running custom event loops outside of createLoop.
+ */
+export function dispatchToJsxHandlers(event: KrakenEvent): void {
+	const handlers = getEventHandlers(event.target);
+	if (!handlers) return;
+	const propName = EVENT_TYPE_TO_PROP[event.type];
+	if (!propName) return;
+	const handler = handlers.get(propName);
+	if (handler) handler(event);
 }
 
 /**
@@ -41,6 +66,7 @@ export function createLoop(options: LoopOptions): Loop {
 	const { app, onEvent, onTick } = options;
 	const frameMs = Math.round(1000 / (options.fps ?? 60));
 	const idleTimeout = options.idleTimeout ?? 100;
+	const jsxDispatch = !options.disableJsxDispatch;
 	let running = false;
 
 	async function start(): Promise<void> {
@@ -57,6 +83,7 @@ export function createLoop(options: LoopOptions): Loop {
 
 			for (const event of app.drainEvents()) {
 				onEvent?.(event);
+				if (jsxDispatch) dispatchToJsxHandlers(event);
 			}
 
 			onTick?.();

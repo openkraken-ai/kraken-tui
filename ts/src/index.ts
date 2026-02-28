@@ -31,7 +31,7 @@ export { signal, computed, effect, batch } from "@preact/signals-core";
 export type { Signal, ReadonlySignal } from "@preact/signals-core";
 export { Fragment as KrakenFragment } from "./jsx/types";
 export { render, mount, unmount, reconcileChildren, getEventHandlers } from "./jsx/reconciler";
-export { createLoop } from "./loop";
+export { createLoop, dispatchToJsxHandlers } from "./loop";
 export type { LoopOptions, Loop } from "./loop";
 export type {
 	VNode,
