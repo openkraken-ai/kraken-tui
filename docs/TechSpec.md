@@ -1553,7 +1553,7 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 
 ### 5.1 Project Structure
 
-````
+```
 kraken-tui/
 ├── native/                         # Rust cdylib
 │   ├── Cargo.toml
@@ -1605,6 +1605,7 @@ kraken-tui/
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
 └── README.md
+```
 
 ### 5.2 Module → File Mapping
 
