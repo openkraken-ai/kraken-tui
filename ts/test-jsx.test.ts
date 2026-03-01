@@ -248,6 +248,14 @@ describe("mount", () => {
 
 		unmount(instance);
 	});
+
+	test("render() throws on Fragment root", () => {
+		const app = createMockApp();
+		const frag = jsxs(Fragment, {
+			children: [jsx("Text", { content: "a" })],
+		});
+		expect(() => render(frag, app)).toThrow("render() requires a root element");
+	});
 });
 
 // ── Signal Props ─────────────────────────────────────────────────────────────
@@ -567,6 +575,97 @@ describe("keyed reconciliation", () => {
 
 		expect(instance.children[0]!.widget.handle).toBe(handle); // same widget
 		expect(getContent(handle)).toBe("updated");
+
+		unmount(instance);
+	});
+});
+
+// ── Fragment Reconciliation ──────────────────────────────────────────────────
+
+describe("fragment reconciliation", () => {
+	test("keyed Fragment children update on reconcile", () => {
+		const frag = jsxs(Fragment, {
+			key: "f",
+			children: [
+				jsx("Text", { content: "old", key: "t" }),
+			],
+		});
+		const parent = jsxs("Box", { children: [frag] });
+		const instance = mount(parent, null);
+
+		const parentHandle = instance.widget.handle;
+		expect(getContent(getChildAt(parentHandle, 0))).toBe("old");
+		const textHandle = instance.children[0]!.children[0]!.widget.handle;
+
+		// Update Fragment children
+		reconcileChildren(instance, [
+			jsxs(Fragment, {
+				key: "f",
+				children: [
+					jsx("Text", { content: "new", key: "t" }),
+				],
+			}),
+		]);
+
+		// Widget reused, content updated
+		expect(instance.children[0]!.children[0]!.widget.handle).toBe(textHandle);
+		expect(getContent(textHandle)).toBe("new");
+
+		unmount(instance);
+	});
+
+	test("removing keyed Fragment destroys native children", () => {
+		const frag = jsxs(Fragment, {
+			key: "f",
+			children: [
+				jsx("Text", { content: "a", key: "a" }),
+				jsx("Text", { content: "b", key: "b" }),
+			],
+		});
+		const parent = jsxs("Box", { children: [frag] });
+		const instance = mount(parent, null);
+
+		const parentHandle = instance.widget.handle;
+		expect(getChildCount(parentHandle)).toBe(2);
+		const countBefore = ffi.tui_get_node_count();
+
+		// Remove Fragment entirely
+		reconcileChildren(instance, []);
+
+		expect(instance.children.length).toBe(0);
+		expect(getChildCount(parentHandle)).toBe(0);
+		// 2 native nodes destroyed (the Text widgets)
+		expect(ffi.tui_get_node_count()).toBe(countBefore - 2);
+
+		unmount(instance);
+	});
+
+	test("Fragment children added during reconcile", () => {
+		const frag = jsxs(Fragment, {
+			key: "f",
+			children: [
+				jsx("Text", { content: "existing", key: "e" }),
+			],
+		});
+		const parent = jsxs("Box", { children: [frag] });
+		const instance = mount(parent, null);
+
+		const parentHandle = instance.widget.handle;
+		expect(getChildCount(parentHandle)).toBe(1);
+
+		// Add a second child to the Fragment
+		reconcileChildren(instance, [
+			jsxs(Fragment, {
+				key: "f",
+				children: [
+					jsx("Text", { content: "existing", key: "e" }),
+					jsx("Text", { content: "new-child", key: "n" }),
+				],
+			}),
+		]);
+
+		expect(instance.children[0]!.children.length).toBe(2);
+		expect(getChildCount(parentHandle)).toBe(2);
 
 		unmount(instance);
 	});

@@ -72,6 +72,12 @@ function isSignal(value: unknown): value is { readonly value: unknown } {
  */
 export function render(element: VNode, app: Kraken): Instance {
 	const instance = mount(element, null);
+	if (!instance.widget) {
+		throw new Error(
+			"render() requires a root element with a native widget. " +
+			"Fragments and components that resolve to Fragments cannot be used as root.",
+		);
+	}
 	app.setRoot(instance.widget);
 	return instance;
 }
@@ -164,12 +170,25 @@ export function unmount(instance: Instance): void {
 	// 1. Dispose all effects (prevents FFI calls after native destruction)
 	unmountEffectsOnly(instance);
 
-	// 2. Destroy native subtree in a single FFI call
-	if (instance.widget) {
-		instance.widget.destroySubtree();
-	}
+	// 2. Destroy native nodes
+	destroyNativeNodes(instance);
 
 	instance.children.length = 0;
+}
+
+/**
+ * Recursively destroy native nodes. For widget-bearing instances,
+ * destroySubtree handles the entire subtree in one FFI call.
+ * For Fragments (no widget), recurse into children individually.
+ */
+function destroyNativeNodes(instance: Instance): void {
+	if (instance.widget) {
+		instance.widget.destroySubtree();
+	} else {
+		for (const child of instance.children) {
+			destroyNativeNodes(child);
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +498,47 @@ function updateInstance(instance: Instance, newVNode: VNode): void {
 		return;
 	}
 
+	// Fragment — reconcile the fragment's own children.
+	// Fragment children are native children of the nearest widget-bearing ancestor,
+	// so we look up the ancestor widget for mount/append operations.
+	if (newVNode.type === Fragment) {
+		const oldKeyMap = new Map<string | number, Instance>();
+		for (let i = 0; i < instance.children.length; i++) {
+			const child = instance.children[i]!;
+			const key = child.key ?? i;
+			oldKeyMap.set(key, child);
+		}
+
+		const newChildren: Instance[] = [];
+		const ancestorWidget = findAncestorWidget(instance);
+
+		for (let i = 0; i < newVNode.children.length; i++) {
+			const childVNode = newVNode.children[i]!;
+			const key = childVNode.key ?? i;
+			const existing = oldKeyMap.get(key);
+
+			if (existing) {
+				oldKeyMap.delete(key);
+				updateInstance(existing, childVNode);
+				newChildren.push(existing);
+			} else {
+				const newInstance = mount(childVNode, instance.parent);
+				if (ancestorWidget && newInstance.widget) {
+					ancestorWidget.append(newInstance.widget);
+				}
+				newChildren.push(newInstance);
+			}
+		}
+
+		for (const [, old] of oldKeyMap) {
+			unmount(old);
+		}
+
+		instance.children = newChildren;
+		instance.vnode = newVNode;
+		return;
+	}
+
 	const type = newVNode.type as string;
 
 	if (!instance.widget) return;
@@ -505,6 +565,19 @@ function updateInstance(instance: Instance, newVNode: VNode): void {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Walk up the instance tree to find the nearest widget-bearing ancestor.
+ * Used by Fragment update logic to find the native parent for append/insert.
+ */
+function findAncestorWidget(instance: Instance): Widget | null {
+	let current = instance.parent;
+	while (current) {
+		if (current.widget) return current.widget;
+		current = current.parent;
+	}
+	return null;
+}
 
 function createWidget(nodeType: number): Widget {
 	const handle = ffi.tui_create_node(nodeType);

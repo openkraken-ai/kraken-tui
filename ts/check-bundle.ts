@@ -7,11 +7,16 @@
  * Run:  bun run ts/check-bundle.ts
  */
 
+import { rmSync } from "fs";
+
 const BUDGET_BYTES = 50 * 1024; // 50KB
 
+// Resolve paths relative to this script, not cwd
+const scriptDir = import.meta.dir;
+
 const result = await Bun.build({
-	entrypoints: ["./src/index.ts"],
-	outdir: "./dist",
+	entrypoints: [`${scriptDir}/src/index.ts`],
+	outdir: `${scriptDir}/dist`,
 	target: "bun",
 	minify: true,
 	external: ["bun:ffi"],
@@ -39,5 +44,4 @@ if (size <= BUDGET_BYTES) {
 }
 
 // Cleanup dist
-import { rmSync } from "fs";
-rmSync("./dist", { recursive: true, force: true });
+rmSync(`${scriptDir}/dist`, { recursive: true, force: true });
