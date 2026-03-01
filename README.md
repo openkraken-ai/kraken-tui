@@ -1,81 +1,87 @@
-# ⚠️ EXPERIMENTAL - NOT PRODUCTION READY
-
-Built in 2 days. Expect bugs, breaking changes, incomplete implementations. Use at your own risk.
-
----
+## ⚠️ EXPERIMENTAL - NOT PRODUCTION READY
 
 # Kraken TUI
 
-TUI library: Rust (layout/rendering) + TypeScript/Bun (API).
+Rust-native terminal UI engine with TypeScript/Bun bindings.
 
-## Status
+## Project Status
 
-- **Implementation**: 79 exported FFI symbols (78 public production symbols; excludes test-only `tui_init_headless`)
-- **Testing**: Rust unit/integration + TypeScript FFI test suites
-- **Performance**: FFI overhead ~0.085μs, 300 mutations @ 0.183ms/frame
-- **v1 Complete**: Theme + Animation (primitives, chaining, easing) fully implemented
-- **v2 Planned**: Core hardening, TextArea, position animation, theme inheritance, JSX reconciler, accessibility
-- **Production Ready**: No
+`Kraken TUI` is pre-GA and not production-ready yet.
 
-### Available Widgets
+- v1 is complete (themes + animation foundation)
+- v2 is in progress
+- Native state hardening, tree operations, feature expansion, and JSX reconciler are implemented
+- Accessibility foundation remains the main open v2 area
 
-- **Box** - Flexbox container
-- **Text** - Markdown + syntax highlighting
-- **Input** - Text input (supports password masking)
-- **Select** - Dropdown
-- **ScrollBox** - Scrollable container
+For scope and planning details, see:
+- [PRD](./docs/PRD.md)
+- [Architecture](./docs/Architecture.md)
+- [TechSpec](./docs/TechSpec.md)
+- [Tasks](./docs/Tasks.md)
 
-### Features
+## Architecture
 
-- Markdown rendering (pulldown-cmark)
-- Syntax highlighting (syntect)
-- Focus navigation (Tab/BackTab)
-- Mouse events (click, scroll wheel)
+- Native core: Rust `cdylib` owns all mutable state and rendering
+- Host API: TypeScript/Bun wrapper over `bun:ffi`
+- Boundary invariant: TypeScript holds opaque `u32` handles, Rust owns data
+- FFI contract: `0` success, `-1` error (via `tui_get_last_error()`), `-2` panic caught at boundary
+
+## Implemented Capabilities
+
+Widgets:
+- `Box`
+- `Text` (plain + markdown + syntax highlight pipeline)
+- `Input` (single-line + password masking)
+- `Select`
+- `ScrollBox`
+- `TextArea` (multi-line editing)
+
+Core features:
+- Flexbox layout via Taffy
+- Incremental render/diff pipeline
+- Keyboard focus traversal + mouse events (click/scroll/hit-test)
+- Theming (`Theme.dark()`, `Theme.light()`, runtime switching, per-NodeType defaults)
+- Animation primitives + chaining + additional easing/position animation
+- Choreography groups (`tui_create_choreo_group`, add/start/cancel/destroy)
+- Reconciler primitives (`destroy_subtree`, indexed insert) for declarative updates
+- JSX + signal-driven reconciler (`render`, `mount`, `reconcileChildren`)
 
 ## Quick Start
 
 ```bash
-# Enter devenv
-devenv shell
+# Build native core (required before TS usage)
+cargo build --manifest-path native/Cargo.toml --release
 
-# Build native core
-cargo build --release --manifest-path native/Cargo.toml
-
-# Run tests
+# Run Rust tests
 cargo test --manifest-path native/Cargo.toml
 
-# Run FFI tests
-cargo build --release --manifest-path native/Cargo.toml && bun test ts/test-ffi.test.ts
+# Run TS FFI tests
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts
 
-# Run demo
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/demo.ts
+# Run JSX tests
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts
+
+# Run demos
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx
 ```
 
-### Hello World
+## Imperative Example
 
-```typescript
-import { Kraken, Box, Text } from "./ts/src/index";
+```ts
+import { Kraken, Box, Text, KeyCode } from "./ts/src/index";
 
 const app = Kraken.init();
-
-const root = new Box({
-	width: "100%",
-	height: "100%",
-	flexDirection: "column",
-});
-const label = new Text({
-	content: "Hello, Kraken!",
-	fg: "#00FF00",
-	bold: true,
-});
+const root = new Box({ width: "100%", height: "100%", flexDirection: "column" });
+const label = new Text({ content: "Hello, Kraken!", fg: "#00FF00", bold: true });
 root.append(label);
 app.setRoot(root);
 
 let running = true;
 while (running) {
-	app.readInput(16); // 16ms timeout ≈ 60fps
+	app.readInput(16);
 	for (const event of app.drainEvents()) {
-		if (event.type === "key" && event.keyCode === 0x010e) running = false; // Escape
+		if (event.type === "key" && event.keyCode === KeyCode.Escape) running = false;
 	}
 	app.render();
 }
@@ -83,36 +89,18 @@ while (running) {
 app.shutdown();
 ```
 
-## Limitations
-
-- No documentation beyond source code comments
-- Limited error handling - panics instead of graceful errors
-- Untested edge cases remain
-- No accessibility support
-- Animation primitives/chaining implemented but lightly tested in real-world usage
-- Basic widgets only
-
-## Contributing
-
-Run benchmarks on your machine:
+## Quality and Budgets
 
 ```bash
-cargo build --release --manifest-path native/Cargo.toml && bun run ts/bench-ffi.ts
+# Bundle budget (<50KB target for core TS package)
+bun run ts/check-bundle.ts
+
+# FFI benchmark
+cargo build --manifest-path native/Cargo.toml --release && bun run ts/bench-ffi.ts
+
+# Guardrails
+cargo build --manifest-path native/Cargo.toml --release && bun run ts/guardrails-ffi.ts
 ```
-
-Run Epic I guardrails (strict, CI-failing on regression):
-
-```bash
-cargo build --release --manifest-path native/Cargo.toml && bun run ts/guardrails-ffi.ts
-```
-
-Run Epic I guardrails in report-only mode:
-
-```bash
-cargo build --release --manifest-path native/Cargo.toml && bun run ts/guardrails-ffi.ts --report-only
-```
-
-Contributions welcome. This is a learning exercise - don't expect perfect code.
 
 ## License
 
