@@ -10,7 +10,7 @@ Guidance for AI Agents working in this repository. Domain-specific details are i
 
 **Core invariant:** Rust owns all mutable state. TypeScript holds opaque `u32` handles. Unidirectional: TS calls Rust; Rust never calls back.
 
-**Status:** v0 and v1 delivered. v2 in progress — Epics I (safe state), J (tree ops), K (features) complete; Epic L (reconciler) and M (accessibility) remain.
+**Status:** v0 and v1 delivered. v2 in progress — Epics I (safe state), J (tree ops), K (features), L (reconciler) complete; Epic M (accessibility) remains.
 
 **Authority documents** (read in order for design questions):
 1. [PRD.md](./docs/PRD.md) — What and why
@@ -34,12 +34,15 @@ cargo check --manifest-path native/Cargo.toml              # Fast type-check
 # Test
 cargo test --manifest-path native/Cargo.toml               # Rust unit tests
 cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler
 
 # Quality
 cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
+bun run ts/check-bundle.ts                                 # Bundle budget (<50KB)
 
 # Demo
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx  # JSX
 ```
 
 ---
@@ -56,12 +59,13 @@ Rust cdylib (native performance engine)
   ├─ Safe state via OnceLock<RwLock> (v2, ADR-T16)
   ├─ Subtree destroy + indexed insert (v2, ADR-T17/T18)
   ├─ TextArea, position animation, per-NodeType themes, new easings (v2, ADR-T19/T21/T22)
-  └─ Planned: JSX reconciler (ADR-T20), accessibility foundation
+  ├─ JSX reconciler + signals (v2, ADR-T20) — TS-only, wraps imperative API
+  └─ Planned: accessibility foundation
 ```
 
 **FFI contract:** Return codes 0 = success, -1 = error (`tui_get_last_error()`), -2 = panic. Handle 0 = invalid sentinel. All `extern "C"` functions wrapped in `catch_unwind` (ADR-T03).
 
-**Key ADRs:** T01 (event drain), T03 (FFI safety), T04 (read-modify-write style patching), T05 (terminal backend trait), T06 (custom TS struct packing), T12 (theme style mask), T13 (animation delta-time), T14 (animatable property scope). **v2 (implemented):** T16 (safe state), T17 (subtree destroy), T18 (indexed insert), T19 (TextArea), T21 (theme inheritance), T22 (position animation). **v2 (planned):** T20 (reconciler).
+**Key ADRs:** T01 (event drain), T03 (FFI safety), T04 (read-modify-write style patching), T05 (terminal backend trait), T06 (custom TS struct packing), T12 (theme style mask), T13 (animation delta-time), T14 (animatable property scope). **v2 (implemented):** T16 (safe state), T17 (subtree destroy), T18 (indexed insert), T19 (TextArea), T20 (JSX reconciler), T21 (theme inheritance), T22 (position animation).
 
 ---
 
