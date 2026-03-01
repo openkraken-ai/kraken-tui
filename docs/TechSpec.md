@@ -2,12 +2,13 @@
 
 ## Kraken TUI
 
-**Version**: 4.0
+**Version**: 4.1
 **Status**: Draft
-**Date**: February 2026
+**Date**: March 2026
 **Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
 **Changelog**:
+- v4.1 — Incorporated choreography FFI contract (TASK-K0 spike) into §4.16; added ChoreoGroup/ChoreoMember structs to §3.3 and TuiContext; corrected FFI symbol count to 93 (was 89). Promoted ADR-T16–T22 from "v2 Draft" to "Accepted" (Epics I–L complete). Pre-specified Epic M data model: AccessibilityRole enum, TuiEventType::Accessibility, TuiNode accessibility fields (role, label, description), §4.18 Accessibility FFI surface (3 setters, planned pending ADR-T23). Fixed §5.1 project structure (added loop.ts, effect/index.ts, animation-constants.ts). Fixed §5.3 dependency note (@preact/signals-core is now a runtime dep). Updated §5.5 bundle budget. Updated Appendix A accessibility row to reference ADR-T23.
 - v4.0 — v2 scope additions. New ADRs: T16 (safe global state), T17 (subtree destruction), T18 (indexed insertion), T19 (TextArea widget), T20 (reconciler strategy), T21 (theme inheritance), T22 (position animation). Data model: Animation gains looping/pending/chain_next fields, TuiNode gains render_offset, NodeType gains TextArea, Theme gains type_defaults. New FFI functions: tui_destroy_subtree, tui_insert_child. Updated Appendix A (promoted v2 items). Updated Appendix B.
 - v3.2 — Absorbed Performance Budgets from Architecture.md (was out of Architecture's boundary scope) into §5.5. Renumbered §5.6–§5.7.
 - v3.1 — Aligned v1 scope with PRD: animation primitives and chaining are in v1 scope. Canonicalized Theme TS API contract (`new Theme()`, `Theme.DARK`, `Theme.LIGHT`) and `Kraken.switchTheme(theme: Theme)`. Marked headless init as testing utility excluded from public FFI symbol count.
@@ -784,13 +785,14 @@ pub enum ContentFormat {
 ```rust
 #[repr(u32)]
 pub enum TuiEventType {
-    None        = 0,
-    Key         = 1,
-    Mouse       = 2,
-    Resize      = 3,
-    FocusChange = 4,
-    Change      = 5,
-    Submit      = 6,
+    None          = 0,
+    Key           = 1,
+    Mouse         = 2,
+    Resize        = 3,
+    FocusChange   = 4,
+    Change        = 5,
+    Submit        = 6,
+    Accessibility = 7,  // Epic M (planned, ADR-T23): emitted when focus moves to a node with role/label set
 }
 ```
 
@@ -822,6 +824,25 @@ pub enum Easing {
     CubicOut  = 5,
     Elastic   = 6,
     Bounce    = 7,
+}
+```
+
+#### AccessibilityRole (Epic M — planned, pending ADR-T23)
+
+Role values are stable `u32` codes passed across the FFI boundary. The final enum values are confirmed by ADR-T23; the values below are the current best-effort contract from TASK-M0 planning.
+
+```rust
+#[repr(u32)]
+pub enum AccessibilityRole {
+    Button   = 0,
+    Checkbox = 1,
+    Input    = 2,
+    TextArea = 3,
+    List     = 4,
+    ListItem = 5,
+    Heading  = 6,
+    Region   = 7,
+    Status   = 8,
 }
 ```
 
@@ -934,6 +955,10 @@ pub struct TuiNode {
     pub cursor_row: u32,                 // v2: 2D cursor row (ADR-T19)
     pub cursor_col: u32,                 // v2: 2D cursor column
     pub wrap_mode: u8,                   // v2: 0 = no wrap (horizontal scroll), 1 = soft wrap
+    // Epic M accessibility fields (planned, pending ADR-T23 — TASK-M1):
+    pub role: Option<AccessibilityRole>, // None = not part of accessibility tree
+    pub label: Option<String>,           // Accessible name (ARIA label equivalent)
+    pub description: Option<String>,     // Accessible description (ARIA describedby equivalent)
 }
 ```
 
@@ -952,14 +977,17 @@ pub struct TuiEvent {
 
 **Event payload layout:**
 
-| Event Type      | `target`          | `data[0]`   | `data[1]`  | `data[2]`        | `data[3]` |
-| --------------- | ----------------- | ----------- | ---------- | ---------------- | --------- |
-| **Key**         | Focused handle    | key_code    | modifiers  | UTF-32 codepoint | —         |
-| **Mouse**       | Hit-tested handle | x (column)  | y (row)    | button           | modifiers |
-| **Resize**      | 0                 | new_width   | new_height | —                | —         |
-| **FocusChange** | 0                 | from_handle | to_handle  | —                | —         |
-| **Change**      | Target handle     | See notes   | —          | —                | —         |
-| **Submit**      | Target handle     | —           | —          | —                | —         |
+| Event Type          | `target`          | `data[0]`   | `data[1]`  | `data[2]`        | `data[3]` |
+| ------------------- | ----------------- | ----------- | ---------- | ---------------- | --------- |
+| **Key**             | Focused handle    | key_code    | modifiers  | UTF-32 codepoint | —         |
+| **Mouse**           | Hit-tested handle | x (column)  | y (row)    | button           | modifiers |
+| **Resize**          | 0                 | new_width   | new_height | —                | —         |
+| **FocusChange**     | 0                 | from_handle | to_handle  | —                | —         |
+| **Change**          | Target handle     | See notes   | —          | —                | —         |
+| **Submit**          | Target handle     | —           | —          | —                | —         |
+| **Accessibility** *(Epic M, planned)* | Focused handle | role code (u32) | — | — | — |
+
+**Accessibility event:** Emitted when focus moves to a node whose `role` or `label` is non-None. `data[0]` carries the `AccessibilityRole` code. Label and description strings are retrieved via `tui_set_node_label` / `tui_set_node_description` setter calls; use the node's handle from `target` and call `tui_get_content` or the accessiblity getters (planned in §4.18) to read them back.
 
 **Change Event Payload by Widget Type:**
 
@@ -1060,6 +1088,24 @@ pub struct CellUpdate {
 }
 ```
 
+#### ChoreoGroup and ChoreoMember (internal — Animation Module, v2)
+
+```rust
+pub struct ChoreoGroup {
+    pub id: u32,                      // Unique choreography group handle
+    pub members: Vec<ChoreoMember>,   // Members ordered by start_at_ms ascending; equal offsets in insertion order
+    pub start_time: Option<std::time::Instant>, // Set when tui_choreo_start() is called; None = not started
+    pub running: bool,
+}
+
+pub struct ChoreoMember {
+    pub anim_handle: u32,   // Handle of an existing Animation in the registry
+    pub start_at_ms: u32,   // Absolute offset from group start time at which this animation activates
+}
+```
+
+**Choreography lifecycle:** `tui_create_choreo_group()` allocates a group and returns its handle. `tui_choreo_add()` adds an existing animation handle as a member (animation is set `pending = true`). `tui_choreo_start()` records `start_time = Instant::now()` and marks zero-offset members active immediately. On each `tui_render()`, the Animation Module checks each running group's elapsed time and activates members whose `start_at_ms` has been reached. `tui_choreo_cancel()` cancels all not-yet-started members; already-running members continue. `tui_destroy_choreo_group()` removes the group; members already started are unaffected.
+
 #### TuiContext
 
 **v2 note:** The global accessor changes from `static mut CONTEXT` to `OnceLock<RwLock<TuiContext>>` per ADR-T16. The struct contents are unchanged.
@@ -1094,6 +1140,8 @@ pub struct TuiContext {
     pub animations: Vec<Animation>,
     pub next_anim_handle: u32,              // Starts at 1
     pub last_render_time: Option<Instant>,  // std::time::Instant
+    pub choreo_groups: HashMap<u32, ChoreoGroup>, // v2: choreography group registry (ADR-K0 spike)
+    pub next_choreo_handle: u32,            // v2: starts at 1
 
     // Diagnostics
     pub last_error: String,
@@ -1413,6 +1461,23 @@ The `tui_render()` pipeline with animation support:
 | `tui_start_pulse` | `(u32 handle, u32 duration_ms, u8 easing) -> u32` | Anim handle / 0 | Start built-in pulsing primitive on a widget subtree. |
 | `tui_set_animation_looping` | `(u32 anim_id) -> i32` | 0 / -1 | Enable looping (reverse-on-completion) for an animation. Used internally by pulse primitive. |
 
+**Choreography (v2 — Animation Module extension, TASK-K11):**
+
+| Function                    | Signature                                               | Returns         | Description |
+| --------------------------- | ------------------------------------------------------- | --------------- | ----------- |
+| `tui_create_choreo_group`   | `() -> u32`                                             | Handle / 0      | Create a new empty choreography group. Returns group handle. |
+| `tui_destroy_choreo_group`  | `(u32 group) -> i32`                                    | 0 / -1          | Destroy the group. Already-running member animations are unaffected. |
+| `tui_choreo_add`            | `(u32 group, u32 anim_handle, u32 start_at_ms) -> i32`  | 0 / -1          | Add an existing animation to the group with a timeline offset in ms. Returns -1 if group is already running, if the handle is invalid, or if the same animation is added twice. Sets `animation.pending = true`. |
+| `tui_choreo_start`          | `(u32 group) -> i32`                                    | 0 / -1          | Start the group timeline at `t=0`. Members with `start_at_ms == 0` activate immediately; others activate when their offset is reached during `tui_render()` advancement. |
+| `tui_choreo_cancel`         | `(u32 group) -> i32`                                    | 0 / -1          | Cancel all not-yet-started group members. Already-running members are not affected. |
+
+**Choreography runtime rules (per TASK-K0 spike contract):**
+
+- Members are ordered by `start_at_ms` ascending; equal offsets start in insertion order (fan-out).
+- Fan-in (multiple predecessors before a shared follower) is timeline-based only — MVP does not gate on predecessor completion.
+- Cancelling a group prevents not-yet-started members from starting; cancels and removes them from the animation registry.
+- Removing or cancelling an animation removes it from choreography membership. Empty groups may be dropped internally but `tui_destroy_choreo_group` is the public lifecycle endpoint.
+
 **Animation behavior:**
 
 - **Start value capture:** `tui_animate()` reads the target property's current value from the node's `VisualStyle` and stores it as `start_bits`. If the property is currently being animated, the existing animation is replaced and the current interpolated value becomes the new `start_bits`.
@@ -1441,7 +1506,7 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 ### 4.17 Complete FFI Symbol Count
 
 **v1 public FFI surface: 78 functions** *(excludes test-only `tui_init_headless`)*
-**v2 planned additions: +11 functions = 89 total**
+**v2 additions: +15 functions = 93 total**
 
 | Category | v1 Count | v2 Adds | Note |
 |----------|----------|---------|------|
@@ -1457,10 +1522,30 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 | Input/Render | 4 | — | read_input, next_event, render, mark_dirty |
 | Diagnostics | 5 | — | errors, debug, perf, free_string |
 | Theme | 9 | +4 | create, destroy, set_color, set_flag, set_border, set_opacity, apply, clear, switch; v2: set_theme_type_color/flag/border/opacity |
-| Animation | 7 | +1 | animate, cancel, spinner, progress, pulse, set_looping, chain; v2: (position anim uses existing tui_animate with new AnimProp values — no new function needed, but choreography APIs TBD) |
+| Animation | 7 | +5 | animate, cancel, spinner, progress, pulse, set_looping, chain; v2: create_choreo_group, destroy_choreo_group, choreo_add, choreo_start, choreo_cancel |
 
 **v1 Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+7 = **78**
-**v2 Breakdown:** 4+7+7+6+16+6+4+6+3+4+5+13+7 = **88** (+ choreography APIs TBD)
+**v2 Breakdown:** 4+7+7+6+16+6+4+6+3+4+5+13+12 = **93**
+
+**Epic M planned additions (pending ADR-T23 ratification): +3 = 96 total**
+
+| Category | Planned Adds | Note |
+|----------|-------------|------|
+| Accessibility | +3 | set_node_role, set_node_label, set_node_description. See §4.18. |
+
+### 4.18 Accessibility (Epic M — planned, pending ADR-T23)
+
+> **Status:** Provisional contract — derived from TASK-M1 / TASK-M2 planning. Subject to revision after TASK-M0 spike completes and ADR-T23 is ratified. Do not implement before TASK-M0 closes.
+
+| Function                    | Signature                                                | Returns | Description |
+| --------------------------- | -------------------------------------------------------- | ------- | ----------- |
+| `tui_set_node_role`         | `(u32 handle, u32 role) -> i32`                          | 0 / -1  | Set the node's `AccessibilityRole`. `role` is the `u32` discriminant from the `AccessibilityRole` enum. Setting role enables the node for accessibility event emission on focus. |
+| `tui_set_node_label`        | `(u32 handle, *const u8 ptr, u32 len) -> i32`            | 0 / -1  | Set the node's accessible name (UTF-8). Follows the standard string-in convention: Rust copies; caller may free immediately. |
+| `tui_set_node_description`  | `(u32 handle, *const u8 ptr, u32 len) -> i32`            | 0 / -1  | Set the node's accessible description (UTF-8). Follows the standard string-in convention. |
+
+**Accessibility event emission:** When `tui_read_input()` processes a `FocusChange` that moves focus to a node with a non-None `role` or `label`, an additional `TuiEventType::Accessibility` event is queued in the event buffer. The host drains it via the existing `tui_next_event()` protocol. Nodes without role and label do not produce Accessibility events.
+
+**TypeScript surface (TASK-M4):** `Widget.setRole(role: AccessibilityRole)`, `Widget.setLabel(label: string)`, `Widget.setDescription(desc: string)`. JSX props: `role`, `aria-label`, `aria-description`.
 
 ---
 
@@ -1488,6 +1573,9 @@ kraken-tui/
 │       └── animation.rs           # Animation Module (v1: registry, advancement, interpolation)
 ├── ts/                             # TypeScript host package
 │   ├── package.json
+│   ├── check-bundle.ts            # Bundle budget enforcement (<50KB, ADR-T20)
+│   ├── test-ffi.test.ts           # FFI integration tests
+│   ├── test-jsx.test.ts           # JSX reconciler integration tests (v2)
 │   └── src/
 │       ├── index.ts               # Public API exports
 │       ├── ffi.ts                 # Raw bun:ffi bindings (dlopen, symbols)
@@ -1500,18 +1588,20 @@ kraken-tui/
 │       │   ├── text.ts
 │       │   ├── input.ts
 │       │   ├── select.ts
-│       │   └── scrollbox.ts
+│       │   ├── scrollbox.ts
+│       │   └── textarea.ts        # v2: TextArea widget class (ADR-T19)
 │       ├── events.ts              # Event types, drain loop, dispatch
 │       ├── style.ts               # Color parsing, style helpers
 │       ├── theme.ts               # Theme class (constructor + built-in constants, configure, apply, switch)
-│       └── errors.ts              # KrakenError, error code mapping
-│   # v2 additions:
-│   ├── jsx/                        # v2: JSX factory + reconciler (ADR-T20)
-│   │   ├── jsx-runtime.ts         # Custom JSX factory (createElement, Fragment)
-│   │   ├── reconciler.ts          # Signal-driven reconciler (create, update, unmount)
-│   │   └── types.ts               # JSX type definitions
-│   └── widgets/
-│       └── textarea.ts            # v2: TextArea widget class (ADR-T19)
+│       ├── errors.ts              # KrakenError, error code mapping
+│       ├── animation-constants.ts # v2: Easing/AnimProp enum constants
+│       ├── loop.ts                # v2: Async loop utilities, animation-aware sleep (ADR-T20 §5.7)
+│       ├── jsx/                   # v2: JSX factory + reconciler (ADR-T20)
+│       │   ├── jsx-runtime.ts     # Custom JSX factory (jsx, jsxs, Fragment)
+│       │   ├── reconciler.ts      # Signal-driven reconciler (create, update, unmount)
+│       │   └── types.ts           # JSX type definitions
+│       └── effect/                # v2: Optional effect integration (ADR-T20)
+│           └── index.ts           # Adapter surface for Effect library (typed stubs, no heavy deps)
 ├── docs/                           # Documentation (existing)
 ├── devenv.nix                      # Dev environment config
 └── README.md
@@ -1553,7 +1643,7 @@ kraken-tui/
 
 - Zero business logic. Only FFI dispatch and ergonomic wrapping.
 - `strict: true` TypeScript.
-- No runtime dependencies beyond `bun:ffi` (built-in). Custom struct handling in `ffi/structs.ts` (per ADR-T06).
+- Runtime dependencies: `bun:ffi` (built-in) and `@preact/signals-core` (v2, ADR-T20 — ~2KB; required for the JSX reconciler's signal reactivity). All other external libraries are prohibited. Custom struct handling in `ffi/structs.ts` (per ADR-T06).
 - Widget classes hold a `handle: number` and call FFI functions through the bindings in `ffi.ts` and `ffi/structs.ts`.
 - Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → `0x02000001`) happens in TypeScript (`style.ts`).
 - Developer-assigned IDs: `ts/src/app.ts` maintains an `id → handle` `Map<string, number>`. The Native Core never sees string IDs.
@@ -1615,16 +1705,18 @@ Per PRD Section 5 (Non-Functional Constraints), the following budgets govern imp
 | Component | Budget | Rationale |
 |-----------|--------|-----------|
 | FFI bindings | ~10KB | `dlopen`, symbol definitions, struct packing |
-| Widget classes | ~20KB | 5 widget types × ~4KB each |
+| Widget classes | ~15KB | 6 widget types (incl. TextArea) × ~2.5KB each |
 | Style helpers | ~5KB | Color parsing, style merging |
 | Event handling | ~8KB | Event types, drain loop, dispatch |
-| Error handling | ~4KB | Error classes, code mapping |
+| Error handling | ~2KB | Error classes, code mapping |
+| JSX + reconciler | ~5KB | `jsx-runtime.ts`, `reconciler.ts`, `types.ts` (v2) |
+| Loop + effect | ~2KB | `loop.ts`, `effect/index.ts` (v2) |
 | **Buffer** | ~3KB | Safety margin |
 
 **Strategy:**
-- Zero runtime dependencies beyond `bun:ffi` (built-in)
+- Runtime dependencies: `bun:ffi` (built-in) + `@preact/signals-core` (~2KB — included in the JSX + reconciler budget line above)
 - No external struct libraries (ADR-T06: custom minimal implementation)
-- Tree-shakeable widget imports
+- Tree-shakeable widget imports; `effect/` subpackage is optional and excluded from core budget measurement
 
 ### 5.6 Testing Strategy
 
@@ -1764,15 +1856,15 @@ The following v2 features are now fully specified with ADRs and FFI contracts in
 | **Per-NodeType Themes**  | Specified | ADR-T21. `type_defaults` on Theme, 4 new FFI functions in §4.15. |
 | **Position Animation**   | Specified | ADR-T22. `AnimProp::PositionX/Y`, `render_offset` on TuiNode. |
 | **Additional Easings**   | Specified | Extended `Easing` enum (cubic, elastic, bounce) in §3.2. No new FFI functions. |
-| **Animation Choreography** | Specified (MVP) | Contract in `docs/spikes/TASK-K0-animation-choreography-contract.md`. Group lifecycle + timeline offsets + cancellation semantics. |
+| **Animation Choreography** | Specified | Contract in `docs/spikes/TASK-K0-animation-choreography-contract.md`. FFI surface in §4.16. Group lifecycle + timeline offsets + cancellation semantics. Implemented in Epic K (TASK-K11). |
 
 **Remaining extension points (not yet fully specified — require additional ADRs):**
 
 | Feature                    | Integration Point |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Scrollbar Rendering**    | Native Core renders scrollbar indicators based on scroll position and content overflow. Render Module enhancement — no FFI surface change. |
-| **Accessibility (a11y)**   | New fields on TuiNode (role, label). Event Module extension for screen reader output. FFI functions for setting ARIA-like attributes. Requires a dedicated ADR. |
-| **Async Event Loop**       | Host Layer refactoring: animation-aware sleep, `await Bun.sleep(16)` when animating. ts/CLAUDE.md constraint amendment needed. No Native Core change. |
+| **Accessibility (a11y)**   | Pre-specified as ADR-T23 (planned). See §3.2 (AccessibilityRole enum), §3.3 (TuiNode fields, TuiEventType::Accessibility), §4.18 (FFI surface). Defined by TASK-M0 spike; implementation tickets TASK-M1–M5 provisional pending spike ratification. |
+| **Async Event Loop**       | Host Layer refactoring: animation-aware sleep, `await Bun.sleep(16)` when animating. Implemented in `ts/src/loop.ts` (v2, TASK-L5). Pattern documented in §5.7. |
 | **String Interning**       | Internal optimization within Text Module for high-frequency identical content. Per Architecture Appendix B: deferred to profiling data. No FFI surface change. |
 
 ## Appendix B: Upstream Consistency
@@ -1796,10 +1888,11 @@ The following v2 features are now fully specified with ADRs and FFI contracts in
 | ADR-T13         | Accepted        | Delta-time animation model. `tui_render()` advances animations using elapsed wall-clock time.                                                                                                                                                                                                |
 | ADR-T14         | Accepted        | v1 animatable properties: opacity, fg_color, bg_color, border_color. v2: position_x, position_y added (ADR-T22).                                                                                                                                                                            |
 | ADR-T15         | Accepted        | Built-in dark (handle 1) and light (handle 2) theme palettes. Created during `tui_init()`. Not applied by default.                                                                                                                                                                          |
-| ADR-T16         | v2 Draft        | Safe global state: `OnceLock<RwLock<TuiContext>>` replaces `static mut`.                                                                                                                                                                                                                     |
-| ADR-T17         | v2 Draft        | Cascading subtree destruction: `tui_destroy_subtree()` for recursive cleanup.                                                                                                                                                                                                                |
-| ADR-T18         | v2 Draft        | Indexed child insertion: `tui_insert_child()` for reconciler keyed-list diffing.                                                                                                                                                                                                              |
-| ADR-T19         | v2 Draft        | TextArea widget: multi-line input with 2D cursor, line buffer, word wrap.                                                                                                                                                                                                                     |
-| ADR-T20         | v2 Draft        | Reconciler strategy: lightweight JSX factory + `@preact/signals-core`. Package split: core <50KB + optional effect package.                                                                                                                                                                   |
-| ADR-T21         | v2 Draft        | Theme inheritance: per-NodeType style defaults via `type_defaults: HashMap<NodeType, VisualStyle>`.                                                                                                                                                                                           |
-| ADR-T22         | v2 Draft        | Position animation: visual-only render offset on TuiNode. `AnimProp::PositionX/Y`. Layout unaffected.                                                                                                                                                                                        |
+| ADR-T16         | Accepted        | Safe global state: `OnceLock<RwLock<TuiContext>>` replaces `static mut`. Implemented in Epic I.                                                                                                                                                                                               |
+| ADR-T17         | Accepted        | Cascading subtree destruction: `tui_destroy_subtree()` for recursive cleanup. Implemented in Epic J.                                                                                                                                                                                          |
+| ADR-T18         | Accepted        | Indexed child insertion: `tui_insert_child()` for reconciler keyed-list diffing. Implemented in Epic J.                                                                                                                                                                                       |
+| ADR-T19         | Accepted        | TextArea widget: multi-line input with 2D cursor, line buffer, word wrap. Implemented in Epic K.                                                                                                                                                                                              |
+| ADR-T20         | Accepted        | Reconciler strategy: lightweight JSX factory + `@preact/signals-core`. Package split: core <50KB + optional effect package. Implemented in Epic L.                                                                                                                                            |
+| ADR-T21         | Accepted        | Theme inheritance: per-NodeType style defaults via `type_defaults: HashMap<NodeType, VisualStyle>`. Implemented in Epic K.                                                                                                                                                                    |
+| ADR-T22         | Accepted        | Position animation: visual-only render offset on TuiNode. `AnimProp::PositionX/Y`. Layout unaffected. Implemented in Epic K.                                                                                                                                                                 |
+| ADR-T23         | Planned         | Accessibility foundation: AccessibilityRole enum, TuiNode role/label/description fields, EventKind::Accessibility, 3 FFI setters. Defined by TASK-M0 spike (pending ratification).                                                                                                           |
