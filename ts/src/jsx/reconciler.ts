@@ -410,6 +410,24 @@ export function reconcileChildren(
 	const oldChildren = parentInstance.children;
 	const parentWidget = parentInstance.widget;
 
+	// Fragment parents have no widget — resolve via ancestor lookup
+	if (!parentWidget) {
+		const ancestorWidget = findAncestorWidget(parentInstance);
+		if (!ancestorWidget) {
+			throw new Error("reconcileChildren: no widget-bearing ancestor found");
+		}
+		return reconcileWithWidget(parentInstance, newVNodes, oldChildren, ancestorWidget);
+	}
+
+	return reconcileWithWidget(parentInstance, newVNodes, oldChildren, parentWidget);
+}
+
+function reconcileWithWidget(
+	parentInstance: Instance,
+	newVNodes: VNode[],
+	oldChildren: Instance[],
+	parentWidget: Widget,
+): void {
 	// Build old key map
 	const oldKeyMap = new Map<string | number, Instance>();
 	for (let i = 0; i < oldChildren.length; i++) {
