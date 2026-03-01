@@ -9,7 +9,7 @@
     "./effect": "./src/effect/index.ts"
   },
   "scripts": {
-    "test": "bun test test-ffi.test.ts",
+    "test": "bun test test-ffi.test.ts && bun test test-jsx.test.ts && bun run check-bundle.ts",
     "bench": "bun run bench-ffi.ts",
     "guardrails": "bun run guardrails-ffi.ts",
     "guardrails:report": "bun run guardrails-ffi.ts --report-only",

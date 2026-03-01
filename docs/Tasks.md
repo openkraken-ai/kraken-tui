@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 4.0
-**Status**: v1 Complete, v2 In Progress (Epics I/J/K Done, L/M Remaining)
+**Status**: v1 Complete, v2 In Progress (Epics I/J/K/L Done, M Remaining)
 **Date**: February 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -11,15 +11,15 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-**v2 Total Estimation:** 111 Story Points (Fibonacci: 1, 2, 3, 5, 8)
+**v2 Total Estimation:** 128 Story Points (Fibonacci: 1, 2, 3, 5, 8)
 
 **v2 Critical Path (Longest Dependency Chain):**
 
-`TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-J1 -> TASK-J2 -> TASK-J4 -> TASK-J5 -> TASK-K5 -> TASK-K6 -> TASK-K7 -> TASK-K8 -> TASK-L0 -> TASK-L1 -> TASK-L2 -> TASK-L3 -> TASK-L4 -> TASK-L5 -> TASK-L6 -> TASK-M0`
+`TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-J1 -> TASK-J2 -> TASK-J4 -> TASK-J5 -> TASK-K5 -> TASK-K6 -> TASK-K7 -> TASK-K8 -> TASK-L0 -> TASK-L1 -> TASK-L2 -> TASK-L3 -> TASK-L4 -> TASK-L5 -> TASK-L6 -> TASK-M0 -> TASK-M1 -> TASK-M2 -> TASK-M3 -> TASK-M4 -> TASK-M5`
 
-**Critical Path Estimate:** 83 Story Points
+**Critical Path Estimate:** 100 Story Points
 
-**Planning Constraint:** Epic M implementation tickets are intentionally not authored yet. `TechSpec.md` Appendix A explicitly marks accessibility contract details as not fully specified; only a spike is valid at this layer.
+**Planning Constraint:** Epic M implementation tickets (M1–M5) are provisional — they depend on ADR-T23 ratification from TASK-M0. Ticket details may be revised once the spike completes and the FFI contract is ratified.
 
 ---
 
@@ -82,6 +82,11 @@ flowchart LR
         L5[TASK-L5 async loop effect opt in]
         L6[TASK-L6 reconciler tests bundle budget]
         M0[TASK-M0 spike accessibility adr]
+        M1[TASK-M1 accessibility node model]
+        M2[TASK-M2 accessibility ffi]
+        M3[TASK-M3 accessibility events]
+        M4[TASK-M4 accessibility ts api]
+        M5[TASK-M5 accessibility verification]
     end
 
     I0 --> I1 --> I2 --> I3 --> I4
@@ -95,6 +100,7 @@ flowchart LR
     K9 --> L0
     L0 --> L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> M0
     K9 --> K11
+    M0 --> M1 --> M2 --> M3 --> M4 --> M5
 ```
 
 ---
@@ -436,7 +442,7 @@ Then all scheduled animations begin according to the declared timeline rules
 And cancelling the group prevents unscheduled followers from starting
 ```
 
-### Epic L: Declarative Reconciler (ADR-T20)
+### Epic L: Declarative Reconciler (ADR-T20) — COMPLETE
 
 **[TASK-L0] Spike JSX Factory + Signals Contract Validation**
 
@@ -559,6 +565,84 @@ Then an approved ADR exists with concrete FFI signatures and data model fields
 And follow-on implementation tickets can be authored without undefined behavior
 ```
 
+**[TASK-M1] Add `AccessibilityRole` Enum and Node Accessibility Fields**
+
+- **Type:** Feature
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-M0]
+- **Description:** Add `role: Option<AccessibilityRole>`, `label: Option<String>`, and `description: Option<String>` to `TuiNode`. Define `AccessibilityRole` enum per ADR-T23 output (e.g., `Button`, `Checkbox`, `Input`, `TextArea`, `List`, `ListItem`, `Heading`, `Region`, `Status`). Nodes without a role are transparent to the accessibility event stream.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a newly created TuiNode
+When no accessibility properties are set
+Then role is None, label is None, and description is None
+And the node is excluded from the accessibility event stream
+```
+
+**[TASK-M2] Expose Accessibility Setters via FFI**
+
+- **Type:** Feature
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-M1]
+- **Description:** Implement and expose `tui_set_node_role(handle, role_u32)`, `tui_set_node_label(handle, ptr, len)`, and `tui_set_node_description(handle, ptr, len)` through the C ABI. All three follow existing `ffi_wrap()` + `catch_unwind` conventions. Role codes are a stable u32 enum encoding from ADR-T23.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a valid widget handle
+When tui_set_node_role is called with the Button role code
+Then the node's role field is set to AccessibilityRole::Button
+And tui_set_node_label stores the provided UTF-8 string on the node
+And tui_set_node_description stores the provided UTF-8 description on the node
+```
+
+**[TASK-M3] Emit Accessibility Events on Focus Change via Event Module**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-M2]
+- **Description:** Extend the Event Module to enqueue an `EventKind::Accessibility` event whenever focus moves to a node with a non-None role or label. The event payload carries the encoded role code, label text, and description text. Host Layer polls these events via the existing `tui_drain_events()` drain protocol — no new FFI polling function is required. Nodes without role and label do not generate events.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a widget with role Button and label "Submit"
+When focus moves to that widget
+Then an accessibility event is queued in the event buffer
+And draining events returns an event with type Accessibility and the encoded role and label
+And a widget without role or label does not generate an accessibility event on focus
+```
+
+**[TASK-M4] TypeScript Accessibility API and JSX Prop Support**
+
+- **Type:** Feature
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-M3]
+- **Description:** Add `setRole()`, `setLabel()`, and `setDescription()` to the Widget base class. Expose a type-safe `AccessibilityRole` enum. Add `role`, `aria-label`, and `aria-description` JSX prop support in the reconciler so props flow through to the corresponding FFI setters on mount. Extend the TS event drain to decode and surface `EventKind::Accessibility` events.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a JSX element with role="button" and aria-label="Close dialog"
+When the reconciler mounts the element
+Then tui_set_node_role and tui_set_node_label are called with the correct encoded values
+And accessibility events decoded from the drain include the matching role and label string
+```
+
+**[TASK-M5] Accessibility Verification Suite and Annotated Example**
+
+- **Type:** Chore
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-M4]
+- **Description:** Add integration tests covering: role/label/description round-trips via FFI, focus-triggered accessibility event emission, and event drain decoding correctness. Include an annotated example showing an accessible interactive form with labeled inputs, a submit button, and a status region.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a form with labeled inputs and a role=Region container
+When tests exercise focus traversal across form elements
+Then each focus change to a labeled node emits a correctly populated accessibility event
+And the drain produces role, label, and description for every event
+And the example demonstrates the full accessible widget lifecycle
+```
+
 ---
 
 ## 5. V2 SUMMARY TABLE
@@ -587,12 +671,17 @@ And follow-on implementation tickets can be authored without undefined behavior
 | TASK-K9  | K    | Feature   | 5       | J5           | Done   |
 | TASK-K10 | K    | Feature   | 3       | K9           | Done   |
 | TASK-K11 | K    | Feature   | 5       | K0, K10      | Done   |
-| TASK-L0  | L    | Spike     | 2       | K4, K8, K10  |        |
-| TASK-L1  | L    | Chore     | 3       | L0           |        |
-| TASK-L2  | L    | Feature   | 5       | L1           |        |
-| TASK-L3  | L    | Feature   | 5       | L2           |        |
-| TASK-L4  | L    | Feature   | 5       | L3           |        |
-| TASK-L5  | L    | Feature   | 3       | L4           |        |
-| TASK-L6  | L    | Chore     | 5       | L5           |        |
+| TASK-L0  | L    | Spike     | 2       | K4, K8, K10  | Done   |
+| TASK-L1  | L    | Chore     | 3       | L0           | Done   |
+| TASK-L2  | L    | Feature   | 5       | L1           | Done   |
+| TASK-L3  | L    | Feature   | 5       | L2           | Done   |
+| TASK-L4  | L    | Feature   | 5       | L3           | Done   |
+| TASK-L5  | L    | Feature   | 3       | L4           | Done   |
+| TASK-L6  | L    | Chore     | 5       | L5           | Done   |
 | TASK-M0  | M    | Spike     | 3       | L6, K8       |        |
-|          |      | **TOTAL** | **111** |              |        |
+| TASK-M1  | M    | Feature   | 3       | M0           |        |
+| TASK-M2  | M    | Feature   | 3       | M1           |        |
+| TASK-M3  | M    | Feature   | 5       | M2           |        |
+| TASK-M4  | M    | Feature   | 3       | M3           |        |
+| TASK-M5  | M    | Chore     | 3       | M4           |        |
+|          |      | **TOTAL** | **128** |              |        |
