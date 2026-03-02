@@ -160,7 +160,7 @@ function App() {
 
 // ── Main ──────────────────────────────────────────────────────────────
 
-const app = new Kraken({ headless: false });
+const app = Kraken.init();
 const instance = render(App() as any, app);
 
 const loop = createLoop({
