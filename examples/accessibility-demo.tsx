@@ -29,7 +29,7 @@ import type { KrakenEvent } from "../ts/src/index";
 
 // ── State ─────────────────────────────────────────────────────────────
 
-const statusText = signal("Tab through controls to see accessibility events");
+const statusText = signal("[Tab] Focus  [Esc] Quit");
 const a11yLog = signal("(no accessibility events yet)");
 
 // Role code → human-readable name
@@ -66,85 +66,68 @@ function App() {
 				height: 1,
 			}),
 
-			// Main content area
-			jsxs("Box", {
-				key: "main",
-				flexDirection: "column",
-				padding: 1,
-				role: "region",
-				"aria-label": "Main content",
-				"aria-description": "Interactive controls demonstrating accessibility annotations",
-				children: [
-					// Description
-					jsx("Text", {
-						key: "desc",
-						content: "Each control below has role + aria-label. Tab to focus them.",
-						fg: "#585b70",
-						height: 1,
-					}),
+			// Description
+			jsx("Text", {
+				key: "desc",
+				content: "Each control below has role + aria-label. Tab to focus them.",
+				fg: "#585b70",
+				height: 1,
+			}),
 
-					// Annotated Button (Box with role=button)
-					jsx("Box", {
-						key: "btn-submit",
-						border: "rounded",
-						width: 20,
-						height: 3,
-						fg: "#a6e3a1",
-						focusable: true,
-						role: "button",
-						"aria-label": "Submit form",
-						"aria-description": "Press Enter to submit the form data",
-						children: [
-							jsx("Text", {
-								content: " [Submit] ",
-							}),
-						],
-					}),
+			// Annotated Button (Text with border, role=button)
+			jsx("Text", {
+				key: "btn-submit",
+				content: "  [Submit]  ",
+				border: "rounded",
+				width: 20,
+				height: 3,
+				fg: "#a6e3a1",
+				focusable: true,
+				role: "button",
+				"aria-label": "Submit form",
+				"aria-description": "Press Enter to submit the form data",
+			}),
 
-					// Annotated Input
-					jsx("Input", {
-						key: "name-input",
-						width: 30,
-						height: 3,
-						border: "single",
-						fg: "#cdd6f4",
-						role: "input",
-						"aria-label": "Full name",
-						"aria-description": "Enter your full name",
-					}),
+			// Annotated Input
+			jsx("Input", {
+				key: "name-input",
+				width: 30,
+				height: 3,
+				border: "single",
+				fg: "#cdd6f4",
+				role: "input",
+				"aria-label": "Full name",
+				"aria-description": "Enter your full name",
+			}),
 
-					// Annotated Checkbox (Box with role=checkbox)
-					jsx("Box", {
-						key: "checkbox",
-						width: 30,
-						height: 1,
-						focusable: true,
-						role: "checkbox",
-						"aria-label": "Accept terms",
-						children: [
-							jsx("Text", { content: "[ ] Accept terms and conditions" }),
-						],
-					}),
+			// Annotated Checkbox (Text with role=checkbox)
+			jsx("Text", {
+				key: "checkbox",
+				content: "[ ] Accept terms and conditions",
+				width: 35,
+				height: 1,
+				focusable: true,
+				role: "checkbox",
+				"aria-label": "Accept terms",
+			}),
 
-					// Status area
-					jsx("Text", {
-						key: "status-label",
-						content: "--- Accessibility Event Log ---",
-						fg: "#585b70",
-						bold: true,
-						height: 1,
-					}),
+			// Separator
+			jsx("Text", {
+				key: "sep",
+				content: "--- Accessibility Event Log ---",
+				fg: "#585b70",
+				bold: true,
+				height: 1,
+			}),
 
-					// Live region (shows accessibility events)
-					jsx("Text", {
-						key: "a11y-log",
-						content: a11yLog,
-						fg: "#f9e2af",
-						role: "status",
-						"aria-label": "Accessibility event log",
-						height: 2,
-					}),
-				],
+			// Live region (shows accessibility events)
+			jsx("Text", {
+				key: "a11y-log",
+				content: a11yLog,
+				fg: "#f9e2af",
+				role: "status",
+				"aria-label": "Accessibility event log",
+				height: 2,
 			}),
 
 			// Footer status
