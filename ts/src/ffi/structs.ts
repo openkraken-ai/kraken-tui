@@ -53,6 +53,7 @@ export const EventType = {
 	FocusChange: 4,
 	Change: 5,
 	Submit: 6,
+	Accessibility: 7,
 } as const;
 
 /**
@@ -97,4 +98,19 @@ export const NodeType = {
 	Select: 3,
 	ScrollBox: 4,
 	TextArea: 5,
+} as const;
+
+/**
+ * Accessibility role constants (matches AccessibilityRole enum, ADR-T23)
+ */
+export const AccessibilityRole = {
+	Button: 0,
+	Checkbox: 1,
+	Input: 2,
+	TextArea: 3,
+	List: 4,
+	ListItem: 5,
+	Heading: 6,
+	Region: 7,
+	Status: 8,
 } as const;

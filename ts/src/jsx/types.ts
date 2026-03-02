@@ -34,11 +34,24 @@ export interface EventHandlerProps {
 	onFocus?: EventHandler;
 	onChange?: EventHandler;
 	onSubmit?: EventHandler;
+	onAccessibility?: EventHandler;
 }
 
 // ---------------------------------------------------------------------------
 // Common props (Widget base class)
 // ---------------------------------------------------------------------------
+
+/** Accessibility role literals (matches AccessibilityRole enum, ADR-T23). */
+export type AccessibilityRoleName =
+	| "button"
+	| "checkbox"
+	| "input"
+	| "textarea"
+	| "list"
+	| "listitem"
+	| "heading"
+	| "region"
+	| "status";
 
 export interface CommonProps extends EventHandlerProps {
 	key?: string | number;
@@ -57,6 +70,10 @@ export interface CommonProps extends EventHandlerProps {
 	opacity?: MaybeSignal<number>;
 	visible?: MaybeSignal<boolean>;
 	focusable?: MaybeSignal<boolean>;
+	// Accessibility (ADR-T23)
+	role?: MaybeSignal<AccessibilityRoleName>;
+	"aria-label"?: MaybeSignal<string>;
+	"aria-description"?: MaybeSignal<string>;
 }
 
 // ---------------------------------------------------------------------------

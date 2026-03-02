@@ -86,7 +86,7 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on
 
 ## Current State
 
-- 94 total FFI exports (including `tui_init_headless` test-only).
+- 97 total FFI exports (including `tui_init_headless` test-only).
 - Handles: monotonic u32, never recycled. Handle 0 = invalid sentinel.
 - `tui_free_string`: currently a no-op stub
 - Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` (ADR-T16) — no `static mut` in codebase
@@ -103,6 +103,6 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on
 - ADR-T22: `render_offset: (f32, f32)`, `AnimProp::PositionX = 4, PositionY = 5`
 - New easing variants: CubicIn, CubicOut, Elastic, Bounce
 
-**Remaining (Epics L, M):**
-- ADR-T20 (reconciler) — depends on tree ops (complete), next to implement
-- Accessibility foundation — spike after reconciler ships
+**Completed (Epics L, M):**
+- ADR-T20 (reconciler) — JSX factory, signal-driven prop updates, keyed reconciliation
+- ADR-T23 (accessibility) — roles, labels, descriptions, accessibility events on focus change

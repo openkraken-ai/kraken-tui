@@ -203,6 +203,11 @@ const FORMAT_MAP: Record<string, number> = {
 	plain: 0, markdown: 1, code: 2,
 };
 
+const ROLE_MAP: Record<string, number> = {
+	button: 0, checkbox: 1, input: 2, textarea: 3,
+	list: 4, listitem: 5, heading: 6, region: 7, status: 8,
+};
+
 /**
  * Apply all props to a widget, binding signals via effect().
  */
@@ -304,6 +309,27 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		case "focusable":
 			checkResult(ffi.tui_set_focusable(handle, value ? 1 : 0));
 			break;
+
+		// --- Accessibility (ADR-T23) ---
+		case "role": {
+			const code = ROLE_MAP[value as string];
+			if (code !== undefined) {
+				checkResult(ffi.tui_set_node_role(handle, code));
+			}
+			break;
+		}
+		case "aria-label": {
+			const encoded = new TextEncoder().encode(value as string);
+			const buf = Buffer.from(encoded);
+			checkResult(ffi.tui_set_node_label(handle, buf, encoded.length));
+			break;
+		}
+		case "aria-description": {
+			const encoded = new TextEncoder().encode(value as string);
+			const buf = Buffer.from(encoded);
+			checkResult(ffi.tui_set_node_description(handle, buf, encoded.length));
+			break;
+		}
 
 		// --- Box-specific ---
 		case "flexDirection":

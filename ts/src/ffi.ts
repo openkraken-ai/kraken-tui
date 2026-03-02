@@ -339,6 +339,20 @@ const symbols = {
 	tui_render: { args: [] as FFIType[], returns: "i32" as const },
 	tui_mark_dirty: { args: ["u32"] as FFIType[], returns: "i32" as const },
 
+	// Accessibility (ADR-T23)
+	tui_set_node_role: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_node_label: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_set_node_description: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
 	// Diagnostics
 	tui_get_last_error: { args: [] as FFIType[], returns: "ptr" as const },
 	tui_clear_error: { args: [] as FFIType[], returns: "void" as const },

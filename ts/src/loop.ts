@@ -41,6 +41,7 @@ const EVENT_TYPE_TO_PROP: Record<string, string> = {
 	focus: "onFocus",
 	change: "onChange",
 	submit: "onSubmit",
+	accessibility: "onAccessibility",
 };
 
 /**

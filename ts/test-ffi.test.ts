@@ -134,6 +134,11 @@ const lib = dlopen(LIB_PATH, {
 	tui_read_input:    { args: ["u32"] as FFIType[],                            returns: "i32" as const },
 	tui_next_event:    { args: ["ptr"] as FFIType[],                            returns: "i32" as const },
 
+	// Accessibility (ADR-T23)
+	tui_set_node_role:        { args: ["u32", "u32"] as FFIType[],               returns: "i32" as const },
+	tui_set_node_label:       { args: ["u32", "ptr", "u32"] as FFIType[],        returns: "i32" as const },
+	tui_set_node_description: { args: ["u32", "ptr", "u32"] as FFIType[],        returns: "i32" as const },
+
 	// Diagnostics
 	tui_get_last_error: { args: [] as FFIType[],  returns: "ptr" as const },
 	tui_clear_error:    { args: [] as FFIType[],  returns: "void" as const },
@@ -1686,6 +1691,209 @@ describe("FFI integration", () => {
 			expect(ffi.tui_create_node(0)).toBe(0);
 			// Re-init for any remaining afterAll
 			ffi.tui_init_headless(80, 24);
+		});
+	});
+
+	// ── Accessibility (ADR-T23, TASK-M5) ─────────────────────────────────────
+
+	describe("Accessibility", () => {
+		test("set_node_role accepts valid roles", () => {
+			const node = ffi.tui_create_node(0); // Box
+			expect(node).toBeGreaterThan(0);
+
+			expect(ffi.tui_set_node_role(node, 0)).toBe(0); // Button
+			expect(ffi.tui_set_node_role(node, 1)).toBe(0); // Checkbox
+			expect(ffi.tui_set_node_role(node, 2)).toBe(0); // Input
+			expect(ffi.tui_set_node_role(node, 3)).toBe(0); // TextArea
+			expect(ffi.tui_set_node_role(node, 4)).toBe(0); // List
+			expect(ffi.tui_set_node_role(node, 5)).toBe(0); // ListItem
+			expect(ffi.tui_set_node_role(node, 6)).toBe(0); // Heading
+			expect(ffi.tui_set_node_role(node, 7)).toBe(0); // Region
+			expect(ffi.tui_set_node_role(node, 8)).toBe(0); // Status
+
+			ffi.tui_destroy_node(node);
+		});
+
+		test("set_node_role rejects invalid role", () => {
+			const node = ffi.tui_create_node(0);
+			expect(ffi.tui_set_node_role(node, 99)).toBe(-1);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("set_node_role rejects invalid handle", () => {
+			expect(ffi.tui_set_node_role(0, 0)).toBe(-1);
+			expect(ffi.tui_set_node_role(9999, 0)).toBe(-1);
+		});
+
+		test("set_node_label stores UTF-8 string", () => {
+			const node = ffi.tui_create_node(0);
+			const label = "Submit button";
+			const encoded = new TextEncoder().encode(label);
+			expect(ffi.tui_set_node_label(node, Buffer.from(encoded), encoded.length)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("set_node_label with null clears label", () => {
+			const node = ffi.tui_create_node(0);
+			const label = "Test";
+			const encoded = new TextEncoder().encode(label);
+			expect(ffi.tui_set_node_label(node, Buffer.from(encoded), encoded.length)).toBe(0);
+			// Clear with null/0
+			expect(ffi.tui_set_node_label(node, null, 0)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("set_node_description stores UTF-8 string", () => {
+			const node = ffi.tui_create_node(0);
+			const desc = "Form container for user input";
+			const encoded = new TextEncoder().encode(desc);
+			expect(ffi.tui_set_node_description(node, Buffer.from(encoded), encoded.length)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("set_node_description with null clears description", () => {
+			const node = ffi.tui_create_node(0);
+			const desc = "Test";
+			const encoded = new TextEncoder().encode(desc);
+			expect(ffi.tui_set_node_description(node, Buffer.from(encoded), encoded.length)).toBe(0);
+			expect(ffi.tui_set_node_description(node, null, 0)).toBe(0);
+			ffi.tui_destroy_node(node);
+		});
+
+		test("focus change emits accessibility event for annotated node", () => {
+			const root = ffi.tui_create_node(0); // Box
+			const btn = ffi.tui_create_node(0);  // Box acting as button
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, btn)).toBe(0);
+
+			// Set focusable + role + label
+			expect(ffi.tui_set_focusable(btn, 1)).toBe(0);
+			expect(ffi.tui_set_node_role(btn, 0)).toBe(0); // Button
+
+			const label = "Submit";
+			const labelEnc = new TextEncoder().encode(label);
+			expect(ffi.tui_set_node_label(btn, Buffer.from(labelEnc), labelEnc.length)).toBe(0);
+
+			// Focus the button via tui_focus
+			expect(ffi.tui_focus(btn)).toBe(0);
+
+			// Drain events — should get FocusChange + Accessibility
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+
+			// Event 1: FocusChange
+			const r1 = ffi.tui_next_event(eventBuf);
+			expect(r1).toBe(1);
+			expect(eventView.getUint32(0, true)).toBe(4); // FocusChange
+
+			// Event 2: Accessibility
+			const r2 = ffi.tui_next_event(eventBuf);
+			expect(r2).toBe(1);
+			expect(eventView.getUint32(0, true)).toBe(7); // Accessibility
+			expect(eventView.getUint32(4, true)).toBe(btn); // target = btn handle
+			expect(eventView.getUint32(8, true)).toBe(0); // data[0] = Button role = 0
+
+			// No more events
+			expect(ffi.tui_next_event(eventBuf)).toBe(0);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("focus change does NOT emit accessibility event for unannotated node", () => {
+			const root = ffi.tui_create_node(0);
+			const input = ffi.tui_create_node(2); // Input (focusable by default)
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, input)).toBe(0);
+
+			// Focus without any role/label set
+			expect(ffi.tui_focus(input)).toBe(0);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+
+			// Event 1: FocusChange
+			const r1 = ffi.tui_next_event(eventBuf);
+			expect(r1).toBe(1);
+			expect(eventView.getUint32(0, true)).toBe(4); // FocusChange
+
+			// No Accessibility event
+			expect(ffi.tui_next_event(eventBuf)).toBe(0);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("accessibility event with label-only (no role) uses u32::MAX sentinel", () => {
+			const root = ffi.tui_create_node(0);
+			const item = ffi.tui_create_node(0);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, item)).toBe(0);
+			expect(ffi.tui_set_focusable(item, 1)).toBe(0);
+
+			// Label only, no role
+			const label = "Help menu";
+			const labelEnc = new TextEncoder().encode(label);
+			expect(ffi.tui_set_node_label(item, Buffer.from(labelEnc), labelEnc.length)).toBe(0);
+
+			expect(ffi.tui_focus(item)).toBe(0);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+
+			// FocusChange
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(4);
+
+			// Accessibility with u32::MAX sentinel for missing role
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(7);
+			expect(eventView.getUint32(8, true)).toBe(0xFFFFFFFF); // u32::MAX
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("focus_next emits accessibility event", () => {
+			const root = ffi.tui_create_node(0);
+			const btn1 = ffi.tui_create_node(0);
+			const btn2 = ffi.tui_create_node(0);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, btn1)).toBe(0);
+			expect(ffi.tui_append_child(root, btn2)).toBe(0);
+
+			expect(ffi.tui_set_focusable(btn1, 1)).toBe(0);
+			expect(ffi.tui_set_node_role(btn1, 0)).toBe(0); // Button
+			expect(ffi.tui_set_focusable(btn2, 1)).toBe(0);
+			expect(ffi.tui_set_node_role(btn2, 1)).toBe(0); // Checkbox
+
+			// Tab to first
+			expect(ffi.tui_focus_next()).toBe(0);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+
+			// FocusChange
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(4);
+
+			// Accessibility for btn1 (Button = 0)
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(7);
+			expect(eventView.getUint32(4, true)).toBe(btn1);
+			expect(eventView.getUint32(8, true)).toBe(0);
+
+			// Tab to second
+			expect(ffi.tui_focus_next()).toBe(0);
+
+			// FocusChange
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(4);
+
+			// Accessibility for btn2 (Checkbox = 1)
+			ffi.tui_next_event(eventBuf);
+			expect(eventView.getUint32(0, true)).toBe(7);
+			expect(eventView.getUint32(4, true)).toBe(btn2);
+			expect(eventView.getUint32(8, true)).toBe(1);
+
+			ffi.tui_destroy_subtree(root);
 		});
 	});
 });
