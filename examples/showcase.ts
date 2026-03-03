@@ -1,1230 +1,829 @@
 /**
- * Kraken TUI — v1 Feature Showcase
+ * Kraken TUI - v2 Capability Showcase
  *
- * A five-section interactive terminal dashboard demonstrating the full v1
- * capability surface: animations, themes, syntax highlighting, markdown,
- * all five widget types, and the live event system.
+ * Representative sample of the current project surface:
+ * - JSX + signal-driven reconciler
+ * - Input, Select, ScrollBox, TextArea widgets
+ * - Accessibility roles/labels + accessibility events
+ * - Runtime theme switching (built-in + custom per-NodeType defaults)
+ * - Animation primitives, chaining, choreography groups, position animation
+ * - Runtime tree mutation with insertChild() and destroySubtree()
  *
  * Usage:
  *   cargo build --manifest-path native/Cargo.toml --release
  *   bun run examples/showcase.ts
  *
  * Controls:
- *   1–5       Switch sections
- *   Tab       Cycle focus within section
- *   Q / Esc   Quit
+ *   Esc / q  Quit
+ *   Space    Replay hero choreography
+ *   t        Cycle theme
+ *   b        Toggle runtime banner (insertChild/destroySubtree)
+ *   w        Toggle TextArea wrap
+ *   Tab      Focus traversal (also emits accessibility events)
  */
 
+import { Buffer } from "buffer";
 import {
 	Kraken,
+	Theme,
 	Box,
 	Text,
-	Input,
-	Select,
-	ScrollBox,
+	signal,
+	render,
+	createLoop,
 	KeyCode,
+	AccessibilityRole,
 } from "../ts/src/index";
+import { jsx, jsxs } from "../ts/src/jsx/jsx-runtime";
+import { ffi } from "../ts/src/ffi";
 import type { KrakenEvent } from "../ts/src/index";
+import type { Widget } from "../ts/src/widget";
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+interface ThemeMode {
+	name: string;
+	theme: Theme;
+	accent: string;
+	panelBg: string;
+	note: string;
+	destroyOnExit: boolean;
+}
+
+const statusText = signal("Booting showcase...");
+const metricsText = signal("metrics: initializing");
+const logText = signal("");
+const spinnerGlyph = signal("|");
+const activeThemeName = signal("Builtin Dark");
+const accentColor = signal("#60a5fa");
+const rootBackground = signal("#0b1220");
+const codeBgColor = signal("#0f172a");
+const codeFgColor = signal("#dbeafe");
+const hintColor = signal("#94a3b8");
+const wrapEnabled = signal(true);
+const notesMeta = signal("TextArea lines: 0 | wrap: on");
+const runtimeHostHint = signal("Press [b] to insert/remove a runtime subtree (insertChild/destroySubtree).");
+const footerHint = signal(
+	"Esc quit | Space replay anim | t theme | b banner | w wrap | Enter in Input runs commands",
+);
+
+const logLines: string[] = [];
+const textareaSeed = [
+	"TextArea wrap/unwrap demo:",
+	"1) This line is intentionally long so wrap changes are obvious immediately when you press [w] to toggle soft wrapping on and off in place.",
+	"2) SuperLongTokenForWrapTestingWithoutSpaces_ABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789_repeat_repeat_repeat_repeat",
+	"3) Keep typing below this text to confirm cursor movement, editing, and multi-line behavior remain stable while wrap mode changes.",
+].join("\n");
+
+function pushLog(message: string): void {
+	const stamp = new Date().toISOString().slice(11, 19);
+	logLines.push(`${stamp} ${message}`);
+	if (logLines.length > 140) {
+		logLines.splice(0, logLines.length - 140);
+	}
+	logText.value = logLines.join("\n");
+}
+
+function getContent(handle: number): string {
+	const len = ffi.tui_get_content_len(handle);
+	if (len <= 0) return "";
+	const buf = Buffer.alloc(len + 1);
+	const written = ffi.tui_get_content(handle, buf, len + 1);
+	if (written <= 0) return "";
+	return buf.toString("utf-8", 0, written);
+}
+
+function setContent(handle: number, value: string): void {
+	const encoded = new TextEncoder().encode(value);
+	const buf = Buffer.from(encoded);
+	ffi.tui_set_content(handle, buf, encoded.length);
+}
+
+function getSelectOption(handle: number, index: number): string {
+	const buf = Buffer.alloc(256);
+	const written = ffi.tui_select_get_option(handle, index, buf, 256);
+	if (written <= 0) return "";
+	return buf.toString("utf-8", 0, written);
+}
+
+function createAuroraTheme(): Theme {
+	const theme = Theme.create();
+	theme.setBackground("#031420");
+	theme.setForeground("#d8f7ff");
+	theme.setBorderColor("#115e59");
+	theme.setTypeColor("text", "fg", "#d8f7ff");
+	theme.setTypeColor("input", "fg", "#ecfeff");
+	theme.setTypeColor("input", "bg", "#083344");
+	theme.setTypeBorderStyle("input", "rounded");
+	theme.setTypeColor("textarea", "fg", "#cffafe");
+	theme.setTypeColor("textarea", "bg", "#164e63");
+	theme.setTypeBorderStyle("textarea", "single");
+	theme.setTypeColor("select", "fg", "#ecfeff");
+	theme.setTypeColor("select", "bg", "#155e75");
+	theme.setTypeColor("scrollBox", "borderColor", "#22d3ee");
+	return theme;
+}
+
+function createSunsetTheme(): Theme {
+	const theme = Theme.create();
+	theme.setBackground("#1b0f08");
+	theme.setForeground("#ffe7d6");
+	theme.setBorderColor("#c2410c");
+	theme.setTypeColor("text", "fg", "#ffe7d6");
+	theme.setTypeColor("input", "fg", "#fff7ed");
+	theme.setTypeColor("input", "bg", "#7c2d12");
+	theme.setTypeBorderStyle("input", "rounded");
+	theme.setTypeColor("textarea", "fg", "#ffedd5");
+	theme.setTypeColor("textarea", "bg", "#9a3412");
+	theme.setTypeBorderStyle("textarea", "single");
+	theme.setTypeColor("select", "fg", "#fff7ed");
+	theme.setTypeColor("select", "bg", "#9a3412");
+	theme.setTypeColor("scrollBox", "borderColor", "#fb923c");
+	return theme;
+}
 
 const app = Kraken.init();
-const { width: _termW, height: termH } = app.getTerminalSize();
 
-// Layout constants: 3 for header, 1 for status bar
-const CONTENT_H = Math.max(10, termH - 4);
+const auroraTheme = createAuroraTheme();
+const sunsetTheme = createSunsetTheme();
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
+function normalizeThemeForShowcase(theme: Theme): void {
+	for (const nodeType of ["box", "text", "input", "select", "scrollBox", "textarea"] as const) {
+		theme.setTypeBorderStyle(nodeType, "none");
+	}
+}
 
-const C = {
-	bg:      "#0d1117",
-	bgPanel: "#161b22",
-	bgCard:  "#21262d",
-	border:  "#30363d",
-	fg:      "#e6edf3",
-	fgMuted: "#8b949e",
-	accent:  "#58a6ff",
-	green:   "#3fb950",
-	yellow:  "#d29922",
-	orange:  "#f0883e",
-	red:     "#f85149",
-	purple:  "#bc8cff",
-	pink:    "#ff7b72",
-	cyan:    "#79c0ff",
-} as const;
+const themeModes: ThemeMode[] = [
+	{
+		name: "Builtin Dark",
+		theme: Theme.dark(),
+		accent: "#60a5fa",
+		panelBg: "#0b1220",
+		note: "Theme.dark()",
+		destroyOnExit: false,
+	},
+	{
+		name: "Builtin Light",
+		theme: Theme.light(),
+		accent: "#2563eb",
+		panelBg: "#e2e8f0",
+		note: "Theme.light()",
+		destroyOnExit: false,
+	},
+	{
+		name: "Aurora Custom",
+		theme: auroraTheme,
+		accent: "#22d3ee",
+		panelBg: "#05202b",
+		note: "Theme.create() + setType*",
+		destroyOnExit: true,
+	},
+	{
+		name: "Sunset Custom",
+		theme: sunsetTheme,
+		accent: "#fb923c",
+		panelBg: "#2b1308",
+		note: "Theme.create() + setType*",
+		destroyOnExit: true,
+	},
+];
 
-// ── Root structure ────────────────────────────────────────────────────────────
+for (const mode of themeModes) {
+	normalizeThemeForShowcase(mode.theme);
+}
 
-const root = new Box({
+const ROLE_NAMES: Record<number, string> = {
+	[AccessibilityRole.Button]: "button",
+	[AccessibilityRole.Checkbox]: "checkbox",
+	[AccessibilityRole.Input]: "input",
+	[AccessibilityRole.TextArea]: "textarea",
+	[AccessibilityRole.List]: "list",
+	[AccessibilityRole.ListItem]: "listitem",
+	[AccessibilityRole.Heading]: "heading",
+	[AccessibilityRole.Region]: "region",
+	[AccessibilityRole.Status]: "status",
+};
+
+let rootWidget: Widget | null = null;
+let heroCard: Widget | null = null;
+let liveBadge: Widget | null = null;
+let runtimeHost: Widget | null = null;
+let runtimeBanner: Box | null = null;
+let runtimeBannerLabel: Text | null = null;
+let commandInputHandle = 0;
+let themeSelectHandle = 0;
+let notesHandle = 0;
+let currentThemeIndex = 0;
+let activeChoreoGroup = 0;
+let heroAnimationHandles: number[] = [];
+let heroRaised = false;
+let spinnerFrame = 0;
+let spinnerLastTickMs = Date.now();
+const SPINNER_FRAMES = ["|", "/", "-", "\\"] as const;
+
+function updateNotesMeta(): void {
+	const lineCount = notesHandle === 0 ? 0 : Math.max(0, ffi.tui_textarea_get_line_count(notesHandle));
+	notesMeta.value = `TextArea lines: ${lineCount} | wrap: ${wrapEnabled.value ? "on" : "off"}`;
+}
+
+function applyTheme(index: number): void {
+	if (!rootWidget) return;
+	const mode = themeModes[index];
+	if (!mode) return;
+
+	currentThemeIndex = index;
+	activeThemeName.value = mode.name;
+	accentColor.value = mode.accent;
+	rootBackground.value = mode.panelBg;
+
+	if (index === 1) {
+		codeBgColor.value = "#0f172a";
+		codeFgColor.value = "#dbeafe";
+		hintColor.value = "#334155";
+	} else if (index === 2) {
+		codeBgColor.value = "#042f2e";
+		codeFgColor.value = "#ccfbf1";
+		hintColor.value = "#67e8f9";
+	} else if (index === 3) {
+		codeBgColor.value = "#431407";
+		codeFgColor.value = "#ffedd5";
+		hintColor.value = "#fdba74";
+	} else {
+		codeBgColor.value = "#0f172a";
+		codeFgColor.value = "#dbeafe";
+		hintColor.value = "#94a3b8";
+	}
+
+	app.switchTheme(mode.theme);
+	if (themeSelectHandle !== 0) {
+		ffi.tui_select_set_selected(themeSelectHandle, index);
+	}
+	applyRuntimeBannerPalette(index);
+	statusText.value = `Theme -> ${mode.name} (${mode.note})`;
+	pushLog(`theme switched to ${mode.name}`);
+}
+
+function cycleTheme(): void {
+	const next = (currentThemeIndex + 1) % themeModes.length;
+	applyTheme(next);
+}
+
+function stopHeroMotion(): void {
+	if (heroCard) {
+		for (const handle of heroAnimationHandles) {
+			try {
+				heroCard.cancelAnimation(handle);
+			} catch {
+				// Ignore cancellation failures for completed animations.
+			}
+		}
+	}
+	heroAnimationHandles = [];
+
+	if (activeChoreoGroup !== 0) {
+		try {
+			app.destroyChoreoGroup(activeChoreoGroup);
+		} catch {
+			// Ignore invalid or already-destroyed groups.
+		}
+		activeChoreoGroup = 0;
+	}
+}
+
+function runHeroChoreography(): void {
+	if (!heroCard) return;
+
+	stopHeroMotion();
+
+	const nextOpacity = heroRaised ? 1 : 0.82;
+	const borderTarget = heroRaised ? accentColor.value : "#fbbf24";
+	heroRaised = !heroRaised;
+
+	const borderPulse = heroCard.animate({
+		property: "borderColor",
+		target: borderTarget,
+		duration: 240,
+		easing: "cubicOut",
+	});
+	const fade = heroCard.animate({
+		property: "opacity",
+		target: nextOpacity,
+		duration: 280,
+		easing: "easeInOut",
+	});
+
+	app.chainAnimation(borderPulse, fade);
+
+	const badgeTintTarget = heroRaised ? "#f59e0b" : accentColor.value;
+	let badgeTint = 0;
+	if (liveBadge) {
+		badgeTint = liveBadge.animate({
+			property: "fgColor",
+			target: badgeTintTarget,
+			duration: 320,
+			easing: "elastic",
+		});
+	}
+
+	const group = app.createChoreoGroup();
+	app.choreoAdd(group, borderPulse, 0);
+	if (badgeTint !== 0) {
+		app.choreoAdd(group, badgeTint, 90);
+	}
+	app.startChoreo(group);
+
+	activeChoreoGroup = group;
+	heroAnimationHandles = badgeTint !== 0
+		? [borderPulse, fade, badgeTint]
+		: [borderPulse, fade];
+	statusText.value = "Animation choreography replayed";
+	pushLog("hero choreography started");
+}
+
+function applyRuntimeBannerPalette(index: number): void {
+	if (!runtimeBanner) return;
+
+	if (index === 1) {
+		runtimeBanner.setForeground("#1d4ed8");
+		runtimeBanner.setBackground("#dbeafe");
+		runtimeBannerLabel?.setForeground("#1e3a8a");
+		return;
+	}
+
+	if (index === 2) {
+		runtimeBanner.setForeground("#22d3ee");
+		runtimeBanner.setBackground("#083344");
+		runtimeBannerLabel?.setForeground("#cffafe");
+		return;
+	}
+
+	if (index === 3) {
+		runtimeBanner.setForeground("#fb923c");
+		runtimeBanner.setBackground("#7c2d12");
+		runtimeBannerLabel?.setForeground("#ffedd5");
+		return;
+	}
+
+	runtimeBanner.setForeground("#67e8f9");
+	runtimeBanner.setBackground("#082f49");
+	runtimeBannerLabel?.setForeground("#cffafe");
+}
+
+function toggleRuntimeBanner(): void {
+	if (!runtimeHost) return;
+
+	if (runtimeBanner) {
+		runtimeBanner.destroySubtree();
+		runtimeBanner = null;
+		runtimeBannerLabel = null;
+		runtimeHostHint.value = "Press [b] to insert/remove a runtime subtree (insertChild/destroySubtree).";
+		statusText.value = "Runtime subtree destroyed via destroySubtree()";
+		pushLog("runtime subtree destroyed");
+		return;
+	}
+
+	const banner = new Box({
+		width: "100%",
+		height: 1,
+		flexDirection: "row",
+		alignItems: "center",
+		padding: [0, 0, 0, 0],
+		border: "none",
+		fg: "#67e8f9",
+		bg: "#082f49",
+	});
+	banner.setRole(AccessibilityRole.Region);
+	banner.setLabel("Runtime mutation banner");
+	banner.setDescription("Inserted at runtime using insertChild and removable via destroySubtree");
+
+	const label = new Text({
+		content: "Runtime subtree inserted at index 0. Press b again to destroy it.",
+		fg: "#cffafe",
+		bold: true,
+	});
+	label.setRole(AccessibilityRole.Status);
+	label.setLabel("Runtime subtree status");
+	label.setWidth("100%");
+	label.setHeight(1);
+
+	banner.append(label);
+	runtimeHost.insertChild(banner, 0);
+	runtimeBanner = banner;
+	runtimeBannerLabel = label;
+	applyRuntimeBannerPalette(currentThemeIndex);
+	runtimeHostHint.value = "Subtree mounted. Press [b] again to destroy it.";
+	statusText.value = "Runtime subtree inserted via insertChild(index=0)";
+	pushLog("runtime subtree inserted at index 0");
+
+	const slideIn = banner.animate({
+		property: "positionX",
+		target: 2,
+		duration: 220,
+		easing: "cubicOut",
+	});
+	const fade = banner.animate({
+		property: "opacity",
+		target: 0.75,
+		duration: 240,
+		easing: "easeOut",
+	});
+	app.chainAnimation(slideIn, fade);
+}
+
+function toggleWrap(): void {
+	wrapEnabled.value = !wrapEnabled.value;
+	statusText.value = `TextArea wrap ${wrapEnabled.value ? "enabled" : "disabled"}`;
+	pushLog(`textarea wrap set to ${wrapEnabled.value ? "on" : "off"}`);
+	updateNotesMeta();
+}
+
+function runCommand(raw: string): void {
+	const command = raw.trim().toLowerCase();
+	if (command.length === 0) {
+		statusText.value = "Input submitted with empty command";
+		return;
+	}
+
+	switch (command) {
+		case "anim":
+		case "animate":
+			runHeroChoreography();
+			return;
+		case "theme":
+		case "theme next":
+			cycleTheme();
+			return;
+		case "banner":
+			toggleRuntimeBanner();
+			return;
+		case "wrap":
+			toggleWrap();
+			return;
+		default:
+			if (command.startsWith("theme ")) {
+				const index = Number(command.slice(6).trim());
+				if (Number.isInteger(index) && index >= 0 && index < themeModes.length) {
+					applyTheme(index);
+					return;
+				}
+			}
+			statusText.value = `Input command: ${raw}`;
+			pushLog(`command submitted: ${raw}`);
+	}
+}
+
+function handleThemeSelection(event: KrakenEvent): void {
+	const fromEvent = event.selectedIndex;
+	const selected = fromEvent ?? (event.target !== 0 ? ffi.tui_select_get_selected(event.target) : -1);
+	if (selected < 0 || selected >= themeModes.length) return;
+	applyTheme(selected);
+	pushLog(`select changed to: ${getSelectOption(event.target, selected)}`);
+}
+
+function handleCommandSubmit(event: KrakenEvent): void {
+	const value = getContent(event.target);
+	runCommand(value);
+	setContent(event.target, "");
+}
+
+function handleTextAreaChange(): void {
+	updateNotesMeta();
+}
+
+const tree = jsxs("Box", {
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
-	bg: C.bg,
-});
-
-// ── Header bar ────────────────────────────────────────────────────────────────
-
-const header = new Box({
-	width: "100%",
-	height: 3,
-	flexDirection: "row",
-	alignItems: "center",
-	padding: [0, 1, 0, 1],
-	gap: 2,
-	bg: C.bgPanel,
-	border: "single",
-});
-header.setForeground(C.border);
-
-const headerTitle = new Text({
-	content: "⚡ KRAKEN TUI  v1",
-	bold: true,
-	fg: C.accent,
-});
-headerTitle.setWidth(20);
-headerTitle.setHeight(1);
-
-// Tab buttons — plain Text widgets with background highlight for active
-const TAB_LABELS = ["1·Widgets", "2·Animations", "3·Syntax", "4·Themes", "5·Live"];
-const tabWidgets = TAB_LABELS.map((label) =>
-	new Text({ content: ` ${label} `, fg: C.fgMuted }),
-);
-for (let i = 0; i < tabWidgets.length; i++) {
-	const tw = tabWidgets[i]!;
-	tw.setHeight(1);
-	// Text nodes do not always get reliable intrinsic width; force tab width.
-	tw.setWidth(TAB_LABELS[i]!.length + 2);
-}
-
-const headerNav = new Box({
-	flexDirection: "row",
+	padding: 1,
 	gap: 1,
-	alignItems: "center",
+	bg: rootBackground,
+	role: "region",
+	"aria-label": "Kraken v2 capability showcase",
+	children: [
+		jsx("Text", {
+			key: "header",
+			content: "# Kraken TUI v2 Showcase\n\nSignals + JSX + native FFI engine in one interactive sample.",
+			format: "markdown",
+			fg: accentColor,
+			height: 4,
+			role: "heading",
+			"aria-label": "Kraken showcase title",
+		}),
+		jsxs("Box", {
+			key: "main",
+			width: "100%",
+			height: "100%",
+			flexDirection: "row",
+			gap: 1,
+			children: [
+				jsxs("Box", {
+					key: "control-deck",
+					width: "42%",
+					border: "rounded",
+					padding: 1,
+					gap: 1,
+					flexDirection: "column",
+					role: "region",
+					"aria-label": "Control deck",
+					children: [
+						jsx("Text", {
+							key: "control-title",
+							content: "Control Deck",
+							bold: true,
+							fg: accentColor,
+							height: 1,
+						}),
+						jsx("Input", {
+							key: "command-input",
+							width: "100%",
+							height: 3,
+							border: "single",
+							focusable: true,
+							role: "input",
+							"aria-label": "Command input",
+							"aria-description": "Enter anim, banner, wrap, or theme and press Enter",
+							onSubmit: handleCommandSubmit,
+							ref: (w: Widget) => {
+								commandInputHandle = w.handle;
+							},
+						}),
+						jsx("Select", {
+							key: "theme-select",
+							options: themeModes.map((mode) => mode.name),
+							width: "100%",
+							height: 7,
+							border: "single",
+							focusable: true,
+							role: "list",
+							"aria-label": "Theme selector",
+							"aria-description": "Arrow keys update theme defaults across the subtree",
+							onChange: handleThemeSelection,
+							onSubmit: handleThemeSelection,
+							ref: (w: Widget) => {
+								themeSelectHandle = w.handle;
+							},
+						}),
+						jsx("TextArea", {
+							key: "notes",
+							value: textareaSeed,
+							wrap: wrapEnabled,
+							width: "100%",
+							height: 8,
+							border: "single",
+							focusable: true,
+							role: "textarea",
+							"aria-label": "Notes editor",
+							"aria-description": "Editable multiline text area",
+							onChange: handleTextAreaChange,
+							ref: (w: Widget) => {
+								notesHandle = w.handle;
+							},
+						}),
+						jsx("Text", {
+							key: "notes-meta",
+							content: notesMeta,
+							height: 1,
+						}),
+						jsx("Text", {
+							key: "code",
+							content: [
+								"pub extern \"C\" fn tui_render() -> i32 {",
+								"    ffi_wrap(|| render::render(&mut ctx).map(|_| 0))",
+								"}",
+							].join("\n"),
+							format: "code",
+							language: "rust",
+							border: "single",
+							fg: codeFgColor,
+							bg: codeBgColor,
+							height: 5,
+							role: "status",
+							"aria-label": "Syntax highlighted Rust snippet",
+						}),
+					],
+				}),
+				jsxs("Box", {
+					key: "observability",
+					width: "58%",
+					flexDirection: "column",
+					gap: 1,
+					children: [
+						jsxs("Box", {
+							key: "hero",
+							border: "rounded",
+							padding: 1,
+							gap: 1,
+							flexDirection: "column",
+							role: "status",
+							"aria-label": "Live metrics card",
+							ref: (w: Widget) => {
+								heroCard = w;
+							},
+							children: [
+								jsxs("Box", {
+									key: "badge-row",
+									width: "100%",
+									height: 1,
+									flexDirection: "row",
+									alignItems: "center",
+									gap: 1,
+									children: [
+										jsx("Text", {
+											key: "badge-label",
+											content: "native core live",
+											width: 18,
+											bold: true,
+											fg: accentColor,
+											height: 1,
+											role: "status",
+											"aria-label": "Native core live badge",
+											ref: (w: Widget) => {
+												liveBadge = w;
+											},
+										}),
+										jsx("Text", {
+											key: "badge-spinner",
+											content: spinnerGlyph,
+											width: 1,
+											fg: accentColor,
+											height: 1,
+											role: "status",
+											"aria-label": "Live spinner glyph",
+										}),
+									],
+								}),
+								jsx("Text", {
+									key: "theme",
+									content: activeThemeName,
+									fg: accentColor,
+									bold: true,
+									height: 1,
+									role: "status",
+									"aria-label": "Active theme",
+								}),
+								jsx("Text", {
+									key: "metrics",
+									content: metricsText,
+									height: 1,
+									role: "status",
+									"aria-label": "Runtime metrics",
+								}),
+								jsx("Text", {
+									key: "status",
+									content: statusText,
+									height: 1,
+									role: "status",
+									"aria-label": "Action status",
+								}),
+							],
+						}),
+						jsxs("Box", {
+							key: "runtime-host",
+							border: "single",
+							padding: [0, 1, 0, 1],
+							height: 4,
+							role: "region",
+							"aria-label": "Runtime tree operations host",
+							ref: (w: Widget) => {
+								runtimeHost = w;
+							},
+							children: [
+								jsx("Text", {
+									key: "runtime-title",
+									content: "Runtime Tree Ops [b] insert/remove subtree",
+									fg: accentColor,
+									height: 1,
+									role: "status",
+									"aria-label": "Runtime host title",
+								}),
+								jsx("Text", {
+									key: "runtime-label",
+									content: runtimeHostHint,
+									fg: hintColor,
+									height: 1,
+									role: "status",
+									"aria-label": "Runtime host status",
+								}),
+							],
+						}),
+						jsxs("ScrollBox", {
+							key: "log-scroll",
+							width: "100%",
+							height: 12,
+							border: "single",
+							role: "list",
+							"aria-label": "Event log",
+							children: [
+								jsx("Text", {
+									key: "log-text",
+									content: logText,
+									width: "100%",
+									height: 80,
+									role: "status",
+									"aria-label": "Log output",
+								}),
+							],
+						}),
+					],
+				}),
+			],
+		}),
+		jsx("Text", {
+			key: "footer",
+			content: footerHint,
+			fg: accentColor,
+			height: 1,
+			role: "status",
+			"aria-label": "Keyboard help",
+		}),
+	],
 });
-for (const tw of tabWidgets) headerNav.append(tw);
 
-header.append(headerTitle);
-header.append(headerNav);
+const instance = render(tree, app);
+rootWidget = instance.widget;
 
-// ── Content area ──────────────────────────────────────────────────────────────
-
-// Only one page is a child at a time — pages are swapped via removeChild / append
-const contentArea = new Box({
-	width: "100%",
-	height: CONTENT_H,
-	bg: C.bg,
-});
-
-// ── Status bar ────────────────────────────────────────────────────────────────
-
-const statusHint = new Text({ content: "", fg: C.fgMuted });
-const statusInfo = new Text({ content: "Kraken TUI v1 — Rust + Bun FFI", fg: C.border });
-statusHint.setHeight(1);
-statusInfo.setHeight(1);
-
-const statusBar = new Box({
-	width: "100%",
-	height: 1,
-	flexDirection: "row",
-	justifyContent: "space-between",
-	padding: [0, 1, 0, 1],
-	bg: C.bgPanel,
-});
-statusBar.append(statusHint);
-statusBar.append(statusInfo);
-
-root.append(header);
-root.append(contentArea);
-root.append(statusBar);
-app.setRoot(root);
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE 1 — Widget Gallery
-// ══════════════════════════════════════════════════════════════════════════════
-
-function buildGalleryPage(): Box {
-	const page = new Box({
-		width: "100%",
-		height: CONTENT_H,
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-		bg: C.bg,
-	});
-
-	const title = new Text({
-		content: "Widget Gallery  —  all five widget types in one view",
-		bold: true,
-		fg: C.accent,
-	});
-	title.setHeight(1);
-	title.setWidth("100%");
-
-	// Two-column row
-	const cols = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// ── Left column ───────────────────────────────────────────────────────────
-
-	const left = new Box({ flexDirection: "column", gap: 1 });
-	left.setWidth("50%");
-
-	// Text widget (markdown)
-	const mdCaption = new Text({ content: "Text  (pulldown-cmark markdown)", fg: C.fgMuted, bold: true });
-	mdCaption.setHeight(1);
-
-	const mdText = new Text({
-		content: [
-			"# Heading 1",
-			"",
-			"**Bold**, *italic*, `code`, ~~strike~~",
-			"",
-			"- Flexbox layout via Taffy 0.9",
-			"* Double-buffered rendering",
-			"- 73 public FFI symbols",
-		].join("\n"),
-		format: "markdown",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	mdText.setWidth("100%");
-	mdText.setHeight(9);
-	mdText.setBorderStyle("rounded");
-	mdText.setForeground(C.border);
-	mdText.setPadding(0, 1, 0, 1);
-
-	// Select widget
-	const selCaption = new Text({ content: "Select  (keyboard-navigable dropdown)", fg: C.fgMuted, bold: true });
-	selCaption.setHeight(1);
-
-	const gallerySelect = new Select({
-		options: ["Box — flex container", "Text — markdown + code", "Input — editable field", "Select — this widget", "ScrollBox — clipped viewport"],
-		width: "100%",
-		height: 7,
-		border: "rounded",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	gallerySelect.setFocusable(true);
-
-	left.append(mdCaption);
-	left.append(mdText);
-	left.append(selCaption);
-	left.append(gallerySelect);
-
-	// ── Right column ──────────────────────────────────────────────────────────
-
-	const right = new Box({ flexDirection: "column", gap: 1 });
-	right.setWidth("50%");
-
-	// Input widget
-	const inCaption = new Text({ content: "Input  (text entry with cursor)", fg: C.fgMuted, bold: true });
-	inCaption.setHeight(1);
-
-	const galleryInput = new Input({
-		width: "100%",
-		height: 3,
-		border: "rounded",
-		fg: C.fg,
-		bg: C.bgCard,
-		maxLength: 60,
-	});
-	galleryInput.setFocusable(true);
-
-	const inHint = new Text({
-		content: "Tab to focus · arrows move cursor · type to edit",
-		fg: C.fgMuted,
-		italic: true,
-	});
-	inHint.setHeight(1);
-
-	// ScrollBox widget
-	const sbCaption = new Text({ content: "ScrollBox  (clipped scrollable viewport)", fg: C.fgMuted, bold: true });
-	sbCaption.setHeight(1);
-
-	const scrollBox = new ScrollBox({
-		width: "100%",
-		height: 7,
-		border: "rounded",
-		fg: C.border,
-		bg: C.bgCard,
-	});
-
-	const scrollContent = new Text({
-		content: Array.from({ length: 24 }, (_, i) =>
-			`  ${String(i + 1).padStart(2, " ")}  │  Scroll this viewport with the mouse wheel`,
-		).join("\n"),
-		format: "plain",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	scrollContent.setWidth("100%");
-	scrollContent.setHeight(24);
-	scrollBox.append(scrollContent);
-
-	right.append(inCaption);
-	right.append(galleryInput);
-	right.append(inHint);
-	right.append(sbCaption);
-	right.append(scrollBox);
-
-	cols.append(left);
-	cols.append(right);
-
-	page.append(title);
-	page.append(cols);
-
-	return page;
+if (commandInputHandle !== 0) {
+	ffi.tui_focus(commandInputHandle);
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE 2 — Animation Gallery
-// ══════════════════════════════════════════════════════════════════════════════
-
-// Module-level refs so switchPage() can restart demos on every visit
-let colorBody: Text | null = null;
-let colorAnimHandle = 0;
-let chainLabelA: Text | null = null;
-let chainLabelB: Text | null = null;
-
-// Keep track so we can restart the progress chain when revisiting the page
-let progressBlocks: Text[] = [];
-let progressAnimHandles: number[] = [];
-
-function startProgressChain() {
-	const colors = [C.red, C.orange, C.yellow, C.green, C.cyan, C.accent, C.purple, C.pink];
-
-	let prev: number | null = null;
-	progressAnimHandles = [];
-
-	for (let i = 0; i < progressBlocks.length; i++) {
-		progressBlocks[i]!.setOpacity(0);
-		const h = progressBlocks[i]!.animate({
-			property: "opacity",
-			target: 1.0,
-			duration: 180,
-			easing: "easeOut",
-		});
-		progressAnimHandles.push(h);
-		if (prev !== null) app.chainAnimation(prev, h);
-		progressBlocks[i]!.setForeground(colors[i % colors.length]!);
-		prev = h;
-	}
-}
-
-function buildAnimPage(): Box {
-	const page = new Box({
-		width: "100%",
-		height: CONTENT_H,
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-		bg: C.bg,
-	});
-
-	const title = new Text({
-		content: "Animation System  —  v1 property interpolation, built-ins, and chaining",
-		bold: true,
-		fg: C.accent,
-	});
-	title.setHeight(1);
-	title.setWidth("100%");
-
-	// ── Row 1: three animation cards ─────────────────────────────────────────
-
-	const row1 = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// Card helper — stretch alignment so children fill the width
-	function makeCard(widthPct: string, borderColor: string): Box {
-		const card = new Box({
-			height: 6,
-			border: "rounded",
-			fg: borderColor,
-			bg: C.bgCard,
-			padding: 1,
-			flexDirection: "column",
-			justifyContent: "center",
-		});
-		card.setWidth(widthPct);
-		return card;
-	}
-
-	// Spinner card
-	const spinCard = makeCard("33%", C.cyan);
-	const spinHead = new Text({ content: "Spinner", fg: C.fgMuted, bold: true });
-	spinHead.setHeight(1);
-	spinHead.setWidth("100%");
-	const spinBody = new Text({ content: "◌", fg: C.cyan, bold: true });
-	spinBody.setHeight(1);
-	spinBody.setWidth("100%");
-	const spinFoot = new Text({ content: "Braille · 80ms/frame · ∞", fg: C.fgMuted });
-	spinFoot.setHeight(1);
-	spinFoot.setWidth("100%");
-	spinCard.append(spinHead);
-	spinCard.append(spinBody);
-	spinCard.append(spinFoot);
-
-	// Pulse card
-	const pulseCard = makeCard("33%", C.purple);
-	const pulseHead = new Text({ content: "Pulse", fg: C.fgMuted, bold: true });
-	pulseHead.setHeight(1);
-	pulseHead.setWidth("100%");
-	const pulseBody = new Text({ content: "◈  opacity oscillates  ◈", fg: C.purple, bold: true });
-	pulseBody.setHeight(1);
-	pulseBody.setWidth("100%");
-	const pulseFoot = new Text({ content: "easeInOut · 1500ms · ∞", fg: C.fgMuted });
-	pulseFoot.setHeight(1);
-	pulseFoot.setWidth("100%");
-	pulseCard.append(pulseHead);
-	pulseCard.append(pulseBody);
-	pulseCard.append(pulseFoot);
-
-	// Color-transition card
-	const colorCard = makeCard("33%", C.orange);
-	const colorHead = new Text({ content: "Color Transition", fg: C.fgMuted, bold: true });
-	colorHead.setHeight(1);
-	colorHead.setWidth("100%");
-	colorBody = new Text({ content: "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓", fg: C.green, bold: true });
-	colorBody.setHeight(1);
-	colorBody.setWidth("100%");
-	const colorFoot = new Text({ content: "fgColor · green→red · easeInOut · ∞", fg: C.fgMuted });
-	colorFoot.setHeight(1);
-	colorFoot.setWidth("100%");
-	colorCard.append(colorHead);
-	colorCard.append(colorBody);
-	colorCard.append(colorFoot);
-
-	row1.append(spinCard);
-	row1.append(pulseCard);
-	row1.append(colorCard);
-
-	// ── Row 2: progress chain + chain demo ───────────────────────────────────
-
-	const row2 = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// Progress card (staggered rainbow)
-	const progCard = new Box({
-		height: 6,
-		border: "rounded",
-		fg: C.green,
-		bg: C.bgCard,
-		padding: 1,
-		flexDirection: "column",
-		justifyContent: "center",
-		gap: 1,
-	});
-	progCard.setWidth("66%");
-
-	const progHead = new Text({ content: "Chained Progress  —  each block fades in sequentially via chainAnimation()", fg: C.fgMuted, bold: true });
-	progHead.setHeight(1);
-
-	const progBarRow = new Box({ flexDirection: "row" });
-	progBarRow.setHeight(1);
-
-	progressBlocks = [];
-	for (let i = 0; i < 36; i++) {
-		const block = new Text({ content: "█" });
-		block.setWidth(1);
-		block.setHeight(1);
-		block.setOpacity(0);
-		progressBlocks.push(block);
-		progBarRow.append(block);
-	}
-
-	const progFoot = new Text({ content: "36 blocks · 180 ms each · easeOut  — press R to replay all", fg: C.fgMuted });
-	progFoot.setHeight(1);
-
-	progCard.append(progHead);
-	progCard.append(progBarRow);
-	progCard.append(progFoot);
-
-	// Chain A → B card
-	const chainCard = new Box({
-		height: 6,
-		border: "rounded",
-		fg: C.yellow,
-		bg: C.bgCard,
-		padding: 1,
-		flexDirection: "column",
-		justifyContent: "center",
-		gap: 1,
-	});
-	chainCard.setWidth("33%");
-
-	const chainHead = new Text({ content: "Animation Chaining", fg: C.fgMuted, bold: true });
-	chainHead.setHeight(1);
-
-	const chainRow = new Box({ flexDirection: "row", gap: 1, alignItems: "center" });
-	chainRow.setHeight(1);
-
-	chainLabelA = new Text({ content: "Phase A", fg: C.green, bold: true });
-	chainLabelA.setWidth(7);
-	chainLabelA.setHeight(1);
-	const chainArrow = new Text({ content: "  →  ", fg: C.fgMuted });
-	chainArrow.setWidth(5);
-	chainArrow.setHeight(1);
-	chainLabelB = new Text({ content: "Phase B", fg: C.purple, bold: true });
-	chainLabelB.setWidth(7);
-	chainLabelB.setHeight(1);
-	chainLabelA.setOpacity(0);
-	chainLabelB.setOpacity(0);
-
-	chainRow.append(chainLabelA);
-	chainRow.append(chainArrow);
-	chainRow.append(chainLabelB);
-
-	const chainFoot = new Text({ content: "A fades in · completes · B begins", fg: C.fgMuted });
-	chainFoot.setHeight(1);
-
-	chainCard.append(chainHead);
-	chainCard.append(chainRow);
-	chainCard.append(chainFoot);
-
-	row2.append(progCard);
-	row2.append(chainCard);
-
-	// ── Start built-in infinite animations (run from page-build time) ─────────
-
-	// Spinner (built-in, runs indefinitely)
-	spinBody.spinner({ interval: 80 });
-
-	// Pulse (built-in, oscillates indefinitely)
-	pulseBody.pulse({ duration: 1500, easing: "easeInOut" });
-
-	// Color transition, progress chain, and A→B chain are started (or restarted)
-	// in restartAnimPageAnimations(), called every time the user navigates to this page.
-
-	page.append(title);
-	page.append(row1);
-	page.append(row2);
-
-	return page;
-}
-
-/// Restart all time-sensitive animation page demos.
-///
-/// Called every time the user navigates to the animation page so they always
-/// see fresh transitions — not stale state from before they arrived.
-function restartAnimPageAnimations() {
-	if (!colorBody || !chainLabelA || !chainLabelB) return;
-
-	// ── Color transition: cancel any running loop, reset to accent, start fresh ──
-	if (colorAnimHandle > 0) {
-		try { colorBody.cancelAnimation(colorAnimHandle); } catch (_) { /* already done */ }
-	}
-	colorBody.setForeground(C.green);
-	colorAnimHandle = colorBody.animate({
-		property: "fgColor",
-		target: C.red,
-		duration: 1200,
-		easing: "easeInOut",
-		loop: true,
-	});
-
-	// ── Staggered progress chain ───────────────────────────────────────────────
-	startProgressChain();
-
-	// ── Animation chaining (A → B) ────────────────────────────────────────────
-	chainLabelA.setOpacity(0);
-	chainLabelB.setOpacity(0);
-	const hA = chainLabelA.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeOut" });
-	const hB = chainLabelB.animate({ property: "opacity", target: 1.0, duration: 900, easing: "easeInOut" });
-	app.chainAnimation(hA, hB);
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE 3 — Syntax & Markdown
-// ══════════════════════════════════════════════════════════════════════════════
-
-function buildSyntaxPage(): Box {
-	const page = new Box({
-		width: "100%",
-		height: CONTENT_H,
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-		bg: C.bg,
-	});
-
-	const title = new Text({
-		content: "Syntax & Markdown  —  pulldown-cmark + syntect rendering in Rust",
-		bold: true,
-		fg: C.accent,
-	});
-	title.setHeight(1);
-	title.setWidth("100%");
-
-	const cols = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// ── Left: Markdown ────────────────────────────────────────────────────────
-
-	const leftCol = new Box({ flexDirection: "column", gap: 1 });
-	leftCol.setWidth("48%");
-
-	const mdCaption = new Text({ content: "Markdown  (H1-H4, bold, italic, strike, lists, blockquote, code, HR)", fg: C.fgMuted, bold: true });
-	mdCaption.setHeight(1);
-
-	const mdScroll = new ScrollBox({
-		width: "100%",
-		height: CONTENT_H - 3,
-		border: "rounded",
-		fg: C.border,
-		bg: C.bgCard,
-	});
-
-	const mdContent = new Text({
-		content: [
-			"# Kraken TUI v1",
-			"",
-			"A **Rust-powered** terminal UI library with *TypeScript*",
-			"bindings via Bun FFI — 73 public C ABI symbols.",
-			"",
-			"## Inline Styles",
-			"",
-			"**bold**, *italic*, `inline code`, ~~strikethrough~~,",
-			"and [links are underlined](https://example.com).",
-			"",
-			"## Unordered List",
-			"",
-			"- **Tree** — handle-based node CRUD",
-			"* **Layout** — Taffy 0.9 flexbox engine",
-			"- **Render** — double-buffered cell grid",
-			"  * dirty diffing for minimal redraws",
-			"  - opacity blending per cell",
-			"* **Event** — focus state machine",
-			"- **Animation** — property interpolation",
-			"",
-			"## Ordered List",
-			"",
-			"1. Rust `cdylib` is compiled to a `.so`",
-			"2. Bun loads it via `dlopen` at runtime",
-			"3. TypeScript calls the 73 C ABI exports",
-			"4. Rust owns all mutable state",
-			"",
-			"## Blockquote",
-			"",
-			"> *All layout and rendering happens in the Rust cdylib —*",
-			"> *never in TypeScript. TS holds opaque `u32` handles.*",
-			"",
-			"## Code Block",
-			"",
-			"```rust",
-			"pub extern \"C\" fn tui_animate(",
-			"    handle: u32, prop: u32,",
-			"    target: u32, dur: f32,",
-			") -> u32 { … }",
-			"```",
-			"",
-			"---",
-			"",
-			"## Performance",
-			"",
-			"FFI round-trip: **~0.085 μs** · 300 mutations: **0.183 ms**",
-			"Frame budget: *16.7 ms at 60 fps* — well within target.",
-			"",
-			"---",
-			"",
-			"> **Design rule:** TypeScript is a *thin command client.*",
-			"> Rust owns the state. Zero TS layout logic.",
-		].join("\n"),
-		format: "markdown",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	mdContent.setWidth("100%");
-	mdContent.setHeight(70);
-
-	mdScroll.append(mdContent);
-	leftCol.append(mdCaption);
-	leftCol.append(mdScroll);
-
-	// ── Right: Code blocks ────────────────────────────────────────────────────
-
-	const rightCol = new Box({ flexDirection: "column", gap: 1 });
-	rightCol.setWidth("52%");
-
-	// Rust
-	const rustCaption = new Text({ content: "Rust  (syntect · 30+ languages)", fg: C.fgMuted, bold: true });
-	rustCaption.setHeight(1);
-
-	const rustCode = new Text({
-		content: [
-			"#[unsafe(no_mangle)]",
-			"pub extern \"C\" fn tui_animate(",
-			"    handle: u32,",
-			"    prop:   u32,",
-			"    target: u32,",
-			"    duration: f32,",
-			"    easing: u32,",
-			") -> u32 {",
-			"    ffi_wrap_handle(|| {",
-			"        let ctx = context_mut()?;",
-			"        let anim = Animation::new(",
-			"            handle, prop, target,",
-			"            duration, easing,",
-			"        );",
-			"        ctx.start_animation(anim)",
-			"    })",
-			"}",
-		].join("\n"),
-		format: "code",
-		language: "rust",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	rustCode.setWidth("100%");
-	rustCode.setHeight(19);
-	rustCode.setBorderStyle("rounded");
-	rustCode.setForeground(C.border);
-	rustCode.setPadding(0, 1, 0, 1);
-
-	// TypeScript
-	const tsCaption = new Text({ content: "TypeScript  (Bun FFI · bun:ffi dlopen)", fg: C.fgMuted, bold: true });
-	tsCaption.setHeight(1);
-
-	const tsCode = new Text({
-		content: [
-			"// Animate a property with easing",
-			"const h1 = widget.animate({",
-			"  property: \"opacity\",",
-			"  target:   1.0,",
-			"  duration: 800,",
-			"  easing:   \"easeInOut\",",
-			"});",
-			"",
-			"// B starts only after A completes",
-			"app.chainAnimation(h1, h2);",
-			"",
-			"// Built-in: braille spinner",
-			"widget.spinner({ interval: 80 });",
-		].join("\n"),
-		format: "code",
-		language: "typescript",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	tsCode.setWidth("100%");
-	tsCode.setHeight(15);
-	tsCode.setBorderStyle("rounded");
-	tsCode.setForeground(C.border);
-	tsCode.setPadding(0, 1, 0, 1);
-
-	rightCol.append(rustCaption);
-	rightCol.append(rustCode);
-	rightCol.append(tsCaption);
-	rightCol.append(tsCode);
-
-	cols.append(leftCol);
-	cols.append(rightCol);
-
-	page.append(title);
-	page.append(cols);
-
-	return page;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE 4 — Theme Gallery
-// ══════════════════════════════════════════════════════════════════════════════
-
-interface ThemeDef {
-	name: string;
-	bg: string;
-	bgPanel: string;
-	fg: string;
-	accent: string;
-	border: string;
-	green: string;
-	muted: string;
-}
-
-const THEMES: ThemeDef[] = [
-	{ name: "GitHub Dark",      bg: "#0d1117", bgPanel: "#161b22", fg: "#e6edf3", accent: "#58a6ff", border: "#30363d", green: "#3fb950", muted: "#8b949e" },
-	{ name: "Catppuccin Mocha", bg: "#1e1e2e", bgPanel: "#181825", fg: "#cdd6f4", accent: "#89b4fa", border: "#6c7086", green: "#a6e3a1", muted: "#585b70" },
-	{ name: "Tokyo Night",      bg: "#1a1b26", bgPanel: "#16161e", fg: "#c0caf5", accent: "#7aa2f7", border: "#3b4261", green: "#9ece6a", muted: "#565f89" },
-	{ name: "Dracula",          bg: "#282a36", bgPanel: "#21222c", fg: "#f8f8f2", accent: "#bd93f9", border: "#44475a", green: "#50fa7b", muted: "#6272a4" },
-	{ name: "Solarized Dark",   bg: "#002b36", bgPanel: "#073642", fg: "#839496", accent: "#268bd2", border: "#586e75", green: "#859900", muted: "#586e75" },
-	{ name: "Nord",             bg: "#2e3440", bgPanel: "#3b4252", fg: "#d8dee9", accent: "#88c0d0", border: "#4c566a", green: "#a3be8c", muted: "#4c566a" },
-	{ name: "Gruvbox Dark",     bg: "#282828", bgPanel: "#1d2021", fg: "#ebdbb2", accent: "#83a598", border: "#504945", green: "#b8bb26", muted: "#665c54" },
-];
-
-// Mutable refs for live theme preview updates
-let themePreviewBox: Box | null = null;
-let themePreviewText: Text | null = null;
-let themeSwatchBg: Box | null = null;
-let themeSwatchFg: Box | null = null;
-let themeSwatchAccent: Box | null = null;
-let themeSwatchBgLabel: Text | null = null;
-let themeSwatchFgLabel: Text | null = null;
-let themeSwatchAccentLabel: Text | null = null;
-let themeSelectWidget: Select | null = null;
-
-function readableTextColor(hex: string): string {
-	const m = /^#?([a-fA-F0-9]{6})$/.exec(hex);
-	if (!m) return "#e6edf3";
-	const v = m[1]!;
-	const r = Number.parseInt(v.slice(0, 2), 16);
-	const g = Number.parseInt(v.slice(2, 4), 16);
-	const b = Number.parseInt(v.slice(4, 6), 16);
-	// Perceived luminance (sRGB weighted); dark backgrounds need light text.
-	const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-	return lum > 140 ? "#0d1117" : "#e6edf3";
-}
-
-function applyThemePreview(t: ThemeDef) {
-	if (themePreviewBox) {
-		themePreviewBox.setBackground(t.bgPanel);
-		themePreviewBox.setForeground(t.border);
-	}
-	if (themePreviewText) {
-		themePreviewText.setBackground(t.bgPanel);
-		themePreviewText.setForeground(t.fg);
-	}
-	if (themeSwatchBg) {
-		themeSwatchBg.setBackground(t.bg);
-	}
-	if (themeSwatchFg) {
-		themeSwatchFg.setBackground(t.fg);
-	}
-	if (themeSwatchAccent) {
-		themeSwatchAccent.setBackground(t.accent);
-	}
-	if (themeSwatchBgLabel) {
-		themeSwatchBgLabel.setForeground(readableTextColor(t.bg));
-	}
-	if (themeSwatchFgLabel) {
-		themeSwatchFgLabel.setForeground(readableTextColor(t.fg));
-	}
-	if (themeSwatchAccentLabel) {
-		themeSwatchAccentLabel.setForeground(readableTextColor(t.accent));
-	}
-}
-
-function buildThemePage(): Box {
-	const page = new Box({
-		width: "100%",
-		height: CONTENT_H,
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-		bg: C.bg,
-	});
-
-	const title = new Text({
-		content: "Theme Gallery  —  seven built-in palettes with live preview",
-		bold: true,
-		fg: C.accent,
-	});
-	title.setHeight(1);
-	title.setWidth("100%");
-
-	const cols = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// ── Left: selector + swatches ─────────────────────────────────────────────
-
-	const leftCol = new Box({ flexDirection: "column", gap: 1 });
-	leftCol.setWidth("34%");
-
-	const selCaption = new Text({ content: "Navigate to preview:", fg: C.fgMuted, bold: true });
-	selCaption.setHeight(1);
-
-	const themeSelect = new Select({
-		options: THEMES.map((t) => t.name),
-		width: "100%",
-		height: 9,
-		border: "rounded",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	themeSelect.setFocusable(true);
-	themeSelectWidget = themeSelect;
-
-	const swatchCaption = new Text({ content: "Palette:", fg: C.fgMuted, bold: true });
-	swatchCaption.setHeight(1);
-
-	const swatchRow = new Box({ flexDirection: "row", gap: 1 });
-	swatchRow.setHeight(1);
-
-	const swBg = new Box({ height: 1 });
-	swBg.setWidth(10);
-	const swBgLabel = new Text({ content: " bg     " });
-	swBgLabel.setHeight(1);
-	swBgLabel.setBold(true);
-	swBg.append(swBgLabel);
-
-	const swFg = new Box({ height: 1 });
-	swFg.setWidth(10);
-	const swFgLabel = new Text({ content: " fg     " });
-	swFgLabel.setHeight(1);
-	swFgLabel.setBold(true);
-	swFg.append(swFgLabel);
-
-	const swAcc = new Box({ height: 1 });
-	swAcc.setWidth(10);
-	const swAccLabel = new Text({ content: " accent " });
-	swAccLabel.setHeight(1);
-	swAccLabel.setBold(true);
-	swAcc.append(swAccLabel);
-
-	themeSwatchBg = swBg;
-	themeSwatchFg = swFg;
-	themeSwatchAccent = swAcc;
-	themeSwatchBgLabel = swBgLabel;
-	themeSwatchFgLabel = swFgLabel;
-	themeSwatchAccentLabel = swAccLabel;
-
-	swatchRow.append(swBg);
-	swatchRow.append(swFg);
-	swatchRow.append(swAcc);
-
-	const hintText = new Text({
-		content: "↑↓ arrows update live\nTab moves focus",
-		format: "plain",
-		fg: C.fgMuted,
-	});
-	hintText.setHeight(2);
-
-	leftCol.append(selCaption);
-	leftCol.append(themeSelect);
-	leftCol.append(swatchCaption);
-	leftCol.append(swatchRow);
-	leftCol.append(hintText);
-
-	// ── Right: live preview panel ─────────────────────────────────────────────
-
-	const rightCol = new Box({ flexDirection: "column", gap: 1 });
-	rightCol.setWidth("65%");
-
-	const prevCaption = new Text({ content: "Live preview:", fg: C.fgMuted, bold: true });
-	prevCaption.setHeight(1);
-
-	const previewBox = new Box({
-		width: "100%",
-		height: CONTENT_H - 4,
-		border: "rounded",
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-	});
-	themePreviewBox = previewBox;
-
-	const previewText = new Text({
-		content: [
-			"# Preview Panel",
-			"",
-			"Theme colors update **live** as you",
-			"navigate the selector with arrow keys.",
-			"",
-			"## What changes",
-			"",
-			"- Background and foreground",
-			"- Accent and border colors",
-			"- Applied via direct style setters",
-			"",
-			"The v1 Theme API also supports",
-			"*cascading defaults* via `Theme.create()`",
-			"and `theme.applyTo(widget)`, giving",
-			"whole subtrees a consistent look.",
-		].join("\n"),
-		format: "markdown",
-		fg: C.fg,
-		bg: C.bg,
-	});
-	previewText.setWidth("100%");
-	previewText.setHeight(20);
-	themePreviewText = previewText;
-
-	previewBox.append(previewText);
-	rightCol.append(prevCaption);
-	rightCol.append(previewBox);
-
-	cols.append(leftCol);
-	cols.append(rightCol);
-
-	page.append(title);
-	page.append(cols);
-
-	// Set initial preview
-	applyThemePreview(THEMES[0]!);
-
-	return page;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// PAGE 5 — Live Interactive Form
-// ══════════════════════════════════════════════════════════════════════════════
-
-let liveOutput: Text | null = null;
-let liveNameInput: Input | null = null;
-let livePassInput: Input | null = null;
-let liveStyleSelect: Select | null = null;
-
-const GREETINGS: Record<string, (n: string) => string> = {
-	Friendly:     (n) => `Hey ${n}! Really great to see you here :)`,
-	Formal:       (n) => `Good day, ${n}. I trust you are well.`,
-	Enthusiastic: (n) => `OH WOW ${n}!! YOU ARE INCREDIBLE!! THIS IS AMAZING!!`,
-	Mysterious:   (n) => `...${n}... I have been expecting you.`,
-	Pirate:       (n) => `Arr, ${n}! Hoist the mainsail, ye scallywag!`,
-	Haiku:        (n) => `${n} types text\nRust renders the terminal\nBun bridges the gap`,
-};
-
-function updateLiveOutput() {
-	if (!liveOutput || !liveNameInput || !livePassInput || !liveStyleSelect) return;
-	const name = liveNameInput.getValue() || "stranger";
-	const passLen = livePassInput.getValue().length;
-	const styleIdx = liveStyleSelect.getSelected();
-	const styleName = styleIdx >= 0 ? liveStyleSelect.getOption(styleIdx) : liveStyleSelect.getOption(0);
-	const greetFn = GREETINGS[styleName];
-	const greeting = greetFn ? greetFn(name) : `Hello, ${name}!`;
-
-	liveOutput.setContent([
-		"## Live Output",
-		"",
-		`**Name:** ${name}`,
-		`**Password:** ${"●".repeat(passLen)} *(${passLen} chars, masked)*`,
-		`**Style:** ${styleName}`,
-		"",
-		"---",
-		"",
-		"## Greeting",
-		"",
-		greeting,
-		"",
-		"---",
-		"",
-		"*Events: key, submit, change, focus*",
-		"*All state lives in Rust — zero TS state*",
-	].join("\n"));
-}
-
-function buildLivePage(): Box {
-	const page = new Box({
-		width: "100%",
-		height: CONTENT_H,
-		flexDirection: "column",
-		padding: 1,
-		gap: 1,
-		bg: C.bg,
-	});
-
-	const title = new Text({
-		content: "Live Form  —  input masking, real-time events, and dynamic markdown output",
-		bold: true,
-		fg: C.accent,
-	});
-	title.setHeight(1);
-	title.setWidth("100%");
-
-	const cols = new Box({ width: "100%", flexDirection: "row", gap: 2 });
-
-	// ── Left: form fields (column layout per field — avoids flex width fight) ─────
-
-	const formCol = new Box({ flexDirection: "column", gap: 1 });
-	formCol.setWidth("52%");
-
-	// Name field (label above input)
-	const nameLabel = new Text({ content: "Name:", fg: C.green, bold: true });
-	nameLabel.setHeight(1);
-	nameLabel.setWidth("100%");
-	const nameInput = new Input({ width: "100%", height: 3, border: "rounded", fg: C.fg, bg: C.bgCard, maxLength: 32 });
-	nameInput.setFocusable(true);
-	liveNameInput = nameInput;
-
-	// Password field (label above input)
-	const passLabel = new Text({ content: "Password:  (masked with ●)", fg: C.yellow, bold: true });
-	passLabel.setHeight(1);
-	passLabel.setWidth("100%");
-	const passInput = new Input({ width: "100%", height: 3, border: "rounded", fg: C.fg, bg: C.bgCard, maxLength: 32, mask: "●" });
-	passInput.setFocusable(true);
-	livePassInput = passInput;
-
-	// Greeting style select
-	const styleCaption = new Text({ content: "Greeting style:", fg: C.purple, bold: true });
-	styleCaption.setHeight(1);
-	styleCaption.setWidth("100%");
-
-	const styleSelect = new Select({
-		options: Object.keys(GREETINGS),
-		width: "100%",
-		height: 8,
-		border: "rounded",
-		fg: C.fg,
-		bg: C.bgCard,
-	});
-	styleSelect.setFocusable(true);
-	liveStyleSelect = styleSelect;
-
-	formCol.append(nameLabel);
-	formCol.append(nameInput);
-	formCol.append(passLabel);
-	formCol.append(passInput);
-	formCol.append(styleCaption);
-	formCol.append(styleSelect);
-
-	// ── Right: live output ────────────────────────────────────────────────────
-
-	const outCol = new Box({ flexDirection: "column", gap: 1 });
-	outCol.setWidth("48%");
-
-	const outCaption = new Text({ content: "Output  (updates on every keystroke):", fg: C.fgMuted, bold: true });
-	outCaption.setHeight(1);
-
-	const outScroll = new ScrollBox({
-		width: "100%",
-		height: CONTENT_H - 3,
-		border: "rounded",
-		fg: C.border,
-		bg: C.bgCard,
-	});
-
-	const outText = new Text({
-		content: "Start typing...",
-		format: "markdown",
-		fg: C.fgMuted,
-		bg: C.bgCard,
-	});
-	outText.setWidth("100%");
-	outText.setHeight(30);
-	liveOutput = outText;
-
-	outScroll.append(outText);
-	outCol.append(outCaption);
-	outCol.append(outScroll);
-
-	cols.append(formCol);
-	cols.append(outCol);
-
-	page.append(title);
-	page.append(cols);
-
-	return page;
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Page management
-// ══════════════════════════════════════════════════════════════════════════════
-
-const PAGE_HINTS = [
-	"[Tab] Focus  [↑↓] Navigate  [Enter] Submit",
-	"[Tab] Focus  [R] Replay all demos",
-	"[Tab] Focus  [Scroll] Read markdown",
-	"[Tab] Focus  [↑↓] Switch theme  — live preview",
-	"[Tab] Cycle  [Enter] Submit  — try each greeting style!",
-];
-
-const pages: Box[] = [
-	buildGalleryPage(),
-	buildAnimPage(),
-	buildSyntaxPage(),
-	buildThemePage(),
-	buildLivePage(),
-];
-
-let currentPage = 0;
-
-function setActiveTab(idx: number) {
-	for (let i = 0; i < tabWidgets.length; i++) {
-		if (i === idx) {
-			tabWidgets[i]!.setForeground(C.fg);
-			tabWidgets[i]!.setBold(true);
-			tabWidgets[i]!.setBackground(C.bgCard);
-		} else {
-			tabWidgets[i]!.setForeground(C.fgMuted);
-			tabWidgets[i]!.setBold(false);
-			tabWidgets[i]!.setBackground(C.bgPanel);
-		}
-	}
-}
-
-function switchPage(idx: number) {
-	if (idx === currentPage) return;
-	contentArea.removeChild(pages[currentPage]!);
-	currentPage = idx;
-	contentArea.append(pages[currentPage]!);
-	setActiveTab(currentPage);
-	statusHint.setContent(`[1-5] Switch  [Tab] Focus  [Q] Quit   ${PAGE_HINTS[currentPage] ?? ""}`);
-	// Move focus into new page
-	app.focusNext();
-	// Restart animation demos so user always sees them play from the beginning
-	if (idx === 1) {
-		restartAnimPageAnimations();
-	}
-}
-
-// Initialise with page 0
-contentArea.append(pages[0]!);
-setActiveTab(0);
-statusHint.setContent(`[1-5] Switch  [Tab] Focus  [Q] Quit   ${PAGE_HINTS[0]}`);
-app.focusNext();
-updateLiveOutput();
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Event loop  (~60 fps)
-// ══════════════════════════════════════════════════════════════════════════════
-
-let running = true;
-let frameCount = 0;
-
-while (running) {
-	app.readInput(16);
-
-	const events: KrakenEvent[] = app.drainEvents();
-	for (const event of events) {
-		// ── Global key handling ───────────────────────────────────────────────
+applyTheme(0);
+updateNotesMeta();
+pushLog("showcase initialized");
+runHeroChoreography();
+
+const loop = createLoop({
+	app,
+	onEvent(event: KrakenEvent) {
 		if (event.type === "key") {
-			const kc = event.keyCode;
+			if (event.keyCode === KeyCode.Escape) {
+				loop.stop();
+				return;
+			}
+
 			const cp = event.codepoint ?? 0;
-
-			// Quit
-			if (kc === KeyCode.Escape || cp === 0x71 /* q */ || cp === 0x51 /* Q */) {
-				running = false;
-				break;
+			if (cp === 0) return;
+			const key = String.fromCodePoint(cp).toLowerCase();
+			if (key === "q") {
+				loop.stop();
+				return;
 			}
-
-			// Page switching (1–5)
-			if (cp >= 0x31 && cp <= 0x35) {
-				switchPage(cp - 0x31);
-				continue;
+			if (key === " ") {
+				runHeroChoreography();
 			}
-
-			// Animation page: R to replay all animation demos
-			if (currentPage === 1 && (cp === 0x72 /* r */ || cp === 0x52 /* R */)) {
-				restartAnimPageAnimations();
-				continue;
+			if (key === "t") {
+				cycleTheme();
 			}
-
-			// Live page: update output on any keystroke
-			if (currentPage === 4) {
-				updateLiveOutput();
+			if (key === "b") {
+				toggleRuntimeBanner();
+			}
+			if (key === "w") {
+				toggleWrap();
 			}
 		}
 
-		// ── Theme page: live preview on navigation ────────────────────────────
-		// tsc can't resolve bun:ffi types so `Select` narrows to never here — safe at runtime
-		// @ts-expect-error cascading never from missing bun:ffi declarations
-		if (event.type === "change" && event.target === (themeSelectWidget?.handle ?? -1)) {
-			const idx = event.selectedIndex ?? 0;
-			const theme = THEMES[idx];
-			if (theme) applyThemePreview(theme);
+		if (event.type === "focus") {
+			pushLog(`focus ${event.fromHandle ?? 0} -> ${event.toHandle ?? 0}`);
 		}
 
-		// ── Live page: update on select change or submit ──────────────────────
-		if (currentPage === 4 && (event.type === "change" || event.type === "submit")) {
-			updateLiveOutput();
+		if (event.type === "accessibility") {
+			const roleCode = event.roleCode ?? 0;
+			const roleName = roleCode === 0xFFFFFFFF
+				? "label-only"
+				: (ROLE_NAMES[roleCode] ?? `unknown(${roleCode})`);
+			statusText.value = `Accessibility event -> handle=${event.target}, role=${roleName}`;
+			pushLog(`accessibility target=${event.target} role=${roleName}`);
+		}
+	},
+	onTick() {
+		const now = Date.now();
+		if (now - spinnerLastTickMs >= 90) {
+			spinnerFrame = (spinnerFrame + 1) % SPINNER_FRAMES.length;
+			spinnerGlyph.value = SPINNER_FRAMES[spinnerFrame]!;
+			spinnerLastTickMs = now;
+		}
+
+		const activeAnimations = Number(app.getPerfCounter(6));
+		metricsText.value =
+			`nodes=${app.getNodeCount()} anim=${activeAnimations} focus=${app.getFocused()} theme=${activeThemeName.value}`;
+	},
+});
+
+try {
+	await loop.start();
+} finally {
+	if (runtimeBanner) {
+		runtimeBanner.destroySubtree();
+		runtimeBanner = null;
+	}
+
+	stopHeroMotion();
+
+	for (const mode of themeModes) {
+		if (!mode.destroyOnExit) continue;
+		try {
+			mode.theme.destroy();
+		} catch {
+			// Ignore teardown issues for already-destroyed handles.
 		}
 	}
 
-	if (!running) break;
-
-	// Refresh node count every 60 frames
-	frameCount++;
-	if (frameCount % 60 === 0) {
-		const n = app.getNodeCount();
-		statusInfo.setContent(`Nodes: ${n}  •  Kraken TUI v1`);
-	}
-
-	app.render();
+	app.shutdown();
 }
-
-// ── Shutdown ──────────────────────────────────────────────────────────────────
-
-app.shutdown();
