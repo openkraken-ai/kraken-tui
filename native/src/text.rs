@@ -8,6 +8,72 @@
 use crate::context::TuiContext;
 use crate::types::{CellAttrs, ContentFormat, StyledSpan};
 
+/// Resolve a syntax definition from a language hint using tolerant matching.
+///
+/// Order:
+/// 1) token lookup (`rust`, `ts`, `javascript`)
+/// 2) extension lookup (`rs`, `ts`, `js`)
+/// 3) human name lookup (`Rust`, `TypeScript`, `JavaScript`)
+/// 4) plain text fallback
+fn resolve_syntax<'a>(
+    ctx: &'a TuiContext,
+    language: Option<&str>,
+) -> &'a syntect::parsing::SyntaxReference {
+    let Some(raw_lang) = language.map(str::trim).filter(|s| !s.is_empty()) else {
+        return ctx.syntax_set.find_syntax_plain_text();
+    };
+
+    let lower = raw_lang.to_ascii_lowercase();
+    let mut candidates: Vec<&str> = vec![raw_lang];
+    if lower != raw_lang {
+        candidates.push(lower.as_str());
+    }
+    match lower.as_str() {
+        // Prefer TypeScript grammars, but fall back to JavaScript if TS syntax
+        // is unavailable in the active syntect defaults bundle.
+        "typescript" => candidates.extend(["ts", "tsx", "javascript", "js"]),
+        "ts" => candidates.extend(["typescript", "tsx", "javascript", "js"]),
+        "javascript" => candidates.extend(["js"]),
+        "js" => candidates.extend(["javascript"]),
+        "shell" | "bash" | "zsh" => candidates.extend(["sh"]),
+        _ => {}
+    }
+
+    for candidate in &candidates {
+        if let Some(syntax) = ctx.syntax_set.find_syntax_by_token(candidate) {
+            return syntax;
+        }
+    }
+    for candidate in &candidates {
+        let ext = candidate.trim_start_matches('.');
+        if let Some(syntax) = ctx.syntax_set.find_syntax_by_extension(ext) {
+            return syntax;
+        }
+    }
+
+    let name_fallback = match lower.as_str() {
+        "typescript" | "ts" => Some("TypeScript"),
+        "javascript" | "js" => Some("JavaScript"),
+        "rust" | "rs" => Some("Rust"),
+        _ => None,
+    };
+    if let Some(name) = name_fallback {
+        if let Some(syntax) = ctx.syntax_set.find_syntax_by_name(name) {
+            return syntax;
+        }
+    }
+    if let Some(syntax) = ctx
+        .syntax_set
+        .syntaxes()
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(raw_lang))
+    {
+        return syntax;
+    }
+
+    ctx.syntax_set.find_syntax_plain_text()
+}
+
 /// Parse content into styled spans based on format.
 pub(crate) fn parse_content(
     ctx: &TuiContext,
@@ -236,9 +302,7 @@ fn parse_code(ctx: &TuiContext, content: &str, language: Option<&str>) -> Vec<St
     use syntect::easy::HighlightLines;
     use syntect::util::LinesWithEndings;
 
-    let syntax = language
-        .and_then(|lang| ctx.syntax_set.find_syntax_by_token(lang))
-        .unwrap_or_else(|| ctx.syntax_set.find_syntax_plain_text());
+    let syntax = resolve_syntax(ctx, language);
 
     let theme = &ctx.theme_set.themes["base16-ocean.dark"];
     let mut highlighter = HighlightLines::new(syntax, theme);
@@ -305,6 +369,7 @@ pub(crate) fn measure_text(text: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn test_measure_text_ascii() {
@@ -335,6 +400,18 @@ mod tests {
         let spans = parse_content(&ctx, "hello", ContentFormat::Plain, None);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "hello");
+    }
+
+    #[test]
+    fn test_parse_code_typescript_has_token_color_variation() {
+        let ctx = TuiContext::new_for_test();
+        let code = "const x: number = 1;\n// comment\nconst s = \"text\";\n";
+        let spans = parse_content(&ctx, code, ContentFormat::Code, Some("typescript"));
+        let colors: HashSet<u32> = spans.iter().map(|s| s.fg).filter(|&fg| fg != 0).collect();
+        assert!(
+            colors.len() > 1,
+            "expected syntax highlighting to produce multiple token colors for TypeScript"
+        );
     }
 }
 

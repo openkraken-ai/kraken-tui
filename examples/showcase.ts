@@ -82,12 +82,19 @@ const headerTitle = new Text({
 	fg: C.accent,
 });
 headerTitle.setWidth(20);
+headerTitle.setHeight(1);
 
 // Tab buttons — plain Text widgets with background highlight for active
 const TAB_LABELS = ["1·Widgets", "2·Animations", "3·Syntax", "4·Themes", "5·Live"];
 const tabWidgets = TAB_LABELS.map((label) =>
 	new Text({ content: ` ${label} `, fg: C.fgMuted }),
 );
+for (let i = 0; i < tabWidgets.length; i++) {
+	const tw = tabWidgets[i]!;
+	tw.setHeight(1);
+	// Text nodes do not always get reliable intrinsic width; force tab width.
+	tw.setWidth(TAB_LABELS[i]!.length + 2);
+}
 
 const headerNav = new Box({
 	flexDirection: "row",
@@ -112,6 +119,8 @@ const contentArea = new Box({
 
 const statusHint = new Text({ content: "", fg: C.fgMuted });
 const statusInfo = new Text({ content: "Kraken TUI v1 — Rust + Bun FFI", fg: C.border });
+statusHint.setHeight(1);
+statusInfo.setHeight(1);
 
 const statusBar = new Box({
 	width: "100%",
@@ -744,7 +753,22 @@ let themePreviewText: Text | null = null;
 let themeSwatchBg: Box | null = null;
 let themeSwatchFg: Box | null = null;
 let themeSwatchAccent: Box | null = null;
+let themeSwatchBgLabel: Text | null = null;
+let themeSwatchFgLabel: Text | null = null;
+let themeSwatchAccentLabel: Text | null = null;
 let themeSelectWidget: Select | null = null;
+
+function readableTextColor(hex: string): string {
+	const m = /^#?([a-fA-F0-9]{6})$/.exec(hex);
+	if (!m) return "#e6edf3";
+	const v = m[1]!;
+	const r = Number.parseInt(v.slice(0, 2), 16);
+	const g = Number.parseInt(v.slice(2, 4), 16);
+	const b = Number.parseInt(v.slice(4, 6), 16);
+	// Perceived luminance (sRGB weighted); dark backgrounds need light text.
+	const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+	return lum > 140 ? "#0d1117" : "#e6edf3";
+}
 
 function applyThemePreview(t: ThemeDef) {
 	if (themePreviewBox) {
@@ -757,15 +781,21 @@ function applyThemePreview(t: ThemeDef) {
 	}
 	if (themeSwatchBg) {
 		themeSwatchBg.setBackground(t.bg);
-		themeSwatchBg.setForeground(t.fg);
 	}
 	if (themeSwatchFg) {
 		themeSwatchFg.setBackground(t.fg);
-		themeSwatchFg.setForeground(t.bg);
 	}
 	if (themeSwatchAccent) {
 		themeSwatchAccent.setBackground(t.accent);
-		themeSwatchAccent.setForeground(t.bg);
+	}
+	if (themeSwatchBgLabel) {
+		themeSwatchBgLabel.setForeground(readableTextColor(t.bg));
+	}
+	if (themeSwatchFgLabel) {
+		themeSwatchFgLabel.setForeground(readableTextColor(t.fg));
+	}
+	if (themeSwatchAccentLabel) {
+		themeSwatchAccentLabel.setForeground(readableTextColor(t.accent));
 	}
 }
 
@@ -817,21 +847,30 @@ function buildThemePage(): Box {
 	const swBg = new Box({ height: 1 });
 	swBg.setWidth(10);
 	const swBgLabel = new Text({ content: " bg     " });
+	swBgLabel.setHeight(1);
+	swBgLabel.setBold(true);
 	swBg.append(swBgLabel);
 
 	const swFg = new Box({ height: 1 });
 	swFg.setWidth(10);
 	const swFgLabel = new Text({ content: " fg     " });
+	swFgLabel.setHeight(1);
+	swFgLabel.setBold(true);
 	swFg.append(swFgLabel);
 
 	const swAcc = new Box({ height: 1 });
 	swAcc.setWidth(10);
 	const swAccLabel = new Text({ content: " accent " });
+	swAccLabel.setHeight(1);
+	swAccLabel.setBold(true);
 	swAcc.append(swAccLabel);
 
 	themeSwatchBg = swBg;
 	themeSwatchFg = swFg;
 	themeSwatchAccent = swAcc;
+	themeSwatchBgLabel = swBgLabel;
+	themeSwatchFgLabel = swFgLabel;
+	themeSwatchAccentLabel = swAccLabel;
 
 	swatchRow.append(swBg);
 	swatchRow.append(swFg);
