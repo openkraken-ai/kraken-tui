@@ -218,6 +218,7 @@ fn render_node(
     let border_style = resolved.border_style;
     let content = node.content.clone();
     let content_format = node.content_format;
+    let code_language = node.code_language.clone();
     let scroll_x = node.scroll_x;
     let scroll_y = node.scroll_y;
     let cursor_row = node.cursor_row;
@@ -285,7 +286,12 @@ fn render_node(
                 );
             } else {
                 // For Markdown/Code, render as styled spans via Text Module
-                let spans = crate::text::parse_content(ctx, &content, content_format, None);
+                let spans = crate::text::parse_content(
+                    ctx,
+                    &content,
+                    content_format,
+                    code_language.as_deref(),
+                );
                 render_styled_spans(
                     ctx, &spans, content_x, content_y, content_w, content_h, fg, bg, clip, opacity,
                 );
