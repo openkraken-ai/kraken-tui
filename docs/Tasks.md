@@ -678,10 +678,10 @@ And the example demonstrates the full accessible widget lifecycle
 | TASK-L4  | L    | Feature   | 5       | L3           | Done   |
 | TASK-L5  | L    | Feature   | 3       | L4           | Done   |
 | TASK-L6  | L    | Chore     | 5       | L5           | Done   |
-| TASK-M0  | M    | Spike     | 3       | L6, K8       |        |
-| TASK-M1  | M    | Feature   | 3       | M0           |        |
-| TASK-M2  | M    | Feature   | 3       | M1           |        |
-| TASK-M3  | M    | Feature   | 5       | M2           |        |
-| TASK-M4  | M    | Feature   | 3       | M3           |        |
-| TASK-M5  | M    | Chore     | 3       | M4           |        |
+| TASK-M0  | M    | Spike     | 3       | L6, K8       | Done   |
+| TASK-M1  | M    | Feature   | 3       | M0           | Done   |
+| TASK-M2  | M    | Feature   | 3       | M1           | Done   |
+| TASK-M3  | M    | Feature   | 5       | M2           | Done   |
+| TASK-M4  | M    | Feature   | 3       | M3           | Done   |
+| TASK-M5  | M    | Chore     | 3       | M4           | Done   |
 |          |      | **TOTAL** | **128** |              |        |

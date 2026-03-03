@@ -33,7 +33,7 @@ bun run examples/migration-jsx.tsx  # JSX reconciler (v2)
 
 | File | Responsibility |
 |------|----------------|
-| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 94 FFI functions. |
+| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 97 FFI functions. |
 | `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes, `#[repr(C)]`). Manual byte layout — no external FFI library (ADR-T06). |
 | `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`. Maintains `id → handle` map for developer-assigned IDs. |
 | `widget.ts` | Base `Widget` class — layout/style property setters, child management. Holds `handle: number`. v1: `animate()`, `cancelAnimation()`, primitive helpers. |
@@ -116,6 +116,17 @@ lib.tui_animate(handle, 0, bits, 300, 2);
 - `@preact/signals-core` dependency — signal/computed/effect/batch re-exported from index.ts
 - Package split: subpath exports (`./jsx-runtime`, `./jsx-dev-runtime`, `./effect`)
 - Bundle budget: 30KB / 50KB (60% of budget)
+
+**Shipped (Epic M — accessibility):**
+- `ffi.ts` — 3 new FFI symbols: `tui_set_node_role`, `tui_set_node_label`, `tui_set_node_description`
+- `ffi/structs.ts` — `EventType.Accessibility = 7`, `AccessibilityRole` enum constant
+- `widget.ts` — `setRole()`, `setLabel()`, `setDescription()` methods
+- `events.ts` — `"accessibility"` event type, `roleCode` field on `KrakenEvent`
+- `jsx/types.ts` — `role`, `aria-label`, `aria-description` props on `CommonProps`, `onAccessibility` handler
+- `jsx/reconciler.ts` — accessibility prop handling in `applyStaticProp`
+- `loop.ts` — `accessibility` → `onAccessibility` JSX event dispatch
+- `index.ts` — `AccessibilityRole` re-exported
+- Bundle budget: 32.7KB / 50KB (65% of budget)
 
 **Remaining:**
 - ScrollBox auto-wrapping: intercept multiple children → wrap in hidden Box container (TS-layer convenience, not a native change)

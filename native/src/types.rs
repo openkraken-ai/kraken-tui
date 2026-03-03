@@ -165,6 +165,42 @@ pub enum TuiEventType {
     FocusChange = 4,
     Change = 5,
     Submit = 6,
+    Accessibility = 7,
+}
+
+// ============================================================================
+// Accessibility Role (ADR-T23)
+// ============================================================================
+
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityRole {
+    Button = 0,
+    Checkbox = 1,
+    Input = 2,
+    TextArea = 3,
+    List = 4,
+    ListItem = 5,
+    Heading = 6,
+    Region = 7,
+    Status = 8,
+}
+
+impl AccessibilityRole {
+    pub fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Button),
+            1 => Some(Self::Checkbox),
+            2 => Some(Self::Input),
+            3 => Some(Self::TextArea),
+            4 => Some(Self::List),
+            5 => Some(Self::ListItem),
+            6 => Some(Self::Heading),
+            7 => Some(Self::Region),
+            8 => Some(Self::Status),
+            _ => None,
+        }
+    }
 }
 
 /// FFI-safe event struct. Fixed layout, 24 bytes.
@@ -230,6 +266,14 @@ impl TuiEvent {
             event_type: TuiEventType::Submit as u32,
             target,
             data: [0; 4],
+        }
+    }
+
+    pub fn accessibility(target: u32, role_code: u32) -> Self {
+        Self {
+            event_type: TuiEventType::Accessibility as u32,
+            target,
+            data: [role_code, 0, 0, 0],
         }
     }
 }
@@ -512,6 +556,10 @@ pub struct TuiNode {
     // Select widget state
     pub options: Vec<String>,
     pub selected_index: Option<u32>,
+    // Accessibility fields (ADR-T23)
+    pub role: Option<AccessibilityRole>,
+    pub label: Option<String>,
+    pub description: Option<String>,
 }
 
 impl TuiNode {
@@ -545,6 +593,9 @@ impl TuiNode {
             textarea_view_col: 0,
             options: Vec::new(),
             selected_index: None,
+            role: None,
+            label: None,
+            description: None,
         }
     }
 }
@@ -634,6 +685,65 @@ mod tests {
         assert_eq!(AnimProp::from_u8(4), Some(AnimProp::PositionX));
         assert_eq!(AnimProp::from_u8(5), Some(AnimProp::PositionY));
         assert_eq!(AnimProp::from_u8(6), None);
+    }
+
+    #[test]
+    fn test_accessibility_role_from_u32() {
+        assert_eq!(
+            AccessibilityRole::from_u32(0),
+            Some(AccessibilityRole::Button)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(1),
+            Some(AccessibilityRole::Checkbox)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(2),
+            Some(AccessibilityRole::Input)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(3),
+            Some(AccessibilityRole::TextArea)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(4),
+            Some(AccessibilityRole::List)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(5),
+            Some(AccessibilityRole::ListItem)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(6),
+            Some(AccessibilityRole::Heading)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(7),
+            Some(AccessibilityRole::Region)
+        );
+        assert_eq!(
+            AccessibilityRole::from_u32(8),
+            Some(AccessibilityRole::Status)
+        );
+        assert_eq!(AccessibilityRole::from_u32(9), None);
+    }
+
+    #[test]
+    fn test_tui_node_accessibility_defaults() {
+        let mut taffy_tree: taffy::TaffyTree<()> = taffy::TaffyTree::new();
+        let taffy_node = taffy_tree.new_leaf(taffy::Style::DEFAULT).unwrap();
+        let node = TuiNode::new(NodeType::Box, taffy_node);
+        assert_eq!(node.role, None);
+        assert_eq!(node.label, None);
+        assert_eq!(node.description, None);
+    }
+
+    #[test]
+    fn test_accessibility_event_constructor() {
+        let event = TuiEvent::accessibility(42, AccessibilityRole::Button as u32);
+        assert_eq!(event.event_type, TuiEventType::Accessibility as u32);
+        assert_eq!(event.target, 42);
+        assert_eq!(event.data[0], 0); // Button = 0
     }
 
     #[test]

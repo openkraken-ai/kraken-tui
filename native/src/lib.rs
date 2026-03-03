@@ -1206,6 +1206,7 @@ pub extern "C" fn tui_focus(handle: u32) -> i32 {
         ctx.focused = Some(handle);
         if old != handle {
             ctx.event_buffer.push(TuiEvent::focus_change(old, handle));
+            event::maybe_emit_accessibility_event(&mut ctx, handle);
         }
         Ok(0)
     })
@@ -1325,6 +1326,69 @@ pub extern "C" fn tui_mark_dirty(handle: u32) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         tree::mark_dirty(&mut ctx, handle);
+        Ok(0)
+    })
+}
+
+// ============================================================================
+// 4.18 Accessibility (ADR-T23)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_set_node_role(handle: u32, role: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let accessibility_role = types::AccessibilityRole::from_u32(role)
+            .ok_or_else(|| format!("Invalid accessibility role: {role}"))?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.role = Some(accessibility_role);
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_node_label(handle: u32, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+
+        let text = if ptr.is_null() || len == 0 {
+            None
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            Some(
+                std::str::from_utf8(slice)
+                    .map_err(|_| "Invalid UTF-8".to_string())?
+                    .to_string(),
+            )
+        };
+
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.label = text;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_node_description(handle: u32, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+
+        let text = if ptr.is_null() || len == 0 {
+            None
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            Some(
+                std::str::from_utf8(slice)
+                    .map_err(|_| "Invalid UTF-8".to_string())?
+                    .to_string(),
+            )
+        };
+
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.description = text;
         Ok(0)
     })
 }
@@ -1508,6 +1572,105 @@ mod tests {
         assert_eq!(tui_init_headless(80, 24), 0);
         assert_eq!(tui_get_node_count(), 0);
         assert_eq!(tui_destroy_node(handle), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_accessibility_set_role() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Box as u8);
+        assert!(handle > 0);
+
+        // Set role to Button (0)
+        assert_eq!(tui_set_node_role(handle, 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(node.role, Some(types::AccessibilityRole::Button));
+        }
+
+        // Set role to Region (7)
+        assert_eq!(tui_set_node_role(handle, 7), 0);
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(node.role, Some(types::AccessibilityRole::Region));
+        }
+
+        // Invalid role code
+        assert_eq!(tui_set_node_role(handle, 99), -1);
+
+        // Invalid handle
+        assert_eq!(tui_set_node_role(0, 0), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_accessibility_set_label() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Input as u8);
+        assert!(handle > 0);
+
+        let label = "Submit button";
+        assert_eq!(
+            tui_set_node_label(handle, label.as_ptr(), label.len() as u32),
+            0
+        );
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(node.label.as_deref(), Some("Submit button"));
+        }
+
+        // Null pointer clears label
+        assert_eq!(tui_set_node_label(handle, std::ptr::null(), 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(node.label, None);
+        }
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_accessibility_set_description() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Box as u8);
+        assert!(handle > 0);
+
+        let desc = "Form container for user input";
+        assert_eq!(
+            tui_set_node_description(handle, desc.as_ptr(), desc.len() as u32),
+            0
+        );
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(
+                node.description.as_deref(),
+                Some("Form container for user input")
+            );
+        }
+
+        // Null pointer clears description
+        assert_eq!(tui_set_node_description(handle, std::ptr::null(), 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            let node = ctx.nodes.get(&handle).unwrap();
+            assert_eq!(node.description, None);
+        }
 
         tui_shutdown();
     }

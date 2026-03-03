@@ -21,7 +21,8 @@ export type KrakenEventType =
 	| "resize"
 	| "focus"
 	| "change"
-	| "submit";
+	| "submit"
+	| "accessibility";
 
 export interface KrakenEvent {
 	type: KrakenEventType;
@@ -37,6 +38,7 @@ export interface KrakenEvent {
 	fromHandle?: number;
 	toHandle?: number;
 	selectedIndex?: number;
+	roleCode?: number;
 }
 
 function mapEventType(raw: number): KrakenEventType | null {
@@ -53,6 +55,8 @@ function mapEventType(raw: number): KrakenEventType | null {
 			return "change";
 		case EventType.Submit:
 			return "submit";
+		case EventType.Accessibility:
+			return "accessibility";
 		default:
 			return null;
 	}
@@ -88,6 +92,9 @@ function mapRawEvent(raw: TuiEvent): KrakenEvent | null {
 			base.selectedIndex = raw.data[0];
 			break;
 		case "submit":
+			break;
+		case "accessibility":
+			base.roleCode = raw.data[0];
 			break;
 	}
 

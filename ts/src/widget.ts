@@ -8,6 +8,7 @@
 import { ffi } from "./ffi";
 import { checkResult } from "./errors";
 import { parseColor, parseDimension, parseFlexDirection } from "./style";
+import { Buffer } from "buffer";
 
 export abstract class Widget {
 	public readonly handle: number;
@@ -343,5 +344,23 @@ export abstract class Widget {
 
 	focus(): void {
 		checkResult(ffi.tui_focus(this.handle));
+	}
+
+	// --- Accessibility (ADR-T23) ---
+
+	setRole(role: number): void {
+		checkResult(ffi.tui_set_node_role(this.handle, role));
+	}
+
+	setLabel(label: string): void {
+		const encoded = new TextEncoder().encode(label);
+		const buf = Buffer.from(encoded);
+		checkResult(ffi.tui_set_node_label(this.handle, buf, encoded.length));
+	}
+
+	setDescription(desc: string): void {
+		const encoded = new TextEncoder().encode(desc);
+		const buf = Buffer.from(encoded);
+		checkResult(ffi.tui_set_node_description(this.handle, buf, encoded.length));
 	}
 }

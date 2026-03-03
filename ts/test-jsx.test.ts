@@ -820,3 +820,164 @@ describe("imperative + JSX coexistence", () => {
 		ffi.tui_destroy_node(imperativeParent);
 	});
 });
+
+// ── Accessibility (ADR-T23, TASK-M5) ─────────────────────────────────────────
+
+describe("Accessibility JSX props", () => {
+	test("role prop sets node role via FFI", () => {
+		const app = createMockApp();
+		const vnode = jsx("Box", {
+			role: "button",
+			"aria-label": "Submit",
+			focusable: true,
+			width: 10,
+			height: 3,
+		});
+
+		const instance = render(vnode, app);
+		expect(instance.widget).toBeTruthy();
+		expect(instance.widget.handle).toBeGreaterThan(0);
+
+		// Focus and check accessibility event
+		ffi.tui_focus(instance.widget.handle);
+
+		const eventBuf = new ArrayBuffer(24);
+		const eventView = new DataView(eventBuf);
+
+		// FocusChange
+		ffi.tui_next_event(eventBuf);
+		expect(eventView.getUint32(0, true)).toBe(4);
+
+		// Accessibility event
+		const r = ffi.tui_next_event(eventBuf);
+		expect(r).toBe(1);
+		expect(eventView.getUint32(0, true)).toBe(7); // Accessibility
+		expect(eventView.getUint32(4, true)).toBe(instance.widget.handle);
+		expect(eventView.getUint32(8, true)).toBe(0); // Button = 0
+
+		unmount(instance);
+	});
+
+	test("aria-label prop sets node label", () => {
+		const app = createMockApp();
+		const vnode = jsx("Box", {
+			"aria-label": "Navigation menu",
+			width: 10,
+			height: 3,
+			focusable: true,
+		});
+
+		const instance = render(vnode, app);
+		expect(instance.widget.handle).toBeGreaterThan(0);
+
+		// Focus should emit accessibility event (label-only → u32::MAX sentinel)
+		ffi.tui_focus(instance.widget.handle);
+
+		const eventBuf = new ArrayBuffer(24);
+		const eventView = new DataView(eventBuf);
+
+		ffi.tui_next_event(eventBuf); // FocusChange
+		ffi.tui_next_event(eventBuf); // Accessibility
+		expect(eventView.getUint32(0, true)).toBe(7);
+		expect(eventView.getUint32(8, true)).toBe(0xFFFFFFFF); // no role
+
+		unmount(instance);
+	});
+
+	test("aria-description prop sets node description", () => {
+		const app = createMockApp();
+		const vnode = jsx("Box", {
+			role: "region",
+			"aria-description": "Main content area",
+			width: "100%",
+			height: "100%",
+		});
+
+		const instance = render(vnode, app);
+		expect(instance.widget.handle).toBeGreaterThan(0);
+
+		// No assertion on description retrieval (no getter FFI yet) —
+		// just verify it doesn't error
+		unmount(instance);
+	});
+
+	test("signal-wrapped role prop updates reactively", () => {
+		const app = createMockApp();
+		const roleSig = signal("button" as string);
+
+		const vnode = jsx("Box", {
+			role: roleSig,
+			focusable: true,
+			width: 10,
+			height: 3,
+		});
+
+		const instance = render(vnode, app);
+
+		// Focus to check initial role
+		ffi.tui_focus(instance.widget.handle);
+
+		const eventBuf = new ArrayBuffer(24);
+		const eventView = new DataView(eventBuf);
+
+		ffi.tui_next_event(eventBuf); // FocusChange
+		ffi.tui_next_event(eventBuf); // Accessibility
+		expect(eventView.getUint32(8, true)).toBe(0); // Button
+
+		// Change role via signal
+		roleSig.value = "checkbox";
+
+		// Re-focus to see the new role (need to unfocus first)
+		const other = ffi.tui_create_node(0);
+		ffi.tui_focus(other);
+		// Drain those events
+		while (ffi.tui_next_event(eventBuf) > 0) {}
+
+		ffi.tui_focus(instance.widget.handle);
+
+		ffi.tui_next_event(eventBuf); // FocusChange
+		ffi.tui_next_event(eventBuf); // Accessibility
+		expect(eventView.getUint32(8, true)).toBe(1); // Checkbox
+
+		ffi.tui_destroy_node(other);
+		unmount(instance);
+	});
+
+	test("all role values map correctly", () => {
+		const app = createMockApp();
+		const roles = [
+			{ name: "button", code: 0 },
+			{ name: "checkbox", code: 1 },
+			{ name: "input", code: 2 },
+			{ name: "textarea", code: 3 },
+			{ name: "list", code: 4 },
+			{ name: "listitem", code: 5 },
+			{ name: "heading", code: 6 },
+			{ name: "region", code: 7 },
+			{ name: "status", code: 8 },
+		];
+
+		for (const { name, code } of roles) {
+			const vnode = jsx("Box", {
+				role: name,
+				focusable: true,
+				width: 5,
+				height: 1,
+			});
+			const instance = render(vnode, app);
+
+			ffi.tui_focus(instance.widget.handle);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+			ffi.tui_next_event(eventBuf); // FocusChange
+			ffi.tui_next_event(eventBuf); // Accessibility
+			expect(eventView.getUint32(8, true)).toBe(code);
+
+			unmount(instance);
+
+			// Drain any remaining events
+			while (ffi.tui_next_event(eventBuf) > 0) {}
+		}
+	});
+});

@@ -91,6 +91,7 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 ctx.focused = Some(target);
                                 ctx.event_buffer
                                     .push(TuiEvent::focus_change(old_focus, target));
+                                maybe_emit_accessibility_event(ctx, target);
                             }
                         }
                     }
@@ -416,6 +417,20 @@ fn handle_select_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
     false
 }
 
+/// If the newly-focused node has an accessibility role or label, emit an
+/// `Accessibility` event into the event buffer (ADR-T23).
+pub(crate) fn maybe_emit_accessibility_event(ctx: &mut TuiContext, new_focus: u32) {
+    if let Some(node) = ctx.nodes.get(&new_focus) {
+        let has_role = node.role.is_some();
+        let has_label = node.label.is_some();
+        if has_role || has_label {
+            let role_code = node.role.map_or(u32::MAX, |r| r as u32);
+            ctx.event_buffer
+                .push(TuiEvent::accessibility(new_focus, role_code));
+        }
+    }
+}
+
 /// Advance focus to the next focusable node (depth-first tree order).
 pub(crate) fn focus_next(ctx: &mut TuiContext) {
     let focusable_order = collect_focusable_order(ctx);
@@ -435,6 +450,7 @@ pub(crate) fn focus_next(ctx: &mut TuiContext) {
 
     ctx.event_buffer
         .push(TuiEvent::focus_change(old_focus, new_focus));
+    maybe_emit_accessibility_event(ctx, new_focus);
 }
 
 /// Move focus to the previous focusable node.
@@ -461,6 +477,7 @@ pub(crate) fn focus_prev(ctx: &mut TuiContext) {
 
     ctx.event_buffer
         .push(TuiEvent::focus_change(old_focus, new_focus));
+    maybe_emit_accessibility_event(ctx, new_focus);
 }
 
 /// Collect focusable nodes in depth-first tree order.
@@ -994,5 +1011,110 @@ mod tests {
 
         // Scroll should be back to 0
         assert_eq!(ctx.nodes[&sb].scroll_y, 0);
+    }
+
+    // =========================================================================
+    // Accessibility event emission tests (ADR-T23, TASK-M3)
+    // =========================================================================
+
+    #[test]
+    fn test_focus_next_emits_accessibility_event_when_role_set() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let btn = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        tree::append_child(&mut ctx, root, btn).unwrap();
+        ctx.root = Some(root);
+
+        // Set focusable + role on btn
+        ctx.nodes.get_mut(&btn).unwrap().focusable = true;
+        ctx.nodes.get_mut(&btn).unwrap().role = Some(crate::types::AccessibilityRole::Button);
+
+        focus_next(&mut ctx);
+        assert_eq!(ctx.focused, Some(btn));
+
+        // Should have FocusChange + Accessibility events
+        let fc = next_event(&mut ctx).unwrap();
+        assert_eq!(fc.event_type, TuiEventType::FocusChange as u32);
+
+        let a11y = next_event(&mut ctx).unwrap();
+        assert_eq!(a11y.event_type, TuiEventType::Accessibility as u32);
+        assert_eq!(a11y.target, btn);
+        assert_eq!(a11y.data[0], crate::types::AccessibilityRole::Button as u32);
+    }
+
+    #[test]
+    fn test_focus_next_emits_accessibility_event_when_label_only() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let item = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        tree::append_child(&mut ctx, root, item).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes.get_mut(&item).unwrap().focusable = true;
+        ctx.nodes.get_mut(&item).unwrap().label = Some("Help menu".to_string());
+
+        focus_next(&mut ctx);
+
+        let fc = next_event(&mut ctx).unwrap();
+        assert_eq!(fc.event_type, TuiEventType::FocusChange as u32);
+
+        let a11y = next_event(&mut ctx).unwrap();
+        assert_eq!(a11y.event_type, TuiEventType::Accessibility as u32);
+        assert_eq!(a11y.target, item);
+        assert_eq!(a11y.data[0], u32::MAX); // no role → u32::MAX
+    }
+
+    #[test]
+    fn test_focus_next_no_accessibility_event_when_no_role_or_label() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, input).unwrap();
+        ctx.root = Some(root);
+
+        // focusable but no accessibility annotations
+        focus_next(&mut ctx);
+
+        let fc = next_event(&mut ctx).unwrap();
+        assert_eq!(fc.event_type, TuiEventType::FocusChange as u32);
+
+        // No more events
+        assert!(next_event(&mut ctx).is_none());
+    }
+
+    #[test]
+    fn test_focus_prev_emits_accessibility_event() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let btn1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let btn2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        tree::append_child(&mut ctx, root, btn1).unwrap();
+        tree::append_child(&mut ctx, root, btn2).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes.get_mut(&btn1).unwrap().focusable = true;
+        ctx.nodes.get_mut(&btn1).unwrap().role = Some(crate::types::AccessibilityRole::Button);
+        ctx.nodes.get_mut(&btn2).unwrap().focusable = true;
+        ctx.nodes.get_mut(&btn2).unwrap().role = Some(crate::types::AccessibilityRole::Checkbox);
+
+        ctx.focused = Some(btn1);
+
+        focus_prev(&mut ctx);
+        assert_eq!(ctx.focused, Some(btn2));
+
+        let fc = next_event(&mut ctx).unwrap();
+        assert_eq!(fc.event_type, TuiEventType::FocusChange as u32);
+
+        let a11y = next_event(&mut ctx).unwrap();
+        assert_eq!(a11y.event_type, TuiEventType::Accessibility as u32);
+        assert_eq!(a11y.target, btn2);
+        assert_eq!(
+            a11y.data[0],
+            crate::types::AccessibilityRole::Checkbox as u32
+        );
     }
 }
