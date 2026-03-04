@@ -17,6 +17,7 @@
 //!    row are merged into a single `Print(string)` payload.
 
 use crate::types::{CellAttrs, CellUpdate};
+use unicode_width::UnicodeWidthStr;
 
 // ============================================================================
 // WriterState — tracks emitted cursor position and style across a frame
@@ -29,6 +30,9 @@ pub struct WriterState {
     pub bg: u32,
     pub attrs: CellAttrs,
     pub has_cursor: bool,
+    /// When true, the first run of the frame unconditionally emits MoveTo
+    /// because the terminal cursor position is unknown after reset.
+    pub force_move: bool,
 }
 
 impl WriterState {
@@ -40,6 +44,7 @@ impl WriterState {
             bg: u32::MAX,
             attrs: CellAttrs::empty(),
             has_cursor: false,
+            force_move: true,
         }
     }
 
@@ -47,6 +52,7 @@ impl WriterState {
     pub fn reset(&mut self) {
         self.cursor_x = 0;
         self.cursor_y = 0;
+        self.force_move = true;
         self.fg = u32::MAX;
         self.bg = u32::MAX;
         self.attrs = CellAttrs::empty();
@@ -206,7 +212,7 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
     current.chars.push(first.cell.ch);
 
     for update in &updates[1..] {
-        let expected_x = current.x + current.chars.chars().count() as u16;
+        let expected_x = current.x + current.chars.width() as u16;
         let same_row = update.y == current.y;
         let contiguous = update.x == expected_x;
         let same_style = update.cell.fg == current.fg
@@ -257,12 +263,15 @@ pub fn emit_frame<W: std::io::Write>(
     for run in runs {
         metrics.run_count += 1;
 
-        // 1. Cursor positioning: emit MoveTo only if not at expected position
-        if run.x != state.cursor_x || run.y != state.cursor_y {
+        // 1. Cursor positioning: emit MoveTo if position unknown (force_move)
+        //    or not at expected position. After reset(), the terminal cursor
+        //    is at an unknown location, so the first run always emits MoveTo.
+        if state.force_move || run.x != state.cursor_x || run.y != state.cursor_y {
             out.queue(MoveTo(run.x, run.y))
                 .map_err(|e| format!("move: {e}"))?;
             state.cursor_x = run.x;
             state.cursor_y = run.y;
+            state.force_move = false;
             metrics.cursor_move_count += 1;
             metrics.bytes_written += 4 + digit_count(run.x) + digit_count(run.y);
         }
@@ -296,8 +305,8 @@ pub fn emit_frame<W: std::io::Write>(
         // 5. Print the coalesced payload
         out.queue(Print(&run.chars))
             .map_err(|e| format!("print: {e}"))?;
-        let char_count = run.chars.chars().count() as u16;
-        state.cursor_x += char_count;
+        let display_width = run.chars.width() as u16;
+        state.cursor_x += display_width;
         metrics.bytes_written += run.chars.len() as u64;
     }
 
@@ -811,9 +820,9 @@ mod tests {
         let mut buf = Vec::new();
         let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
         assert_eq!(metrics.run_count, 2);
-        // First run: state starts at (0,0), run is at (0,0) → no MoveTo
+        // First run at (0,0): force_move causes unconditional MoveTo
         // Second run: cursor is at (3,0) after first Print, run is at (3,0) → no MoveTo
-        assert_eq!(metrics.cursor_move_count, 0);
+        assert_eq!(metrics.cursor_move_count, 1);
     }
 
     #[test]
@@ -841,9 +850,9 @@ mod tests {
         let mut state = WriterState::new();
         let mut buf = Vec::new();
         let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
-        // First run at (0,0): state starts there, no move
+        // First run at (0,0): force_move causes unconditional MoveTo
         // Second run at (10,0): cursor was at (1,0), needs move
-        assert_eq!(metrics.cursor_move_count, 1);
+        assert_eq!(metrics.cursor_move_count, 2);
     }
 
     #[test]
@@ -904,6 +913,169 @@ mod tests {
         // Run 1: fg(1) + bg(1) + BOLD added(1) + ITALIC added(1) = 4
         // Run 2: same fg/bg → 0 + BOLD removed(1) + ITALIC removed(1) + UNDERLINE added(1) = 3
         assert_eq!(metrics.style_delta_count, 7);
+    }
+
+    // --- Bug fix regression tests ---
+
+    /// PR #21 review: After reset(), force_move ensures the first run of every
+    /// frame emits MoveTo, even when the run starts at (0,0). Without this,
+    /// the terminal cursor would be at a stale position from the prior frame.
+    #[test]
+    fn force_move_emits_moveto_at_origin_after_reset() {
+        let runs = vec![WriteRun {
+            x: 0,
+            y: 0,
+            fg: 0x01FF0000,
+            bg: 0x01000000,
+            attrs: CellAttrs::empty(),
+            chars: "Hello".to_string(),
+        }];
+
+        // First frame — force_move is true on fresh state
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+        let m1 = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        assert_eq!(m1.cursor_move_count, 1, "first frame must MoveTo(0,0)");
+
+        // Simulate second frame: reset state (as render.rs does)
+        state.reset();
+        buf.clear();
+        let m2 = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        assert_eq!(
+            m2.cursor_move_count, 1,
+            "after reset, must MoveTo(0,0) again"
+        );
+
+        // Verify the MoveTo escape is actually in the output
+        let output = String::from_utf8_lossy(&buf);
+        // crossterm MoveTo emits \x1b[{row+1};{col+1}H
+        assert!(
+            output.contains("\x1b[1;1H"),
+            "expected MoveTo(0,0) escape in output, got: {:?}",
+            &output[..output.len().min(40)]
+        );
+    }
+
+    /// PR #21 review: Run compaction and cursor tracking must use display
+    /// width, not char count. Wide chars (emoji, CJK) occupy 2 terminal
+    /// columns; zero-width joiners occupy 0.
+    #[test]
+    fn compact_runs_respects_display_width_wide_char() {
+        use unicode_width::UnicodeWidthChar;
+
+        // '😀' is display width 2 (occupies 2 terminal columns)
+        let emoji_width = UnicodeWidthChar::width('😀').unwrap_or(1);
+        assert_eq!(emoji_width, 2, "emoji should be display width 2");
+
+        let fg = 0x01FF0000;
+        let bg = 0x01000000;
+        let attrs = CellAttrs::empty();
+        let cell_a = crate::types::Cell {
+            ch: '😀',
+            fg,
+            bg,
+            attrs,
+        };
+        let cell_b = crate::types::Cell {
+            ch: 'b',
+            fg,
+            bg,
+            attrs,
+        };
+
+        // '😀' at col 0 (width 2), 'b' at col 2 (width 1) — contiguous
+        let updates = vec![
+            CellUpdate {
+                x: 0,
+                y: 0,
+                cell: cell_a.clone(),
+            },
+            CellUpdate {
+                x: 2,
+                y: 0,
+                cell: cell_b.clone(),
+            },
+        ];
+        let runs = compact_runs(&updates);
+        // Same style + contiguous columns → should merge into 1 run
+        assert_eq!(runs.len(), 1, "emoji(w=2) at x=0 + 'b' at x=2 should merge");
+        assert_eq!(runs[0].chars, "😀b");
+
+        // Now test non-contiguous: 'b' at col 1 (would be wrong with char count)
+        let updates_gap = vec![
+            CellUpdate {
+                x: 0,
+                y: 0,
+                cell: cell_a,
+            },
+            CellUpdate {
+                x: 1,
+                y: 0,
+                cell: cell_b,
+            },
+        ];
+        let runs_gap = compact_runs(&updates_gap);
+        // '😀' at x=0 has width 2, so next contiguous col is 2, not 1
+        assert_eq!(
+            runs_gap.len(),
+            2,
+            "emoji(w=2) at x=0 + 'b' at x=1 must NOT merge"
+        );
+    }
+
+    /// Verify cursor tracking in emit_frame uses display width for wide chars.
+    #[test]
+    fn emit_frame_cursor_advances_by_display_width() {
+        let runs = vec![WriteRun {
+            x: 0,
+            y: 0,
+            fg: 0x01FF0000,
+            bg: 0x01000000,
+            attrs: CellAttrs::empty(),
+            chars: "😀b".to_string(), // display width: 2 + 1 = 3
+        }];
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+        emit_frame(&mut state, &runs, &mut buf).unwrap();
+        // Cursor should advance by display width (3), not char count (2)
+        assert_eq!(
+            state.cursor_x, 3,
+            "cursor must advance by display width, not char count"
+        );
+    }
+
+    /// CJK character (width 2) followed by ASCII at correct column.
+    #[test]
+    fn compact_runs_cjk_contiguous() {
+        let fg = 0x01FF0000;
+        let bg = 0x01000000;
+        let attrs = CellAttrs::empty();
+        // '中' is CJK, display width 2
+        let updates = vec![
+            CellUpdate {
+                x: 0,
+                y: 0,
+                cell: crate::types::Cell {
+                    ch: '中',
+                    fg,
+                    bg,
+                    attrs,
+                },
+            },
+            CellUpdate {
+                x: 2,
+                y: 0,
+                cell: crate::types::Cell {
+                    ch: 'a',
+                    fg,
+                    bg,
+                    attrs,
+                },
+            },
+        ];
+        let runs = compact_runs(&updates);
+        assert_eq!(runs.len(), 1, "CJK(w=2) at x=0 + 'a' at x=2 should merge");
+        assert_eq!(runs[0].chars, "中a");
     }
 
     // --- Regression benchmark: writer vs baseline ---
@@ -1027,41 +1199,65 @@ mod tests {
             let actual_runs = actual.run_count;
             let runs_reduction = 1.0 - (actual_runs as f64 / baseline_runs as f64);
 
-            eprintln!("║                                                                          ║");
+            eprintln!(
+                "║                                                                          ║"
+            );
             eprintln!("║  Workload: {:<63}║", label);
             eprintln!("║  Cells: {:<66}║", cell_count);
             eprintln!("║  Runs after compaction: {:<50}║", run_count);
-            eprintln!("║                                                                          ║");
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
-                "Metric", "Baseline", "Writer", "Reduction");
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+            eprintln!(
+                "║                                                                          ║"
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                "Metric", "Baseline", "Writer", "Reduction"
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
                 "style+cursor ops",
                 baseline_ops,
                 actual_ops,
-                ops_reduction * 100.0);
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+                ops_reduction * 100.0
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
                 "bytes written",
                 baseline_bytes,
                 actual_bytes,
-                bytes_reduction * 100.0);
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+                bytes_reduction * 100.0
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
                 "run count (prints)",
                 baseline_runs,
                 actual_runs,
-                runs_reduction * 100.0);
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                runs_reduction * 100.0
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
                 "cursor moves",
                 baseline.cursor_move_count,
                 actual.cursor_move_count,
-                format!("{:.1}%", (1.0 - actual.cursor_move_count as f64
-                    / baseline.cursor_move_count as f64) * 100.0));
-            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                format!(
+                    "{:.1}%",
+                    (1.0 - actual.cursor_move_count as f64 / baseline.cursor_move_count as f64)
+                        * 100.0
+                )
+            );
+            eprintln!(
+                "║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
                 "style deltas",
                 baseline.style_delta_count,
                 actual.style_delta_count,
-                format!("{:.1}%", (1.0 - actual.style_delta_count as f64
-                    / baseline.style_delta_count as f64) * 100.0));
-            eprintln!("╠══════════════════════════════════════════════════════════════════════════╣");
+                format!(
+                    "{:.1}%",
+                    (1.0 - actual.style_delta_count as f64 / baseline.style_delta_count as f64)
+                        * 100.0
+                )
+            );
+            eprintln!(
+                "╠══════════════════════════════════════════════════════════════════════════╣"
+            );
 
             // Assert the performance gate
             assert!(
