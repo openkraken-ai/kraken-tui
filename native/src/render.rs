@@ -164,7 +164,7 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     let runs = crate::writer::compact_runs(&diff);
     ctx.writer_state.reset();
     let metrics = ctx.backend.emit_runs(&mut ctx.writer_state, &runs)?;
-    ctx.perf_write_bytes = metrics.bytes_written;
+    ctx.perf_write_bytes_estimate = metrics.bytes_estimated;
     ctx.perf_write_runs = metrics.run_count;
     ctx.perf_style_deltas = metrics.style_delta_count;
 

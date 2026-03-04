@@ -58,7 +58,7 @@ pub struct TuiContext {
     pub perf_layout_us: u64,
     pub perf_render_us: u64,
     pub perf_diff_cells: u32,
-    pub perf_write_bytes: u64,
+    pub perf_write_bytes_estimate: u64,
     pub perf_write_runs: u32,
     pub perf_style_deltas: u32,
 }
@@ -111,7 +111,7 @@ impl TuiContext {
             perf_layout_us: 0,
             perf_render_us: 0,
             perf_diff_cells: 0,
-            perf_write_bytes: 0,
+            perf_write_bytes_estimate: 0,
             perf_write_runs: 0,
             perf_style_deltas: 0,
         }

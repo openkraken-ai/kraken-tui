@@ -476,7 +476,7 @@ pub struct TuiContext {
     pub perf_layout_us: u64,
     pub perf_render_us: u64,
     pub perf_diff_cells: u32,
-    pub perf_write_bytes: u64,
+    pub perf_write_bytes_estimate: u64,
     pub perf_write_runs: u32,
     pub perf_style_deltas: u32,
     pub perf_text_parse_us: u64,
@@ -595,7 +595,7 @@ All v2.1 + Epic M symbols remain valid and unchanged unless explicitly supersede
 | 4   | total node count                | nodes  |
 | 5   | dirty node count                | nodes  |
 | 6   | active animation count          | anims  |
-| 7   | last terminal write bytes       | bytes  |
+| 7   | last terminal write bytes (estimated) | bytes  |
 | 8   | last terminal write run count   | runs   |
 | 9   | last terminal style delta count | ops    |
 | 10  | last text parse duration        | us     |

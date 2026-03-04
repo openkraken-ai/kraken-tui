@@ -20,7 +20,9 @@ use crate::types::{CellAttrs, CellUpdate};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 // ============================================================================
-// WriterState — tracks emitted cursor position and style across a frame
+// WriterState — tracks emitted cursor position and style within a single frame
+// Note: reset() is called at each frame start, so state does NOT persist
+// across frames. All delta tracking is intra-frame only.
 // ============================================================================
 
 pub struct WriterState {
@@ -78,7 +80,11 @@ pub struct WriteRun {
 // ============================================================================
 
 pub struct WriterMetrics {
-    pub bytes_written: u64,
+    /// Estimated bytes emitted to the output stream. Computed from known
+    /// escape-sequence sizes and payload lengths, not measured from actual
+    /// I/O. Accurate for ASCII payloads; may diverge slightly for
+    /// multi-byte UTF-8 escape parameters.
+    pub bytes_estimated: u64,
     pub run_count: u32,
     pub style_delta_count: u32,
     pub cursor_move_count: u32,
@@ -87,7 +93,7 @@ pub struct WriterMetrics {
 impl WriterMetrics {
     fn new() -> Self {
         Self {
-            bytes_written: 0,
+            bytes_estimated: 0,
             run_count: 0,
             style_delta_count: 0,
             cursor_move_count: 0,
@@ -135,7 +141,7 @@ pub fn baseline_metrics(diff: &[CellUpdate]) -> WriterMetrics {
         // Approximate bytes: MoveTo(~6-8) + SetFg(~5-19) + SetBg(~5-19) + attrs(~4 each)
         // + Print(1-4) + Reset(~4) ≈ conservative estimate per cell
         // For baseline comparison we count escape sequence commands, not raw bytes
-        metrics.bytes_written += estimate_per_cell_bytes(update);
+        metrics.bytes_estimated += estimate_per_cell_bytes(update);
     }
     metrics
 }
@@ -277,7 +283,7 @@ pub fn emit_frame<W: std::io::Write>(
             state.cursor_y = run.y;
             state.force_move = false;
             metrics.cursor_move_count += 1;
-            metrics.bytes_written += 4 + digit_count(run.x) + digit_count(run.y);
+            metrics.bytes_estimated += 4 + digit_count(run.x) + digit_count(run.y);
         }
 
         // 2. Foreground delta
@@ -285,7 +291,7 @@ pub fn emit_frame<W: std::io::Write>(
             let bytes = emit_fg(out, run.fg)?;
             state.fg = run.fg;
             metrics.style_delta_count += 1;
-            metrics.bytes_written += bytes;
+            metrics.bytes_estimated += bytes;
         }
 
         // 3. Background delta
@@ -293,7 +299,7 @@ pub fn emit_frame<W: std::io::Write>(
             let bytes = emit_bg(out, run.bg)?;
             state.bg = run.bg;
             metrics.style_delta_count += 1;
-            metrics.bytes_written += bytes;
+            metrics.bytes_estimated += bytes;
         }
 
         // 4. Attribute delta: handle both adding and removing attrs
@@ -303,7 +309,7 @@ pub fn emit_frame<W: std::io::Write>(
             let bytes = emit_attr_delta(out, added, removed)?;
             state.attrs = run.attrs;
             metrics.style_delta_count += count_attr_changes(added, removed);
-            metrics.bytes_written += bytes;
+            metrics.bytes_estimated += bytes;
         }
 
         // 5. Print the coalesced payload
@@ -311,14 +317,14 @@ pub fn emit_frame<W: std::io::Write>(
             .map_err(|e| format!("print: {e}"))?;
         let display_width = run.chars.width() as u16;
         state.cursor_x += display_width;
-        metrics.bytes_written += run.chars.len() as u64;
+        metrics.bytes_estimated += run.chars.len() as u64;
     }
 
     // Frame-end reset (emission rule #4)
     if !runs.is_empty() {
         out.queue(SetAttribute(Attribute::Reset))
             .map_err(|e| format!("reset: {e}"))?;
-        metrics.bytes_written += 4;
+        metrics.bytes_estimated += 4;
         // After reset, terminal is back to default state
         state.fg = 0; // default
         state.bg = 0;
@@ -561,7 +567,7 @@ mod tests {
         assert_eq!(m.run_count, diff.len() as u32);
         // style deltas: fg(1) + bg(1) + reset(1) + per-attr-count per cell
         assert!(m.style_delta_count >= diff.len() as u32 * 3);
-        assert!(m.bytes_written > 0);
+        assert!(m.bytes_estimated > 0);
     }
 
     #[test]
@@ -1195,8 +1201,8 @@ mod tests {
             let actual_ops = actual.style_delta_count + actual.cursor_move_count;
             let ops_reduction = 1.0 - (actual_ops as f64 / baseline_ops as f64);
 
-            let baseline_bytes = baseline.bytes_written;
-            let actual_bytes = actual.bytes_written;
+            let baseline_bytes = baseline.bytes_estimated;
+            let actual_bytes = actual.bytes_estimated;
             let bytes_reduction = 1.0 - (actual_bytes as f64 / baseline_bytes as f64);
 
             let baseline_runs = baseline.run_count;
