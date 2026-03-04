@@ -2,8 +2,8 @@
 
 ## Kraken TUI
 
-**Version**: 4.0
-**Status**: v1 Complete, v2 Complete
+**Version**: 5.0
+**Status**: v3 Planned
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -11,38 +11,48 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-**v2 Total Estimation:** 128 Story Points (Fibonacci: 1, 2, 3, 5, 8)
+**v3 Total Estimation:** 122 Story Points (Fibonacci: 1, 2, 3, 5, 8)
 
-**v2 Critical Path (Longest Dependency Chain):**
+**v3 MVP Estimation (A-G):** 112 Story Points
 
-`TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-J1 -> TASK-J2 -> TASK-J4 -> TASK-J5 -> TASK-K5 -> TASK-K6 -> TASK-K7 -> TASK-K8 -> TASK-L0 -> TASK-L1 -> TASK-L2 -> TASK-L3 -> TASK-L4 -> TASK-L5 -> TASK-L6 -> TASK-M0 -> TASK-M1 -> TASK-M2 -> TASK-M3 -> TASK-M4 -> TASK-M5`
+**v3 Critical Path (MVP):**
 
-**Critical Path Estimate:** 100 Story Points
+`TASK-A0 -> TASK-A1 -> TASK-A2 -> TASK-A3 -> TASK-B0 -> TASK-B1 -> TASK-B2 -> TASK-B3 -> TASK-C1 -> TASK-C2 -> TASK-C3 -> TASK-D1 -> TASK-D2 -> TASK-D3 -> TASK-D4 -> TASK-D5 -> TASK-D6 -> TASK-E1 -> TASK-E2 -> TASK-E3 -> TASK-E4 -> TASK-E5 -> TASK-F0 -> TASK-F1 -> TASK-F2 -> TASK-F3 -> TASK-G1 -> TASK-G2 -> TASK-G3 -> TASK-G4`
 
-**Planning Constraint:** Epic M implementation tickets (M1–M5) are provisional — they depend on ADR-T23 ratification from TASK-M0. Ticket details may be revised once the spike completes and the FFI contract is ratified.
+**Critical Path Estimate (MVP):** 112 Story Points
+
+**Conditional Extension Path (Phase 2):**
+
+`TASK-H0 -> TASK-H1 -> TASK-H2` (10 Story Points)
+
+**Planning Constraints:**
+
+1. All v2.1 + Epic M FFI symbols are compatibility baseline and must remain stable while v3 symbols are added.
+2. Performance budgets from PRD are hard constraints, not stretch goals: render <16ms, input <50ms, FFI overhead <1ms, memory <20MB/100 widgets, host bundle <50KB.
+3. ADR-T31 background render thread remains conditional and cannot be promoted without benchmark evidence and semantic parity.
 
 ---
 
 ## 2. PROJECT PHASING STRATEGY
 
-### Phase 1 (MVP for v2)
+### Phase 1 (MVP for v3)
 
 Functional outcomes:
 
-1. Replace unsafe global state with `OnceLock<RwLock<TuiContext>>` and preserve FFI stability.
-2. Ship reconciler prerequisites: `tui_destroy_subtree()` and `tui_insert_child()` with full cleanup and ordering guarantees.
-3. Ship Theme inheritance completion: per-`NodeType` defaults and precedence resolution.
-4. Ship TextArea widget (multi-line editing, 2D cursor, wrap mode, render integration, TS API).
-5. Ship position animation (`PositionX`, `PositionY`) and new easing functions (`CubicIn`, `CubicOut`, `Elastic`, `Bounce`).
-6. Ship declarative runtime baseline: JSX factory + signals + keyed child reconciliation.
+1. Ship terminal writer throughput improvements with run compaction, stateful style/cursor emission, and telemetry counters (ADR-T24).
+2. Ship rich text and wrapping cache with bounded LRU memory behavior and hit/miss observability (ADR-T25).
+3. Ship ergonomic TS Runner API (`app.run`, `app.stop`) without changing synchronous native render ownership (ADR-T26).
+4. Ship dashboard staples (Table, List, Tabs, Overlay) in Native Core with complete FFI and TS wrapper coverage (ADR-T27).
+5. Ship editor-grade TextArea extensions: selection, selected-text extraction, find-next, and bounded undo/redo (ADR-T28).
+6. Ship cross-platform distribution UX with prebuilt artifacts and deterministic fallback behavior (ADR-T29).
+7. Ship deterministic golden testing plus benchmark gates enforced in CI (ADR-T30).
 
 ### Phase 2 (Post-Launch / Scope-Controlled)
 
-Deferred to reduce v2 risk and WIP:
+Deferred to control complexity and protect architecture clarity:
 
-1. Animation choreography APIs beyond existing pairwise chaining (fan-in/fan-out/timelines).
-2. Optional `kraken-tui/effect` package and advanced host-loop helpers.
-3. Accessibility foundation implementation after dedicated ADR and API contract ratification.
+1. Experimental background render thread behind explicit feature flag only (ADR-T31).
+2. Promotion decision for threaded rendering based on measured wins and semantic parity report.
 
 ---
 
@@ -51,637 +61,614 @@ Deferred to reduce v2 risk and WIP:
 ```mermaid
 flowchart LR
     subgraph INFRA[INFRA]
-        I0[TASK-I0 spike global state migration]
-        I1[TASK-I1 once lock rw lock context]
-        I2[TASK-I2 ffi lock integration]
-        I3[TASK-I3 lifecycle hardening]
-        I4[TASK-I4 perf and memory guardrails]
+        A0[TASK-A0 writer baseline spike]
+        B0[TASK-B0 cache key spike]
+        F0[TASK-F0 packaging spike]
+        H0[TASK-H0 threaded render spike]
     end
 
     subgraph DB[DB_STATE_MODEL]
-        S0[In memory TuiContext schema no external DB]
+        D1[TASK-D1 NodeType and state model expansion]
     end
 
-    subgraph BACKEND[BACKEND_NATIVE_CORE_FFI]
-        J1[TASK-J1 destroy subtree core]
-        J2[TASK-J2 cross module cleanup]
-        J4[TASK-J4 indexed insertion core]
-        J5[TASK-J5 insert ffi and tests]
-        K1[TASK-K1 to K4 theme type defaults]
-        K5[TASK-K5 to K8 textarea module and ffi]
-        K9[TASK-K9 to K10 position anim and easings]
-        K11[TASK-K11 choreography implementation]
+    subgraph BACKEND[BACKEND_NATIVE_CORE]
+        A1[TASK-A1 writer compaction core]
+        A2[TASK-A2 terminal integration]
+        A3[TASK-A3 writer counters and tests]
+        B1[TASK-B1 cache module]
+        B2[TASK-B2 parse and wrap integration]
+        B3[TASK-B3 cache bench and tests]
+        D2[TASK-D2 table native]
+        D3[TASK-D3 list native]
+        D4[TASK-D4 tabs and overlay native]
+        D6[TASK-D6 event payload integration]
+        E1[TASK-E1 selection APIs]
+        E2[TASK-E2 undo redo history]
+        E3[TASK-E3 find next search]
+        E4[TASK-E4 input behavior integration]
+        G1[TASK-G1 golden harness]
+        G2[TASK-G2 native benchmark gates]
+        H1[TASK-H1 threaded render implementation]
+        H2[TASK-H2 parity and decision report]
     end
 
-    subgraph FRONTEND[FRONTEND_TS_API_RECONCILER]
-        L0[TASK-L0 spike jsx signals contract]
-        L1[TASK-L1 package split]
-        L2[TASK-L2 jsx runtime]
-        L3[TASK-L3 signal bindings]
-        L4[TASK-L4 keyed reconciliation]
-        L5[TASK-L5 async loop effect opt in]
-        L6[TASK-L6 reconciler tests bundle budget]
-        M0[TASK-M0 spike accessibility adr]
-        M1[TASK-M1 accessibility node model]
-        M2[TASK-M2 accessibility ffi]
-        M3[TASK-M3 accessibility events]
-        M4[TASK-M4 accessibility ts api]
-        M5[TASK-M5 accessibility verification]
+    subgraph FRONTEND[FRONTEND_HOST_LAYER]
+        C1[TASK-C1 app.run and app.stop]
+        C2[TASK-C2 lifecycle and signal cleanup]
+        C3[TASK-C3 runner tests and compatibility]
+        D5[TASK-D5 TS widget wrappers]
+        E5[TASK-E5 TS textarea bindings]
+        F1[TASK-F1 artifact CI publish]
+        F2[TASK-F2 runtime artifact resolver]
+        F3[TASK-F3 install smoke and diagnostics]
+        G3[TASK-G3 host benchmark harness]
+        G4[TASK-G4 final policy and gates]
     end
 
-    I0 --> I1 --> I2 --> I3 --> I4
-    I2 --> S0
-    S0 --> J1 --> J2 --> J4 --> J5
-    J5 --> K1
-    J5 --> K5
-    J5 --> K9
-    K1 --> L0
-    K5 --> L0
-    K9 --> L0
-    L0 --> L1 --> L2 --> L3 --> L4 --> L5 --> L6 --> M0
-    K9 --> K11
-    M0 --> M1 --> M2 --> M3 --> M4 --> M5
+    A0 --> A1 --> A2 --> A3
+    A3 --> B0 --> B1 --> B2 --> B3
+    B3 --> C1 --> C2 --> C3 --> D1
+    D1 --> D2 --> D3 --> D4 --> D5 --> D6
+    D6 --> E1 --> E2 --> E3 --> E4 --> E5
+    E5 --> F0 --> F1 --> F2 --> F3
+    F3 --> G1 --> G2 --> G3 --> G4
+
+    G2 --> H0 --> H1 --> H2
 ```
 
 ---
 
 ## 4. THE TICKET LIST
 
-### Epic I: Core Hardening (ADR-T16 + Budget Enforcement) — COMPLETE
+### Epic A: Terminal Writer Throughput (ADR-T24)
 
-**[TASK-I0] Spike Safe Global State Migration Plan**
+**[TASK-A0] Spike Writer Baseline and Emission Contract**
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
 - **Dependencies:** None
-- **Description:** Time-boxed design/verification spike to define lock acquisition policy (`read` vs `write`), re-init semantics, panic/poison handling, and success metrics before touching all FFI entrypoints.
+- **Description:** Time-boxed baseline study for current per-cell terminal emission. Capture bytes, run counts, and style delta counts across canonical workloads and lock the deterministic emission contract before implementation.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given current usage of static mut CONTEXT
-When the spike is completed
-Then a migration note exists defining lock boundaries for every FFI function category
-And it includes measurable regression checks for render latency and FFI overhead
+Given the current per-cell write path
+When canonical writer workloads run at 10, 50, and 100 percent diff density
+Then baseline metrics for bytes, run count, and style deltas are recorded
+And a written emission contract exists for ordering, style transitions, and reset behavior
 ```
 
-**[TASK-I1] Replace `static mut CONTEXT` with `OnceLock<RwLock<TuiContext>>`**
+**[TASK-A1] Implement Native Run Compaction and WriterState**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-I0]
-- **Description:** Implement ADR-T16 in `context.rs`; remove `#[allow(static_mut_refs)]`; introduce safe context accessors and initialization guards.
+- **Dependencies:** [TASK-A0]
+- **Description:** Implement `writer.rs` with contiguous run compaction and explicit `WriterState` tracking for cursor, fg, bg, and attrs.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a fresh process
-When tui_init() is called
-Then TuiContext is initialized through OnceLock<RwLock<_>>
-And no static mut global context remains in the codebase
+Given diff updates containing adjacent cells with identical style
+When run compaction executes
+Then adjacent cells are merged into a single run in row-major order
+And WriterState tracks cursor and style transitions without ambiguity
 ```
 
-**[TASK-I2] Refactor FFI Entry Points for Explicit Locking**
+**[TASK-A2] Integrate Stateful Writer into Render and Terminal Modules**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-A1]
+- **Description:** Integrate writer emission into `terminal.rs` and render path so cursor/style commands are emitted only on deltas and attribute reset occurs once per frame.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a frame with non-contiguous updates and style changes
+When tui_render() performs terminal output
+Then cursor movement commands are emitted only when position continuity breaks
+And style commands are emitted only when style state changes
+And a full attribute reset is emitted once at frame end
+```
+
+**[TASK-A3] Add Writer Throughput Counters and Regression Tests**
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-I1]
-- **Description:** Update `lib.rs` FFI dispatch to acquire read/write locks consistently while preserving existing error-code semantics and `catch_unwind` behavior.
+- **Dependencies:** [TASK-A2]
+- **Description:** Wire counters 7, 8, and 9 to writer output and add unit/integration tests plus benchmark assertions for writer regression detection.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given any public FFI function
-When it executes
-Then it acquires the correct lock mode for its operation
-And panic conversion to -2 behavior is unchanged
+Given writer benchmarks and integration tests
+When a frame with changed cells is rendered
+Then counters for write bytes, run count, and style deltas are populated
+And tests fail when writer output regresses beyond configured thresholds
 ```
 
-**[TASK-I3] Harden Init/Shutdown/Reinit Lifecycle Semantics**
+### Epic B: Rich Text and Wrap Cache (ADR-T25)
 
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-I2]
-- **Description:** Define and enforce deterministic behavior for repeated `tui_init()` / `tui_shutdown()` calls with locked context; verify all handles become invalid after shutdown.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given tui_init() was called and nodes were created
-When tui_shutdown() is called and then tui_init() is called again
-Then previous handles are invalid
-And the new context starts clean with no leaked state
-```
-
-**[TASK-I4] Memory and Performance Guardrails (Syntect + Counters)**
-
-- **Type:** Chore
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-I3]
-- **Description:** Add budget-focused regression checks for memory footprint, FFI overhead, render budget, and input latency; include syntect-heavy scenarios and failure diagnostics.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given benchmark and stress scenarios for rich text and animation
-When the guardrail suite runs
-Then memory stays under documented limits for target workloads
-And regressions fail CI with actionable counter output
-```
-
-### Epic J: Tree Operations for Reconciler (ADR-T17, ADR-T18) — COMPLETE
-
-**[TASK-J1] Implement Native Post-Order `destroy_subtree()` in Tree Module**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-I2]
-- **Description:** Add recursive post-order subtree destruction in `tree.rs` with structural correctness guarantees.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a tree with depth > 2
-When destroy_subtree(root_child) is executed
-Then all descendants are removed before the parent node
-And no dangling parent/child references remain
-```
-
-**[TASK-J2] Integrate Subtree Destruction Cleanup Across Modules**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-J1]
-- **Description:** Ensure subtree destruction cancels animations, clears theme bindings, detaches from Taffy, updates focus/root state, and leaves event pipeline consistent.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a subtree with active animations and theme bindings
-When tui_destroy_subtree(handle) is called
-Then all related animations and theme bindings are removed
-And layout/render/focus queries do not reference destroyed handles
-```
-
-**[TASK-J3] Expose `tui_destroy_subtree()` Through FFI and TS Bindings**
-
-- **Type:** Feature
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-J2]
-- **Description:** Add FFI entrypoint and TS wrapper surface for subtree destruction with consistent errors.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a valid subtree root handle
-When the host calls tui_destroy_subtree(handle)
-Then it returns 0
-And subsequent reads on any destroyed handle return an error
-```
-
-**[TASK-J4] Implement `insert_child(parent, child, index)` with Reparenting**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-J2]
-- **Description:** Add indexed insertion in native tree logic, including detach/reparent semantics and Taffy child order updates.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a parent with children [A, B, C]
-When insert_child(parent, X, 1) is executed
-Then child order becomes [A, X, B, C]
-And layout child ordering matches tree ordering
-```
-
-**[TASK-J5] Expose `tui_insert_child()` + Host API + Reorder Regression Suite**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-J4]
-- **Description:** Add FFI and TS wrappers for indexed insertion and cover keyed-reorder invariants with integration tests.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given an existing child under another parent
-When tui_insert_child(new_parent, child, 0) is called
-Then child is detached from the old parent and inserted at index 0
-And no duplicate parent references exist
-```
-
-### Epic K: Feature Expansions (ADR-T19, ADR-T21, ADR-T22 + Choreography) — COMPLETE
-
-**[TASK-K0] Spike Animation Choreography Contract (TBD in TechSpec)**
+**[TASK-B0] Spike Cache Key and Invalidation Strategy**
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
-- **Dependencies:** [TASK-J5]
-- **Description:** Time-boxed ADR-level definition for choreography API shape (fan-in/fan-out, timeline grouping, cancellation semantics) and minimal viable FFI additions.
+- **Dependencies:** [TASK-A3]
+- **Description:** Validate cache key composition and invalidation rules for content hash, format, language, wrap width, and style fingerprint, including memory accounting strategy.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given choreography is marked as TBD in the specification
-When the spike completes
-Then a written contract defines function signatures and lifecycle semantics
-And implementation tickets are unblocked without ambiguous API assumptions
+Given representative plain, markdown, and code content workloads
+When cache key and invalidation rules are evaluated
+Then every invalidation trigger is explicitly mapped to a key dimension
+And memory accounting rules define insertion and eviction behavior under hard cap
 ```
 
-**[TASK-K1] Add Theme `type_defaults` Data Model and Native Setters**
+**[TASK-B1] Implement Bounded Native Text Cache Module**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-B0]
+- **Description:** Implement `text_cache.rs` with bounded LRU behavior, entry size accounting, and strict 8 MiB capacity handling.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given cache capacity set to 8 MiB
+When new parsed entries exceed remaining capacity
+Then least recently used entries are evicted until capacity is respected
+And used_bytes never exceeds max_bytes
+```
+
+**[TASK-B2] Integrate Cache with Text Parse and Wrap Pipeline**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-B1]
+- **Description:** Integrate cache lookups/writes in `text.rs` and render flow, and wire counters for parse/wrap time plus hit/miss counts.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given unchanged content, wrap width, format, and style fingerprint
+When repeated renders occur
+Then parse and wrap work is served from cache
+And counters report hit increments and stable parse and wrap durations
+```
+
+**[TASK-B3] Add Cache Benchmarks and Correctness Tests**
+
+- **Type:** Chore
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-B2]
+- **Description:** Add cache-focused unit tests and benchmark scenarios validating hit-rate targets and eviction correctness under pressure.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given repeated render workloads with stable inputs
+When benchmark suite runs
+Then cache hit rate reaches or exceeds the target threshold
+And eviction tests confirm no stale entries are returned after invalidation
+```
+
+### Epic C: Runner API Ergonomics (ADR-T26)
+
+**[TASK-C1] Implement `app.run` and `app.stop` in Host Layer**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-B3]
+- **Description:** Implement Runner modes (`onChange`, `continuous`) in TS using existing FFI lifecycle/input/render calls without introducing native threading.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a Kraken app instance
+When app.run() is called in onChange mode
+Then rendering occurs only when work is pending
+And app.stop() exits the loop without leaving terminal state corrupted
+```
+
+**[TASK-C2] Implement Signal Cleanup and Deterministic Shutdown Semantics**
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-J5]
-- **Description:** Extend `Theme` with `HashMap<NodeType, VisualStyle>` and internal mutation APIs for per-type defaults.
+- **Dependencies:** [TASK-C1]
+- **Description:** Add SIGINT/SIGTERM cleanup handling and finally-block shutdown guarantees for deterministic terminal restoration.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a theme and NodeType::Text
-When a type default fg color is set
-Then the theme stores that value under Text type defaults
-And the corresponding mask bit is set for that type default
+Given app.run() is active
+When SIGINT or SIGTERM is received
+Then app.run() exits cleanly
+And terminal mode is restored exactly once
 ```
 
-**[TASK-K2] Extend Style Resolution Precedence for Per-NodeType Defaults**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-K1]
-- **Description:** Implement ADR-T21 precedence: explicit node style > theme NodeType default > theme global default > node stored value.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given explicit style is unset on a Text node
-And the active theme has both Text-specific and global fg defaults
-When style is resolved
-Then the Text-specific default wins over global default
-```
-
-**[TASK-K3] Add 4 `tui_set_theme_type_*` FFI Functions and TS Theme API**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-K2]
-- **Description:** Implement and expose `tui_set_theme_type_color|flag|border|opacity` end-to-end.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a Theme instance in TypeScript
-When setTypeColor("Text", "fg", "#00AAFF") is called
-Then tui_set_theme_type_color is invoked with correct encoded arguments
-And native resolution reflects that default during render
-```
-
-**[TASK-K4] Theme Inheritance Regression Tests (Native + FFI + TS)**
+**[TASK-C3] Add Runner Compatibility Tests and Legacy Loop Interop Coverage**
 
 - **Type:** Chore
 - **Effort:** Story Points: 2
-- **Dependencies:** [TASK-K3]
-- **Description:** Add tests covering precedence, nearest ancestor behavior, and backward compatibility for themes without type defaults.
+- **Dependencies:** [TASK-C2]
+- **Description:** Add tests proving compatibility between Runner API and existing manual loop pattern, including bundle guard verification.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given an existing v1 theme without type defaults
-When rendered under v2 resolver
-Then visual output remains unchanged from v1 behavior
+Given both app.run() and manual loop usage patterns
+When test suite executes
+Then both patterns pass behavior equivalence checks for input and render flow
+And bundle guard remains under the documented size budget
 ```
 
-**[TASK-K5] Introduce TextArea Node Model and Internal Buffer Helpers**
+### Epic D: Dashboard Staple Widgets (ADR-T27)
+
+**[TASK-D1] Expand NodeType and Internal State Model for v3 Widgets**
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-J5]
-- **Description:** Add `NodeType::TextArea`, node fields (`cursor_row`, `cursor_col`, `wrap_mode`), and robust line-buffer utility functions.
+- **Dependencies:** [TASK-C3]
+- **Description:** Add `Table`, `List`, `Tabs`, and `Overlay` to node model and context storage with defaults and lifecycle hooks.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a newly created TextArea node
-When queried internally
-Then its cursor defaults to row 0 col 0
-And wrap_mode defaults to off
+Given the v3 NodeType enum
+When each new widget node type is created
+Then internal node state initializes with valid defaults
+And destruction paths release all widget-specific state
 ```
 
-**[TASK-K6] Implement TextArea Editing Semantics in Event Module**
+**[TASK-D2] Implement Table Widget Native Surface and FFI Contract**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-K5]
-- **Description:** Handle multi-line editing behavior (Enter newline, Backspace join at col 0, Up/Down cursor movement, bounds clamping).
+- **Dependencies:** [TASK-D1]
+- **Description:** Implement Table state, rendering, selection behavior, and all Table FFI functions defined in TechSpec section 4.3.3.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given TextArea content "abc\ndef" and cursor at row 1 col 0
-When Backspace is pressed
-Then lines are joined into "abcdef"
-And cursor moves to row 0 col 3
+Given a table with columns and rows
+When table cell values and selected row are updated via FFI
+Then rendered output reflects schema and selection state
+And all table getters return values consistent with the latest mutation
 ```
 
-**[TASK-K7] Render TextArea Cursor, Wrap Mode, and Viewport Behavior**
+**[TASK-D3] Implement List Widget Native Surface and FFI Contract**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-K6]
-- **Description:** Extend Render/Scroll integration for TextArea visual behavior under soft-wrap and horizontal-scroll modes.
+- **Dependencies:** [TASK-D2]
+- **Description:** Implement List state, rendering, selection behavior, and all List FFI functions defined in TechSpec section 4.3.4.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a narrow TextArea with wrap_mode enabled
-When long content is rendered
-Then visual lines wrap within widget width
-And cursor remains visible at the correct rendered position
+Given a list with multiple items
+When items are added, removed, cleared, and selected via FFI
+Then list rendering and selected index remain consistent
+And list getter APIs return correct item count and values
 ```
 
-**[TASK-K8] Add TextArea FFI Surface and TypeScript `TextArea` Widget API**
+**[TASK-D4] Implement Tabs and Overlay Native Surfaces and FFI Contracts**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-D3]
+- **Description:** Implement Tabs and Overlay state/render/event behavior and all Tabs/Overlay FFI functions from TechSpec sections 4.3.5 and 4.3.6.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given tabs and overlay nodes in a composed UI
+When active tab and overlay modal state are changed via FFI
+Then tab focus state and overlay visibility update deterministically
+And overlay modal behavior blocks outside interaction when enabled
+```
+
+**[TASK-D5] Implement TypeScript Wrappers and Public Exports for v3 Widgets**
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-K7]
-- **Description:** Implement and expose `tui_textarea_set_cursor`, `tui_textarea_get_cursor`, `tui_textarea_get_line_count`, `tui_textarea_set_wrap` plus TS class wrappers.
+- **Dependencies:** [TASK-D4]
+- **Description:** Add TS wrappers (`table.ts`, `list.ts`, `tabs.ts`, `overlay.ts`) and update package exports/index to expose full typed APIs.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a TextArea widget in TypeScript
-When setCursor(2, 4) and setWrap(true) are called
-Then the corresponding FFI functions return success
-And getCursor()/getLineCount() round-trip expected values
+Given the TypeScript host package
+When a developer imports Table, List, Tabs, and Overlay wrappers
+Then all v3 widget methods are typed and callable
+And runtime calls map to the expected FFI symbols
 ```
 
-**[TASK-K9] Add Position Animation via `render_offset` (ADR-T22)**
+**[TASK-D6] Update Change Event Payload Mapping and Integration Tests**
+
+- **Type:** Chore
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-D5]
+- **Description:** Implement and verify event payload mapping for List/Tabs/Table change events in native and TS drain paths.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given list, tabs, and table interactions
+When change events are emitted and drained
+Then event data fields match the v3 payload contract for each widget type
+And integration tests validate payload decoding end-to-end
+```
+
+### Epic E: Editor-Grade TextArea (ADR-T28)
+
+**[TASK-E1] Implement Selection Model and Selection FFI APIs**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-J5]
-- **Description:** Add `AnimProp::PositionX/Y`, update animation advancement to write node `render_offset`, and update render path to apply offsets without touching Layout.
+- **Dependencies:** [TASK-D6]
+- **Description:** Implement selection anchor/focus state plus APIs for set/clear selection and selected text extraction.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given an animation targeting PositionX from 0 to 10
-When renders advance through the animation duration
-Then visual output shifts horizontally by interpolated offsets
-And computed layout dimensions remain unchanged
+Given a TextArea containing multiple lines
+When a selection range is set via FFI
+Then selected text length and bytes reflect the exact range
+And clearing selection removes active selection state
 ```
 
-**[TASK-K10] Add New Easing Variants and Host Enum Support**
+**[TASK-E2] Implement Bounded Undo/Redo History and Limit Control**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-E1]
+- **Description:** Add edit operation history stacks, undo/redo execution paths, and configurable history limit enforcement.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a TextArea with history limit configured
+When edits exceed the configured limit
+Then oldest history entries are discarded within the bound
+And undo and redo operations preserve deterministic cursor and content state
+```
+
+**[TASK-E3] Implement `find_next` Search (Literal and Regex Modes)**
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-K9]
-- **Description:** Implement `CubicIn`, `CubicOut`, `Elastic`, and `Bounce` easing behavior natively and expose them in TS APIs.
+- **Dependencies:** [TASK-E2]
+- **Description:** Implement forward search with case-sensitive and regex options, anchored to current cursor position.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given an animation configured with Bounce easing
-When elapsed time advances from 0 to duration
-Then interpolated values follow non-linear bounce behavior
-And easing enum values map consistently between Rust and TypeScript
+Given a TextArea with searchable content
+When find_next is called in literal or regex mode
+Then the next match is found from cursor position when present
+And the API returns no-match without mutating content when no match exists
 ```
 
-**[TASK-K11] Implement Choreography MVP + Verification Suite**
+**[TASK-E4] Integrate Selection and Search with Input Behavior and Wrap Modes**
+
+- **Type:** Chore
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-E3]
+- **Description:** Ensure keyboard and mouse editing behavior remains correct with selection, search navigation, and wrap mode transitions.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given TextArea selection and search are active
+When cursor movement and edits occur across wrap mode changes
+Then cursor row and column remain valid
+And selection and search state stay internally consistent
+```
+
+**[TASK-E5] Add TS Bindings and Integration Tests for New TextArea APIs**
 
 - **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-K0, TASK-K10]
-- **Description:** Implement choreography APIs agreed in spike output (fan-in/fan-out/timeline minimum) and add cancellation/order guarantees tests.
+- **Effort:** Story Points: 2
+- **Dependencies:** [TASK-E4]
+- **Description:** Expose new TextArea methods in TypeScript wrappers and validate full round-trip behavior through FFI integration tests.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given two animations in a choreography group
-When the group start command is issued
-Then all scheduled animations begin according to the declared timeline rules
-And cancelling the group prevents unscheduled followers from starting
+Given TypeScript TextArea wrapper methods for v3 APIs
+When integration tests call selection, history, and search methods
+Then native state updates are reflected in wrapper getters and outputs
+And all methods return documented error semantics on invalid handles
 ```
 
-### Epic L: Declarative Reconciler (ADR-T20) — COMPLETE
+### Epic F: Cross-Platform Distribution UX (ADR-T29)
 
-**[TASK-L0] Spike JSX Factory + Signals Contract Validation**
+**[TASK-F0] Spike Artifact Packaging and Release Matrix Workflow**
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
-- **Dependencies:** [TASK-K4, TASK-K8, TASK-K10]
-- **Description:** Validate runtime contract for JSX factory semantics, signal effect lifecycle, and keyed child updates before implementation.
+- **Dependencies:** [TASK-E5]
+- **Description:** Validate release workflow for required target matrix, artifact naming, checksum/signature strategy, and fallback expectations.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given ADR-T20 requirements
-When the spike is completed
-Then an implementation contract exists for create/update/unmount flows
-And it explicitly maps each flow to existing FFI operations
+Given the required OS and architecture target matrix
+When packaging workflow options are evaluated
+Then a concrete publish and verification strategy is documented
+And fallback behavior is defined for unsupported or missing artifacts
 ```
 
-**[TASK-L1] Establish Package Split (`kraken-tui` Core + `kraken-tui/effect`)**
+**[TASK-F1] Implement Matrix CI Builds and Artifact Publication**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-F0]
+- **Description:** Implement CI workflows that build and publish prebuilt native artifacts for the required matrix with checksums.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a release pipeline run
+When matrix build jobs complete
+Then artifacts are produced for all required targets
+And checksum files are published and verifiable for each artifact
+```
+
+**[TASK-F2] Implement Runtime Artifact Resolution and Source-Build Fallback**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-F1]
+- **Description:** Implement runtime logic for selecting the correct prebuilt artifact and deterministic fallback to source build when needed.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a host runtime on a supported target
+When Kraken initializes native bindings
+Then the correct prebuilt artifact is selected and loaded
+And unsupported targets follow the documented fallback path
+```
+
+**[TASK-F3] Add Cross-Platform Install Smoke Tests and Diagnostics**
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-L0]
-- **Description:** Create package boundaries, exports, and Bun build config to support optional effect integration without bloating core.
+- **Dependencies:** [TASK-F2]
+- **Description:** Add install smoke tests and explicit diagnostics for missing libc, incompatible architecture, and load failures.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given the package build output
-When the core package is installed without effect package
-Then imperative and JSX APIs work without optional dependencies
+Given a fresh machine install scenario
+When native artifact loading fails for a known reason
+Then the error message identifies root cause and remediation steps
+And smoke tests cover each target class in the release matrix
 ```
 
-**[TASK-L2] Implement Runtime JSX Factory and Child Mount Ordering**
+### Epic G: Deterministic Testing and Benchmark Gates (ADR-T30)
+
+**[TASK-G1] Implement MockBackend Golden Snapshot Harness**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-L1]
-- **Description:** Implement JSX runtime (`jsx`, `jsxs`, `Fragment`) that instantiates Widgets and mounts children in deterministic order.
+- **Dependencies:** [TASK-F3]
+- **Description:** Add deterministic golden fixture harness for render output and event routing, including explicit fixture update workflow.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a JSX tree with nested children
-When rendered through the factory
-Then native nodes are created in parent-before-child order
-And child order matches JSX declaration order
+Given a stable widget scene fixture
+When golden tests run through MockBackend
+Then generated snapshots match committed fixtures exactly
+And fixture mismatch fails with diff output that pinpoints changed rows
 ```
 
-**[TASK-L3] Implement Signal-Based Reactive Prop Updates and Cleanup**
+**[TASK-G2] Implement Canonical Native Benchmark Suites and CI Thresholds**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-L2]
-- **Description:** Bind signal changes directly to imperative setters and ensure teardown removes effects and native nodes safely.
+- **Dependencies:** [TASK-G1]
+- **Description:** Add `cargo bench` suites for writer and cache workloads with enforced regression thresholds in CI.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a signal-bound style prop
-When the signal value changes
-Then the corresponding FFI setter is called with the new value
-And no duplicate effects are retained after unmount
+Given canonical benchmark workloads for writer and text cache
+When benchmark gates execute in CI
+Then regressions beyond configured thresholds fail the pipeline
+And benchmark output records baseline and delta values per workload
 ```
 
-**[TASK-L4] Implement Keyed Child Reconciliation with `insert_child` + `destroy_subtree`**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-L3]
-- **Description:** Add keyed list reconciliation that reorders/mounts/unmounts children using native O(1) tree primitives.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a keyed child list reordered from [A,B,C] to [C,A,B]
-When reconciliation runs
-Then child ordering is updated via insert operations without full subtree recreation
-And removed keys trigger subtree destruction exactly once
-```
-
-**[TASK-L5] Async Loop Utilities and Optional Effect Integration**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-L4]
-- **Description:** Provide host utilities for animation-aware loop pacing and optional Effect-layer adapters consistent with v2 loop guidance.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given active animations are present
-When the async loop utility runs
-Then input polling becomes non-blocking and render cadence targets ~60fps
-And idle mode increases blocking timeout to reduce CPU usage
-```
-
-**[TASK-L6] Reconciler Verification, Bundle Budget, and Migration Example**
+**[TASK-G3] Implement Host-Side Benchmark Harness and CI Integration**
 
 - **Type:** Chore
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-L5]
-- **Description:** Add reconciliation integration tests, guard core bundle budget (<50KB), and include a complete imperative-to-JSX migration example.
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-G2]
+- **Description:** Implement `ts/bench-render.ts` scenarios and integrate host benchmark execution into CI validation.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given CI test and bundle-size checks
-When reconciler artifacts are built
-Then keyed update and unmount tests pass
-And the core host package stays within the documented size budget
+Given host benchmark scenarios for runner and event loops
+When bench-render.ts executes in CI
+Then measured host-side throughput and latency metrics are captured
+And failures are reported with actionable threshold context
 ```
 
-### Epic M: Accessibility Foundation (Spec Gap Gate)
+**[TASK-G4] Enforce Final v3 Quality Gate Policy**
 
-**[TASK-M0] Spike Accessibility ADR and FFI Contract Definition**
+- **Type:** Chore
+- **Effort:** Story Points: 2
+- **Dependencies:** [TASK-G3]
+- **Description:** Finalize gate policy connecting bundle size, perf counters, benchmark thresholds, and golden test outcomes to pass/fail release readiness.
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given the full v3 gate suite
+When release readiness validation runs
+Then bundle, perf, benchmark, and golden criteria are enforced as blocking checks
+And policy documentation maps each gate to its owning ticket and metric
+```
+
+### Epic H: Background Render Thread Experiment (ADR-T31, Conditional)
+
+**[TASK-H0] Spike Experimental Threaded Render Protocol and Rollback Plan**
 
 - **Type:** Spike
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-L6, TASK-K8]
-- **Description:** Define the missing accessibility contract (node role/label model, event behavior, FFI function set, and minimal screen-reader strategy). No implementation before this ticket closes.
+- **Effort:** Story Points: 2
+- **Dependencies:** [TASK-G2]
+- **Description:** Define experiment constraints, parity criteria, and rollback protocol for background render thread evaluation.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given accessibility is marked as not fully specified in TechSpec Appendix A
-When this spike is completed
-Then an approved ADR exists with concrete FFI signatures and data model fields
-And follow-on implementation tickets can be authored without undefined behavior
+Given ADR-T31 promotion criteria
+When the experiment protocol is drafted
+Then success and failure thresholds are explicit and measurable
+And rollback steps are documented before implementation starts
 ```
 
-**[TASK-M1] Add `AccessibilityRole` Enum and Node Accessibility Fields**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-M0]
-- **Description:** Add `role: Option<AccessibilityRole>`, `label: Option<String>`, and `description: Option<String>` to `TuiNode`. Define `AccessibilityRole` enum per ADR-T23 output (e.g., `Button`, `Checkbox`, `Input`, `TextArea`, `List`, `ListItem`, `Heading`, `Region`, `Status`). Nodes without a role are transparent to the accessibility event stream.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a newly created TuiNode
-When no accessibility properties are set
-Then role is None, label is None, and description is None
-And the node is excluded from the accessibility event stream
-```
-
-**[TASK-M2] Expose Accessibility Setters via FFI**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-M1]
-- **Description:** Implement and expose `tui_set_node_role(handle, role_u32)`, `tui_set_node_label(handle, ptr, len)`, and `tui_set_node_description(handle, ptr, len)` through the C ABI. All three follow existing `ffi_wrap()` + `catch_unwind` conventions. Role codes are a stable u32 enum encoding from ADR-T23.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a valid widget handle
-When tui_set_node_role is called with the Button role code
-Then the node's role field is set to AccessibilityRole::Button
-And tui_set_node_label stores the provided UTF-8 string on the node
-And tui_set_node_description stores the provided UTF-8 description on the node
-```
-
-**[TASK-M3] Emit Accessibility Events on Focus Change via Event Module**
+**[TASK-H1] Implement Feature-Flagged Background Render Thread Prototype**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-M2]
-- **Description:** Extend the Event Module to enqueue an `EventKind::Accessibility` event whenever focus moves to a node with a non-None role or label. The event payload carries the encoded role code, label text, and description text. Host Layer polls these events via the existing `tui_drain_events()` drain protocol — no new FFI polling function is required. Nodes without role and label do not generate events.
+- **Dependencies:** [TASK-H0]
+- **Description:** Implement experimental threaded render mode behind explicit feature flag, preserving synchronous mode as default.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a widget with role Button and label "Submit"
-When focus moves to that widget
-Then an accessibility event is queued in the event buffer
-And draining events returns an event with type Accessibility and the encoded role and label
-And a widget without role or label does not generate an accessibility event on focus
+Given threaded render feature flag is disabled
+When application render loop runs
+Then behavior is identical to synchronous baseline
+And enabling the flag activates the experimental threaded path without API breakage
 ```
 
-**[TASK-M4] TypeScript Accessibility API and JSX Prop Support**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-M3]
-- **Description:** Add `setRole()`, `setLabel()`, and `setDescription()` to the Widget base class. Expose a type-safe `AccessibilityRole` enum. Add `role`, `aria-label`, and `aria-description` JSX prop support in the reconciler so props flow through to the corresponding FFI setters on mount. Extend the TS event drain to decode and surface `EventKind::Accessibility` events.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a JSX element with role="button" and aria-label="Close dialog"
-When the reconciler mounts the element
-Then tui_set_node_role and tui_set_node_label are called with the correct encoded values
-And accessibility events decoded from the drain include the matching role and label string
-```
-
-**[TASK-M5] Accessibility Verification Suite and Annotated Example**
+**[TASK-H2] Run Parity and Benchmark Validation, Publish Go/No-Go Report**
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-M4]
-- **Description:** Add integration tests covering: role/label/description round-trips via FFI, focus-triggered accessibility event emission, and event drain decoding correctness. Include an annotated example showing an accessible interactive form with labeled inputs, a submit button, and a status region.
+- **Dependencies:** [TASK-H1]
+- **Description:** Execute parity and performance validation and publish a decision report stating whether the experiment advances or remains deferred.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a form with labeled inputs and a role=Region container
-When tests exercise focus traversal across form elements
-Then each focus change to a labeled node emits a correctly populated accessibility event
-And the drain produces role, label, and description for every event
-And the example demonstrates the full accessible widget lifecycle
+Given threaded and synchronous render modes are both executable
+When parity and benchmark validation runs
+Then event ordering, mutation visibility, and shutdown semantics are compared explicitly
+And the final report records go or no-go with supporting metrics
 ```
 
 ---
 
-## 5. V2 SUMMARY TABLE
+## 5. V3 SUMMARY TABLE
 
-| ID       | Epic | Type      | SP      | Dependencies | Status |
-| -------- | ---- | --------- | ------- | ------------ | ------ |
-| TASK-I0  | I    | Spike     | 2       | None         | Done   |
-| TASK-I1  | I    | Feature   | 5       | I0           | Done   |
-| TASK-I2  | I    | Chore     | 3       | I1           | Done   |
-| TASK-I3  | I    | Chore     | 3       | I2           | Done   |
-| TASK-I4  | I    | Chore     | 5       | I3           | Done   |
-| TASK-J1  | J    | Feature   | 5       | I2           | Done   |
-| TASK-J2  | J    | Feature   | 5       | J1           | Done   |
-| TASK-J3  | J    | Feature   | 2       | J2           | Done   |
-| TASK-J4  | J    | Feature   | 5       | J2           | Done   |
-| TASK-J5  | J    | Feature   | 3       | J4           | Done   |
-| TASK-K0  | K    | Spike     | 2       | J5           | Done   |
-| TASK-K1  | K    | Feature   | 3       | J5           | Done   |
-| TASK-K2  | K    | Feature   | 3       | K1           | Done   |
-| TASK-K3  | K    | Feature   | 3       | K2           | Done   |
-| TASK-K4  | K    | Chore     | 2       | K3           | Done   |
-| TASK-K5  | K    | Feature   | 3       | J5           | Done   |
-| TASK-K6  | K    | Feature   | 5       | K5           | Done   |
-| TASK-K7  | K    | Feature   | 5       | K6           | Done   |
-| TASK-K8  | K    | Feature   | 3       | K7           | Done   |
-| TASK-K9  | K    | Feature   | 5       | J5           | Done   |
-| TASK-K10 | K    | Feature   | 3       | K9           | Done   |
-| TASK-K11 | K    | Feature   | 5       | K0, K10      | Done   |
-| TASK-L0  | L    | Spike     | 2       | K4, K8, K10  | Done   |
-| TASK-L1  | L    | Chore     | 3       | L0           | Done   |
-| TASK-L2  | L    | Feature   | 5       | L1           | Done   |
-| TASK-L3  | L    | Feature   | 5       | L2           | Done   |
-| TASK-L4  | L    | Feature   | 5       | L3           | Done   |
-| TASK-L5  | L    | Feature   | 3       | L4           | Done   |
-| TASK-L6  | L    | Chore     | 5       | L5           | Done   |
-| TASK-M0  | M    | Spike     | 3       | L6, K8       | Done   |
-| TASK-M1  | M    | Feature   | 3       | M0           | Done   |
-| TASK-M2  | M    | Feature   | 3       | M1           | Done   |
-| TASK-M3  | M    | Feature   | 5       | M2           | Done   |
-| TASK-M4  | M    | Feature   | 3       | M3           | Done   |
-| TASK-M5  | M    | Chore     | 3       | M4           | Done   |
-|          |      | **TOTAL** | **128** |              |        |
+| ID       | Epic | Type    | SP | Dependencies | Status |
+| -------- | ---- | ------- | -- | ------------ | ------ |
+| TASK-A0  | A    | Spike   | 2  | None         | Planned |
+| TASK-A1  | A    | Feature | 5  | A0           | Planned |
+| TASK-A2  | A    | Feature | 5  | A1           | Planned |
+| TASK-A3  | A    | Chore   | 3  | A2           | Planned |
+| TASK-B0  | B    | Spike   | 2  | A3           | Planned |
+| TASK-B1  | B    | Feature | 5  | B0           | Planned |
+| TASK-B2  | B    | Feature | 5  | B1           | Planned |
+| TASK-B3  | B    | Chore   | 3  | B2           | Planned |
+| TASK-C1  | C    | Feature | 5  | B3           | Planned |
+| TASK-C2  | C    | Feature | 3  | C1           | Planned |
+| TASK-C3  | C    | Chore   | 2  | C2           | Planned |
+| TASK-D1  | D    | Feature | 3  | C3           | Planned |
+| TASK-D2  | D    | Feature | 5  | D1           | Planned |
+| TASK-D3  | D    | Feature | 5  | D2           | Planned |
+| TASK-D4  | D    | Feature | 5  | D3           | Planned |
+| TASK-D5  | D    | Feature | 3  | D4           | Planned |
+| TASK-D6  | D    | Chore   | 3  | D5           | Planned |
+| TASK-E1  | E    | Feature | 5  | D6           | Planned |
+| TASK-E2  | E    | Feature | 5  | E1           | Planned |
+| TASK-E3  | E    | Feature | 3  | E2           | Planned |
+| TASK-E4  | E    | Chore   | 3  | E3           | Planned |
+| TASK-E5  | E    | Feature | 2  | E4           | Planned |
+| TASK-F0  | F    | Spike   | 2  | E5           | Planned |
+| TASK-F1  | F    | Feature | 5  | F0           | Planned |
+| TASK-F2  | F    | Feature | 5  | F1           | Planned |
+| TASK-F3  | F    | Chore   | 3  | F2           | Planned |
+| TASK-G1  | G    | Feature | 5  | F3           | Planned |
+| TASK-G2  | G    | Feature | 5  | G1           | Planned |
+| TASK-G3  | G    | Chore   | 3  | G2           | Planned |
+| TASK-G4  | G    | Chore   | 2  | G3           | Planned |
+| TASK-H0  | H    | Spike   | 2  | G2           | Conditional |
+| TASK-H1  | H    | Feature | 5  | H0           | Conditional |
+| TASK-H2  | H    | Chore   | 3  | H1           | Conditional |
+|          |      | **TOTAL** | **122** |              |        |
