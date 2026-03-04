@@ -989,4 +989,91 @@ mod tests {
         );
         assert_eq!(runs.len(), 24); // one run per row
     }
+
+    /// Precise benchmark report: prints exact numbers for all three workloads.
+    /// Run with `cargo test -- writer::tests::benchmark_report --nocapture`
+    #[test]
+    fn benchmark_report() {
+        let workloads: &[(&str, fn() -> Vec<CellUpdate>)] = &[
+            ("full (100%)", full_diff),
+            ("medium (50%)", medium_diff),
+            ("sparse (10%)", sparse_diff),
+        ];
+
+        eprintln!();
+        eprintln!("╔══════════════════════════════════════════════════════════════════════════╗");
+        eprintln!("║           Epic A Writer Throughput Benchmark (ADR-T24)                  ║");
+        eprintln!("╠══════════════════════════════════════════════════════════════════════════╣");
+
+        for (label, workload_fn) in workloads {
+            let diff = workload_fn();
+            let cell_count = diff.len();
+            let baseline = baseline_metrics(&diff);
+            let runs = compact_runs(&diff);
+            let run_count = runs.len();
+            let mut state = WriterState::new();
+            let mut buf = Vec::new();
+            let actual = emit_frame(&mut state, &runs, &mut buf).unwrap();
+
+            let baseline_ops = baseline.style_delta_count + baseline.cursor_move_count;
+            let actual_ops = actual.style_delta_count + actual.cursor_move_count;
+            let ops_reduction = 1.0 - (actual_ops as f64 / baseline_ops as f64);
+
+            let baseline_bytes = baseline.bytes_written;
+            let actual_bytes = actual.bytes_written;
+            let bytes_reduction = 1.0 - (actual_bytes as f64 / baseline_bytes as f64);
+
+            let baseline_runs = baseline.run_count;
+            let actual_runs = actual.run_count;
+            let runs_reduction = 1.0 - (actual_runs as f64 / baseline_runs as f64);
+
+            eprintln!("║                                                                          ║");
+            eprintln!("║  Workload: {:<63}║", label);
+            eprintln!("║  Cells: {:<66}║", cell_count);
+            eprintln!("║  Runs after compaction: {:<50}║", run_count);
+            eprintln!("║                                                                          ║");
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                "Metric", "Baseline", "Writer", "Reduction");
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+                "style+cursor ops",
+                baseline_ops,
+                actual_ops,
+                ops_reduction * 100.0);
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+                "bytes written",
+                baseline_bytes,
+                actual_bytes,
+                bytes_reduction * 100.0);
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>11.1}%   ║",
+                "run count (prints)",
+                baseline_runs,
+                actual_runs,
+                runs_reduction * 100.0);
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                "cursor moves",
+                baseline.cursor_move_count,
+                actual.cursor_move_count,
+                format!("{:.1}%", (1.0 - actual.cursor_move_count as f64
+                    / baseline.cursor_move_count as f64) * 100.0));
+            eprintln!("║  {:>22}  {:>12}  {:>12}  {:>12}   ║",
+                "style deltas",
+                baseline.style_delta_count,
+                actual.style_delta_count,
+                format!("{:.1}%", (1.0 - actual.style_delta_count as f64
+                    / baseline.style_delta_count as f64) * 100.0));
+            eprintln!("╠══════════════════════════════════════════════════════════════════════════╣");
+
+            // Assert the performance gate
+            assert!(
+                ops_reduction >= 0.35,
+                "{}: only {:.1}% ops reduction (need >=35%)",
+                label,
+                ops_reduction * 100.0
+            );
+        }
+
+        eprintln!("║  Performance gate: >= 35% style+cursor ops reduction      ✓ PASSED     ║");
+        eprintln!("╚══════════════════════════════════════════════════════════════════════════╝");
+        eprintln!();
+    }
 }
