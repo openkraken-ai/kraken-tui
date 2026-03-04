@@ -958,6 +958,38 @@ describe("FFI integration", () => {
 			}
 			expect(Number(ffi.tui_get_perf_counter(99))).toBe(0);
 		});
+
+		test("writer perf counters populated after render", () => {
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const child = ffi.tui_create_node(1);
+			ffi.tui_append_child(root, child);
+			ffi.tui_set_layout_dimension(child, 0, 20, 1);
+			ffi.tui_set_layout_dimension(child, 1, 1, 1);
+			setContent(child, "Hello writer");
+
+			ffi.tui_render();
+
+			const writeBytes = Number(ffi.tui_get_perf_counter(7));
+			const runCount = Number(ffi.tui_get_perf_counter(8));
+			const styleDeltas = Number(ffi.tui_get_perf_counter(9));
+
+			expect(writeBytes).toBeGreaterThan(0);
+			expect(runCount).toBeGreaterThan(0);
+			expect(styleDeltas).toBeGreaterThanOrEqual(0);
+
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(root);
+		});
+
+		test("writer counter IDs 7-9 return values", () => {
+			for (let i = 7; i <= 9; i++) {
+				expect(Number(ffi.tui_get_perf_counter(i))).toBeGreaterThanOrEqual(0);
+			}
+		});
 	});
 
 	// ── Memory Management ───────────────────────────────────────────────────

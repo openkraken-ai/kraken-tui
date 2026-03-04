@@ -18,6 +18,12 @@ pub trait TerminalBackend {
     fn flush(&mut self) -> Result<(), String>;
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent>;
 
+    /// Returns true for backends without real terminal I/O (headless, mock).
+    /// The writer module skips stdout emission for headless backends.
+    fn is_headless(&self) -> bool {
+        false
+    }
+
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
     #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
@@ -356,6 +362,10 @@ impl TerminalBackend for HeadlessBackend {
         Vec::new() // No terminal input
     }
 
+    fn is_headless(&self) -> bool {
+        true
+    }
+
     #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -411,6 +421,10 @@ impl TerminalBackend for MockBackend {
 
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         std::mem::take(&mut self.injected_events)
+    }
+
+    fn is_headless(&self) -> bool {
+        true
     }
 
     #[cfg(test)]

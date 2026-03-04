@@ -6,6 +6,8 @@
 //! - Send diff to TerminalBackend
 //! - Swap buffers, clear dirty flags
 
+use std::io::Write;
+
 use crate::context::TuiContext;
 use crate::text_utils::{
     clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx,
@@ -160,9 +162,26 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     let diff = diff_buffers(ctx);
     ctx.perf_diff_cells = diff.len() as u32;
 
-    // 5. Send to backend
-    ctx.backend.write_diff(&diff)?;
-    ctx.backend.flush()?;
+    // 5. Compact runs and emit via writer (ADR-T24)
+    let runs = crate::writer::compact_runs(&diff);
+    ctx.writer_state.reset();
+    if ctx.backend.is_headless() {
+        // Headless: skip terminal I/O but still compute metrics for testing
+        let mut sink = std::io::sink();
+        let metrics = crate::writer::emit_frame(&mut ctx.writer_state, &runs, &mut sink)
+            .map_err(|e| format!("writer: {e}"))?;
+        ctx.perf_write_bytes = metrics.bytes_written;
+        ctx.perf_write_runs = metrics.run_count;
+        ctx.perf_style_deltas = metrics.style_delta_count;
+    } else {
+        let mut stdout = std::io::stdout();
+        let metrics = crate::writer::emit_frame(&mut ctx.writer_state, &runs, &mut stdout)
+            .map_err(|e| format!("writer: {e}"))?;
+        stdout.flush().map_err(|e| format!("flush: {e}"))?;
+        ctx.perf_write_bytes = metrics.bytes_written;
+        ctx.perf_write_runs = metrics.run_count;
+        ctx.perf_style_deltas = metrics.style_delta_count;
+    }
 
     // 6. Swap buffers
     std::mem::swap(&mut ctx.front_buffer, &mut ctx.back_buffer);

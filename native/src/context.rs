@@ -14,6 +14,7 @@ use crate::animation::{Animation, ChoreographyGroup};
 use crate::terminal::TerminalBackend;
 use crate::theme::Theme;
 use crate::types::{Buffer, TuiEvent, TuiNode};
+use crate::writer::WriterState;
 
 pub struct TuiContext {
     // Tree Module
@@ -30,6 +31,9 @@ pub struct TuiContext {
     pub front_buffer: Buffer,
     pub back_buffer: Buffer,
     pub backend: Box<dyn TerminalBackend>,
+
+    // Writer Module (v3, ADR-T24)
+    pub writer_state: WriterState,
 
     // Text Module
     pub syntax_set: syntect::parsing::SyntaxSet,
@@ -54,6 +58,9 @@ pub struct TuiContext {
     pub perf_layout_us: u64,
     pub perf_render_us: u64,
     pub perf_diff_cells: u32,
+    pub perf_write_bytes: u64,
+    pub perf_write_runs: u32,
+    pub perf_style_deltas: u32,
 }
 
 // SAFETY: ADR-T16 preserves Kraken TUI's single-threaded execution model.
@@ -79,6 +86,8 @@ impl TuiContext {
             back_buffer: Buffer::new(w, h),
             backend,
 
+            writer_state: WriterState::new(),
+
             syntax_set: syntect::parsing::SyntaxSet::load_defaults_newlines(),
             theme_set: syntect::highlighting::ThemeSet::load_defaults(),
 
@@ -102,6 +111,9 @@ impl TuiContext {
             perf_layout_us: 0,
             perf_render_us: 0,
             perf_diff_cells: 0,
+            perf_write_bytes: 0,
+            perf_write_runs: 0,
+            perf_style_deltas: 0,
         }
     }
 
