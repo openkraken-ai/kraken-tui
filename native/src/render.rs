@@ -160,9 +160,13 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     let diff = diff_buffers(ctx);
     ctx.perf_diff_cells = diff.len() as u32;
 
-    // 5. Send to backend
-    ctx.backend.write_diff(&diff)?;
-    ctx.backend.flush()?;
+    // 5. Compact runs and emit via writer through backend (ADR-T24)
+    let runs = crate::writer::compact_runs(&diff);
+    ctx.writer_state.reset();
+    let metrics = ctx.backend.emit_runs(&mut ctx.writer_state, &runs)?;
+    ctx.perf_write_bytes_estimate = metrics.bytes_estimated;
+    ctx.perf_write_runs = metrics.run_count;
+    ctx.perf_style_deltas = metrics.style_delta_count;
 
     // 6. Swap buffers
     std::mem::swap(&mut ctx.front_buffer, &mut ctx.back_buffer);

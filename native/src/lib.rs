@@ -29,6 +29,7 @@ mod text_utils;
 mod theme;
 mod tree;
 mod types;
+mod writer;
 
 use std::cell::RefCell;
 use std::ffi::CString;
@@ -1459,6 +1460,9 @@ pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
             4 => ctx.nodes.len() as u64,
             5 => ctx.nodes.values().filter(|n| n.dirty).count() as u64,
             6 => ctx.animations.len() as u64,
+            7 => ctx.perf_write_bytes_estimate,
+            8 => ctx.perf_write_runs as u64,
+            9 => ctx.perf_style_deltas as u64,
             _ => 0,
         }
     }))
