@@ -5,6 +5,7 @@
 //! and future backend substitution.
 
 use crate::types::{CellUpdate, TerminalInputEvent};
+use crate::writer::{WriteRun, WriterMetrics, WriterState};
 
 // ============================================================================
 // TerminalBackend Trait
@@ -18,8 +19,16 @@ pub trait TerminalBackend {
     fn flush(&mut self) -> Result<(), String>;
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent>;
 
+    /// Emit compacted writer runs through this backend's output channel.
+    /// Real backends write to stdout; headless/mock backends write to a sink.
+    /// This ensures all frame output is routed through the backend abstraction.
+    fn emit_runs(
+        &mut self,
+        state: &mut WriterState,
+        runs: &[WriteRun],
+    ) -> Result<WriterMetrics, String>;
+
     /// Returns true for backends without real terminal I/O (headless, mock).
-    /// The writer module skips stdout emission for headless backends.
     fn is_headless(&self) -> bool {
         false
     }
@@ -316,6 +325,19 @@ impl TerminalBackend for CrosstermBackend {
         events
     }
 
+    fn emit_runs(
+        &mut self,
+        state: &mut WriterState,
+        runs: &[WriteRun],
+    ) -> Result<WriterMetrics, String> {
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        let metrics = crate::writer::emit_frame(state, runs, &mut stdout)
+            .map_err(|e| format!("writer: {e}"))?;
+        stdout.flush().map_err(|e| format!("flush: {e}"))?;
+        Ok(metrics)
+    }
+
     #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
@@ -360,6 +382,15 @@ impl TerminalBackend for HeadlessBackend {
 
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         Vec::new() // No terminal input
+    }
+
+    fn emit_runs(
+        &mut self,
+        state: &mut WriterState,
+        runs: &[WriteRun],
+    ) -> Result<WriterMetrics, String> {
+        let mut sink = std::io::sink();
+        crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
     }
 
     fn is_headless(&self) -> bool {
@@ -421,6 +452,15 @@ impl TerminalBackend for MockBackend {
 
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         std::mem::take(&mut self.injected_events)
+    }
+
+    fn emit_runs(
+        &mut self,
+        state: &mut WriterState,
+        runs: &[WriteRun],
+    ) -> Result<WriterMetrics, String> {
+        let mut sink = std::io::sink();
+        crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
     }
 
     fn is_headless(&self) -> bool {

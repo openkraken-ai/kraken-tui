@@ -17,7 +17,7 @@
 //!    row are merged into a single `Print(string)` payload.
 
 use crate::types::{CellAttrs, CellUpdate};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 // ============================================================================
 // WriterState — tracks emitted cursor position and style across a frame
@@ -210,9 +210,11 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
         chars: String::new(),
     };
     current.chars.push(first.cell.ch);
+    // Track display width incrementally to avoid O(n²) recomputation
+    let mut current_width: u16 = UnicodeWidthChar::width(first.cell.ch).unwrap_or(0) as u16;
 
     for update in &updates[1..] {
-        let expected_x = current.x + current.chars.width() as u16;
+        let expected_x = current.x + current_width;
         let same_row = update.y == current.y;
         let contiguous = update.x == expected_x;
         let same_style = update.cell.fg == current.fg
@@ -221,6 +223,7 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
 
         if same_row && contiguous && same_style {
             current.chars.push(update.cell.ch);
+            current_width += UnicodeWidthChar::width(update.cell.ch).unwrap_or(0) as u16;
         } else {
             runs.push(current);
             current = WriteRun {
@@ -232,6 +235,7 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
                 chars: String::new(),
             };
             current.chars.push(update.cell.ch);
+            current_width = UnicodeWidthChar::width(update.cell.ch).unwrap_or(0) as u16;
         }
     }
     runs.push(current);
