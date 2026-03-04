@@ -4,7 +4,7 @@
 //! not on crossterm directly. This enables mock backends for testing
 //! and future backend substitution.
 
-use crate::types::{CellUpdate, TerminalInputEvent};
+use crate::types::TerminalInputEvent;
 use crate::writer::{WriteRun, WriterMetrics, WriterState};
 
 // ============================================================================
@@ -15,8 +15,6 @@ pub trait TerminalBackend {
     fn init(&mut self) -> Result<(), String>;
     fn shutdown(&mut self) -> Result<(), String>;
     fn size(&self) -> (u16, u16);
-    fn write_diff(&mut self, diff: &[CellUpdate]) -> Result<(), String>;
-    fn flush(&mut self) -> Result<(), String>;
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent>;
 
     /// Emit compacted writer runs through this backend's output channel.
@@ -27,11 +25,6 @@ pub trait TerminalBackend {
         state: &mut WriterState,
         runs: &[WriteRun],
     ) -> Result<WriterMetrics, String>;
-
-    /// Returns true for backends without real terminal I/O (headless, mock).
-    fn is_headless(&self) -> bool {
-        false
-    }
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
     #[cfg(test)]
@@ -78,7 +71,7 @@ impl TerminalBackend for CrosstermBackend {
         // Input widget cursors are rendered as inverted cells in the buffer
         // (render.rs render_input_cursor), so the OS cursor is not needed and
         // leaving it visible causes it to bleed onto arbitrary cells after
-        // each write_diff pass (the OS cursor lands on the last written cell).
+        // each emit_runs pass (the OS cursor lands on the last written cell).
         stdout
             .execute(cursor::Hide)
             .map_err(|e| format!("hide cursor: {e}"))?;
@@ -117,91 +110,6 @@ impl TerminalBackend for CrosstermBackend {
 
     fn size(&self) -> (u16, u16) {
         crossterm::terminal::size().unwrap_or((self.width, self.height))
-    }
-
-    fn write_diff(&mut self, diff: &[CellUpdate]) -> Result<(), String> {
-        use crate::types::{color_to_crossterm, CellAttrs};
-        use crossterm::{
-            cursor::MoveTo,
-            style::{
-                Attribute, Color, Print, SetAttribute, SetBackgroundColor, SetForegroundColor,
-            },
-            QueueableCommand,
-        };
-
-        let mut stdout = std::io::stdout();
-
-        for update in diff {
-            stdout
-                .queue(MoveTo(update.x, update.y))
-                .map_err(|e| format!("move: {e}"))?;
-
-            // Foreground
-            match color_to_crossterm(update.cell.fg) {
-                Some(c) => {
-                    stdout
-                        .queue(SetForegroundColor(c))
-                        .map_err(|e| format!("fg: {e}"))?;
-                }
-                None => {
-                    stdout
-                        .queue(SetForegroundColor(Color::Reset))
-                        .map_err(|e| format!("fg reset: {e}"))?;
-                }
-            }
-
-            // Background
-            match color_to_crossterm(update.cell.bg) {
-                Some(c) => {
-                    stdout
-                        .queue(SetBackgroundColor(c))
-                        .map_err(|e| format!("bg: {e}"))?;
-                }
-                None => {
-                    stdout
-                        .queue(SetBackgroundColor(Color::Reset))
-                        .map_err(|e| format!("bg reset: {e}"))?;
-                }
-            }
-
-            // Attributes
-            if update.cell.attrs.contains(CellAttrs::BOLD) {
-                stdout
-                    .queue(SetAttribute(Attribute::Bold))
-                    .map_err(|e| format!("bold: {e}"))?;
-            }
-            if update.cell.attrs.contains(CellAttrs::ITALIC) {
-                stdout
-                    .queue(SetAttribute(Attribute::Italic))
-                    .map_err(|e| format!("italic: {e}"))?;
-            }
-            if update.cell.attrs.contains(CellAttrs::UNDERLINE) {
-                stdout
-                    .queue(SetAttribute(Attribute::Underlined))
-                    .map_err(|e| format!("underline: {e}"))?;
-            }
-            if update.cell.attrs.contains(CellAttrs::STRIKETHROUGH) {
-                stdout
-                    .queue(SetAttribute(Attribute::CrossedOut))
-                    .map_err(|e| format!("strikethrough: {e}"))?;
-            }
-
-            stdout
-                .queue(Print(update.cell.ch))
-                .map_err(|e| format!("print: {e}"))?;
-
-            // Reset attributes after each cell
-            stdout
-                .queue(SetAttribute(Attribute::Reset))
-                .map_err(|e| format!("reset: {e}"))?;
-        }
-
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<(), String> {
-        use std::io::Write;
-        std::io::stdout().flush().map_err(|e| format!("flush: {e}"))
     }
 
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent> {
@@ -372,14 +280,6 @@ impl TerminalBackend for HeadlessBackend {
         (self.width, self.height)
     }
 
-    fn write_diff(&mut self, _diff: &[CellUpdate]) -> Result<(), String> {
-        Ok(()) // Discard output
-    }
-
-    fn flush(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         Vec::new() // No terminal input
     }
@@ -391,10 +291,6 @@ impl TerminalBackend for HeadlessBackend {
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
-    }
-
-    fn is_headless(&self) -> bool {
-        true
     }
 
     #[cfg(test)]
@@ -411,7 +307,6 @@ impl TerminalBackend for HeadlessBackend {
 pub struct MockBackend {
     pub width: u16,
     pub height: u16,
-    pub diff_log: Vec<CellUpdate>,
     pub injected_events: Vec<TerminalInputEvent>,
 }
 
@@ -421,7 +316,6 @@ impl MockBackend {
         Self {
             width,
             height,
-            diff_log: Vec::new(),
             injected_events: Vec::new(),
         }
     }
@@ -441,15 +335,6 @@ impl TerminalBackend for MockBackend {
         (self.width, self.height)
     }
 
-    fn write_diff(&mut self, diff: &[CellUpdate]) -> Result<(), String> {
-        self.diff_log.extend_from_slice(diff);
-        Ok(())
-    }
-
-    fn flush(&mut self) -> Result<(), String> {
-        Ok(())
-    }
-
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         std::mem::take(&mut self.injected_events)
     }
@@ -461,10 +346,6 @@ impl TerminalBackend for MockBackend {
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
-    }
-
-    fn is_headless(&self) -> bool {
-        true
     }
 
     #[cfg(test)]

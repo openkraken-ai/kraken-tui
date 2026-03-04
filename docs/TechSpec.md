@@ -96,7 +96,7 @@ The following ADRs are retained from v2 and remain active contract baseline.
 **Emission rules:**
 
 1. Deterministic row-major ordering.
-2. Cursor move only when position is non-contiguous.
+2. Cursor move only when position is non-contiguous (first run of each frame always emits MoveTo via `force_move`).
 3. Style commands only on style delta.
 4. Frame-end attribute reset, not per-cell reset.
 5. Emit contiguous same-style cells as one run payload.
@@ -406,6 +406,8 @@ pub struct OverlayState {
     pub dismiss_on_escape: bool,
 }
 
+/// Tracks emitted cursor position and style within a single frame.
+/// reset() is called at each frame start — all delta tracking is intra-frame only.
 pub struct WriterState {
     pub cursor_x: u16,
     pub cursor_y: u16,
@@ -413,6 +415,9 @@ pub struct WriterState {
     pub bg: u32,
     pub attrs: CellAttrs,
     pub has_cursor: bool,
+    /// When true, the first run of the frame unconditionally emits MoveTo
+    /// because the terminal cursor position is unknown after reset().
+    pub force_move: bool,
 }
 
 pub struct TextCacheKey {

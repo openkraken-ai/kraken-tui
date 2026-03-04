@@ -102,11 +102,12 @@ impl WriterMetrics {
 }
 
 // ============================================================================
-// Baseline metrics — computes what per-cell emission would produce
+// Baseline metrics — computes what per-cell emission would produce (test only)
 // ============================================================================
 
 /// Compute the metrics that the old per-cell emission path would produce
 /// for a given set of cell updates. Used as a baseline for regression tests.
+#[cfg(test)]
 pub fn baseline_metrics(diff: &[CellUpdate]) -> WriterMetrics {
     let mut metrics = WriterMetrics::new();
     for update in diff {
@@ -147,6 +148,7 @@ pub fn baseline_metrics(diff: &[CellUpdate]) -> WriterMetrics {
 }
 
 /// Rough byte estimate for per-cell emission (MoveTo + full style + Print + Reset).
+#[cfg(test)]
 fn estimate_per_cell_bytes(update: &CellUpdate) -> u64 {
     let mut bytes: u64 = 0;
     // MoveTo: \x1b[{y};{x}H  ≈ 6-10 bytes
