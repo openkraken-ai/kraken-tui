@@ -3,12 +3,12 @@
 ## Kraken TUI
 
 **Version**: 4.1
-**Status**: Draft
+**Status**: Final
 **Date**: March 2026
 **Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
 **Changelog**:
-- v4.1 — Incorporated choreography FFI contract (TASK-K0 spike) into §4.16; added ChoreoGroup/ChoreoMember structs to §3.3 and TuiContext; corrected FFI symbol count to 93 (was 89). Promoted ADR-T16–T22 from "v2 Draft" to "Accepted" (Epics I–L complete). Pre-specified Epic M data model: AccessibilityRole enum, TuiEventType::Accessibility, TuiNode accessibility fields (role, label, description), §4.18 Accessibility FFI surface (3 setters, planned pending ADR-T23). Fixed §5.1 project structure (added loop.ts, effect/index.ts, animation-constants.ts). Fixed §5.3 dependency note (@preact/signals-core is now a runtime dep). Updated §5.5 bundle budget. Updated Appendix A accessibility row to reference ADR-T23.
+- v4.1 — Incorporated choreography FFI contract (TASK-K0 spike) into §4.16; added ChoreoGroup/ChoreoMember structs to §3.3 and TuiContext; corrected FFI symbol count to 93 (was 89). Promoted ADR-T16–T22 from "v2 Draft" to "Accepted" (Epics I–L complete). **ADR-T23 (Accessibility) IMPLEMENTED** — Epic M complete. Updated §4.18 to reflect implementation. Fixed §5.1 project structure (added loop.ts, effect/index.ts, animation-constants.ts). Fixed §5.3 dependency note (@preact/signals-core is now a runtime dep). Updated §5.5 bundle budget. Updated Appendix A accessibility row to reference ADR-T23.
 - v4.0 — v2 scope additions. New ADRs: T16 (safe global state), T17 (subtree destruction), T18 (indexed insertion), T19 (TextArea widget), T20 (reconciler strategy), T21 (theme inheritance), T22 (position animation). Data model: Animation gains looping/pending/chain_next fields, TuiNode gains render_offset, NodeType gains TextArea, Theme gains type_defaults. New FFI functions: tui_destroy_subtree, tui_insert_child. Updated Appendix A (promoted v2 items). Updated Appendix B.
 - v3.2 — Absorbed Performance Budgets from Architecture.md (was out of Architecture's boundary scope) into §5.5. Renumbered §5.6–§5.7.
 - v3.1 — Aligned v1 scope with PRD: animation primitives and chaining are in v1 scope. Canonicalized Theme TS API contract (`new Theme()`, `Theme.DARK`, `Theme.LIGHT`) and `Kraken.switchTheme(theme: Theme)`. Marked headless init as testing utility excluded from public FFI symbol count.
@@ -792,7 +792,7 @@ pub enum TuiEventType {
     FocusChange   = 4,
     Change        = 5,
     Submit        = 6,
-    Accessibility = 7,  // Epic M (planned, ADR-T23): emitted when focus moves to a node with role/label set
+    Accessibility = 7,  // Epic M (IMPLEMENTED, ADR-T23): emitted when focus moves to a node with role/label set
 }
 ```
 
@@ -827,9 +827,9 @@ pub enum Easing {
 }
 ```
 
-#### AccessibilityRole (Epic M — planned, pending ADR-T23)
+#### AccessibilityRole (Epic M — IMPLEMENTED)
 
-Role values are stable `u32` codes passed across the FFI boundary. The final enum values are confirmed by ADR-T23; the values below are the current best-effort contract from TASK-M0 planning.
+Role values are stable `u32` codes passed across the FFI boundary. Defined in ADR-T23.
 
 ```rust
 #[repr(u32)]
@@ -955,7 +955,7 @@ pub struct TuiNode {
     pub cursor_row: u32,                 // v2: 2D cursor row (ADR-T19)
     pub cursor_col: u32,                 // v2: 2D cursor column
     pub wrap_mode: u8,                   // v2: 0 = no wrap (horizontal scroll), 1 = soft wrap
-    // Epic M accessibility fields (planned, pending ADR-T23 — TASK-M1):
+    // Epic M accessibility fields (IMPLEMENTED — ADR-T23):
     pub role: Option<AccessibilityRole>, // None = not part of accessibility tree
     pub label: Option<String>,           // Accessible name (ARIA label equivalent)
     pub description: Option<String>,     // Accessible description (ARIA describedby equivalent)
@@ -1527,15 +1527,15 @@ lib.tui_animate(widgetHandle, 3, 0x01FF0000, 500, 3); // border_color, red RGB, 
 **v1 Breakdown:** 4+6+6+6+12+6+4+6+3+4+5+9+7 = **78**
 **v2 Breakdown:** 4+7+7+6+16+6+4+6+3+4+5+13+12 = **93**
 
-**Epic M planned additions (pending ADR-T23 ratification): +3 = 96 total**
+**Epic M IMPLEMENTED — ADR-T23 accepted: +3 = 96 total**
 
 | Category | Planned Adds | Note |
 |----------|-------------|------|
 | Accessibility | +3 | set_node_role, set_node_label, set_node_description. See §4.18. |
 
-### 4.18 Accessibility (Epic M — planned, pending ADR-T23)
+### 4.18 Accessibility (Epic M — IMPLEMENTED, ADR-T23 accepted)
 
-> **Status:** Provisional contract — derived from TASK-M1 / TASK-M2 planning. Subject to revision after TASK-M0 spike completes and ADR-T23 is ratified. Do not implement before TASK-M0 closes.
+> **Status:** Implemented. ADR-T23 accepted. Full implementation in Epic M (TASK-M1–M5).
 
 | Function                    | Signature                                                | Returns | Description |
 | --------------------------- | -------------------------------------------------------- | ------- | ----------- |
@@ -1864,7 +1864,7 @@ The following v2 features are now fully specified with ADRs and FFI contracts in
 | Feature                    | Integration Point |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Scrollbar Rendering**    | Native Core renders scrollbar indicators based on scroll position and content overflow. Render Module enhancement — no FFI surface change. |
-| **Accessibility (a11y)**   | Pre-specified as ADR-T23 (planned). See §3.2 (AccessibilityRole enum), §3.3 (TuiNode fields, TuiEventType::Accessibility), §4.18 (FFI surface). Defined by TASK-M0 spike; implementation tickets TASK-M1–M5 provisional pending spike ratification. |
+| **Accessibility (a11y)**   | Implemented in Epic M (ADR-T23). See §3.2 (AccessibilityRole enum), §3.3 (TuiNode fields, TuiEventType::Accessibility), §4.18 (FFI surface). |
 | **Async Event Loop**       | Host Layer refactoring: animation-aware sleep, `await Bun.sleep(16)` when animating. Implemented in `ts/src/loop.ts` (v2, TASK-L5). Pattern documented in §5.7. |
 | **String Interning**       | Internal optimization within Text Module for high-frequency identical content. Per Architecture Appendix B: deferred to profiling data. No FFI surface change. |
 
@@ -1896,4 +1896,4 @@ The following v2 features are now fully specified with ADRs and FFI contracts in
 | ADR-T20         | Accepted        | Reconciler strategy: lightweight JSX factory + `@preact/signals-core`. Package split: core <50KB + optional effect package. Implemented in Epic L.                                                                                                                                            |
 | ADR-T21         | Accepted        | Theme inheritance: per-NodeType style defaults via `type_defaults: HashMap<NodeType, VisualStyle>`. Implemented in Epic K.                                                                                                                                                                    |
 | ADR-T22         | Accepted        | Position animation: visual-only render offset on TuiNode. `AnimProp::PositionX/Y`. Layout unaffected. Implemented in Epic K.                                                                                                                                                                 |
-| ADR-T23         | Planned         | Accessibility foundation: AccessibilityRole enum, TuiNode role/label/description fields, EventKind::Accessibility, 3 FFI setters. Defined by TASK-M0 spike (pending ratification).                                                                                                           |
+| ADR-T23         | Accepted        | Accessibility foundation: AccessibilityRole enum, TuiNode role/label/description fields, EventKind::Accessibility, 3 FFI setters. Implemented in Epic M.                                                                                                                                                                           |

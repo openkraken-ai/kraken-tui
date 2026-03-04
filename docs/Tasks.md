@@ -3,8 +3,8 @@
 ## Kraken TUI
 
 **Version**: 4.0
-**Status**: v1 Complete, v2 In Progress (Epics I/J/K/L Done, M Remaining)
-**Date**: February 2026
+**Status**: v1 Complete, v2 Complete
+**Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
 ---

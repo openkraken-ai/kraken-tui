@@ -4,7 +4,7 @@
 
 **Version**: 2.1
 **Status**: Approved
-**Date**: February 2026
+**Date**: March 2026
 
 ---
 
@@ -169,7 +169,7 @@
 - Animation system (timed transitions, built-in primitives, frame-budget-aware).
 - Theming foundation (theme definition, subtree application, runtime switching, built-in light/dark themes).
 
-**v2 — Expansion:**
+**v2 — Delivered:**
 
 - Native Core hardening (safe global state, graceful error propagation, memory budget enforcement).
 - Tree operations for reconciler support (cascading subtree destruction, indexed child insertion).

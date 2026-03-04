@@ -3,13 +3,13 @@
 ## Kraken TUI
 
 **Version**: 2.3
-**Status**: Draft
-**Date**: February 2026
+**Status**: Final
+**Date**: March 2026
 **Source of Truth**: [PRD.md](./PRD.md)
 **Upstream Decisions**: [ADR-001 through ADR-005](./architecture/)
 
 **Changelog**:
-- v2.3 — Added v2 scope: Tree Module operations (subtree destruction, indexed insertion), v2 module additions (Reconciler Layer), new Appendix B decisions for v2. Resolved Risk 1 with safe concurrency primitives. Added Risk 7 (background render thread — explicitly descoped to v3). Updated Appendix A with ADR-004 amendment.
+- v2.3 — Added v2 scope: Tree Module operations (subtree destruction, indexed insertion), v2 module additions (Reconciler Layer), new Appendix B decisions for v2. Resolved Risk 1 with safe concurrency primitives. Added Risk 7 (background render thread — explicitly descoped to v3). Updated Appendix A with ADR-004 amendment. **v2 COMPLETE — March 2026**.
 - v2.2 — Removed §6 Performance Budgets (implementation-level detail; migrated to TechSpec §5.5). Removed stale `lrsa-320` marker. Fixed duplicate §6 numbering — Logical Risks & Technical Debt is now the sole §6 per the Architecture output standard.
 
 ---
