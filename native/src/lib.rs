@@ -25,10 +25,11 @@ mod scroll;
 mod style;
 mod terminal;
 mod text;
+pub mod text_cache;
 mod text_utils;
 mod theme;
 mod tree;
-mod types;
+pub mod types;
 mod writer;
 
 use std::cell::RefCell;
@@ -1463,6 +1464,10 @@ pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
             7 => ctx.perf_write_bytes_estimate,
             8 => ctx.perf_write_runs as u64,
             9 => ctx.perf_style_deltas as u64,
+            10 => ctx.perf_text_parse_us,
+            11 => ctx.perf_text_wrap_us,
+            12 => ctx.perf_text_cache_hits as u64,
+            13 => ctx.perf_text_cache_misses as u64,
             _ => 0,
         }
     }))
