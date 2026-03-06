@@ -8,12 +8,9 @@
 import { ffi } from "./ffi";
 import { checkResult } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
-import { dispatchToJsxHandlers } from "./loop";
+import { dispatchToJsxHandlers, PERF_ACTIVE_ANIMATIONS } from "./loop";
 import { Widget } from "./widget";
 import type { Theme } from "./theme";
-
-/** Perf counter ID for active animation count (TechSpec §5.7). */
-const PERF_ACTIVE_ANIMATIONS = 6;
 
 /** Options for the `app.run()` event loop (ADR-T26, TechSpec §4.7). */
 export interface RunOptions {
