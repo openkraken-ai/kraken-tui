@@ -12,6 +12,7 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { Kraken } from "./src/app";
 import type { RunOptions } from "./src/app";
+import { createLoop } from "./src/loop";
 import { Box } from "./src/widgets/box";
 import type { KrakenEvent } from "./src/events";
 
@@ -217,6 +218,39 @@ describe("Legacy loop compatibility (TASK-C3)", () => {
 		}
 
 		expect(iterations).toBe(3);
+	});
+
+	test("createLoop with mode: continuous forces non-blocking path", async () => {
+		let ticks = 0;
+		const loop = createLoop({
+			app,
+			mode: "continuous",
+			fps: 1000,
+			onTick: () => {
+				ticks++;
+				if (ticks >= 3) loop.stop();
+			},
+			disableJsxDispatch: true,
+		});
+
+		await loop.start();
+		expect(ticks).toBeGreaterThanOrEqual(3);
+	});
+
+	test("createLoop defaults to onChange mode (backward compat)", async () => {
+		let ticked = false;
+		const loop = createLoop({
+			app,
+			idleTimeout: 1,
+			onTick: () => {
+				ticked = true;
+				loop.stop();
+			},
+			disableJsxDispatch: true,
+		});
+
+		await loop.start();
+		expect(ticked).toBe(true);
 	});
 
 	test("readInput, drainEvents, render remain callable after run", async () => {
