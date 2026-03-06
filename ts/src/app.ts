@@ -8,11 +8,34 @@
 import { ffi } from "./ffi";
 import { checkResult } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
+import { dispatchToJsxHandlers } from "./loop";
 import { Widget } from "./widget";
 import type { Theme } from "./theme";
 
+/** Perf counter ID for active animation count (TechSpec §5.7). */
+const PERF_ACTIVE_ANIMATIONS = 6;
+
+/** Options for the `app.run()` event loop (ADR-T26, TechSpec §4.7). */
+export interface RunOptions {
+	/** Loop mode. "onChange" renders only when work exists (default). "continuous" runs at fixed fps. */
+	mode?: "onChange" | "continuous";
+	/** FPS target for continuous mode or animation bursts in onChange mode. Default: 60. */
+	fps?: number;
+	/** Input poll timeout (ms) when idle in onChange mode. Default: 100. */
+	idleTimeout?: number;
+	/** Called for each drained event. */
+	onEvent?: (event: KrakenEvent) => void;
+	/** Called each tick after events are drained, before render. */
+	onTick?: () => void;
+	/** Enable debug overlay (wires setDebug). */
+	debugOverlay?: boolean;
+	/** Disable automatic dispatch to JSX event handler props. Default: false. */
+	disableJsxDispatch?: boolean;
+}
+
 export class Kraken {
 	private idMap: Map<string, number> = new Map();
+	private _running = false;
 
 	private constructor() {}
 
@@ -22,6 +45,16 @@ export class Kraken {
 	static init(): Kraken {
 		const result = ffi.tui_init();
 		checkResult(result, "Kraken.init");
+		return new Kraken();
+	}
+
+	/**
+	 * Initialize the TUI system in headless mode (no terminal needed).
+	 * Useful for testing.
+	 */
+	static initHeadless(width: number, height: number): Kraken {
+		const result = ffi.tui_init_headless(width, height);
+		checkResult(result, "Kraken.initHeadless");
 		return new Kraken();
 	}
 
@@ -182,5 +215,75 @@ export class Kraken {
 	 */
 	destroyChoreoGroup(group: number): void {
 		checkResult(ffi.tui_destroy_choreo_group(group), "destroyChoreoGroup");
+	}
+
+	/**
+	 * Run the application event loop (ADR-T26, TechSpec §4.7).
+	 *
+	 * Resolves when `stop()` is called. Does not call `shutdown()` —
+	 * the caller is responsible for lifecycle bracketing.
+	 */
+	async run(options: RunOptions = {}): Promise<void> {
+		const mode = options.mode ?? "onChange";
+		const frameMs = Math.round(1000 / (options.fps ?? 60));
+		const idleTimeout = options.idleTimeout ?? 100;
+		const jsxDispatch = !options.disableJsxDispatch;
+
+		if (options.debugOverlay) this.setDebug(true);
+
+		this._running = true;
+		const signalCleanup = this._installSignalHandlers();
+
+		try {
+			while (this._running) {
+				if (mode === "continuous") {
+					this.readInput(0);
+					await Bun.sleep(frameMs);
+				} else {
+					const animating =
+						this.getPerfCounter(PERF_ACTIVE_ANIMATIONS) > 0n;
+					if (animating) {
+						this.readInput(0);
+						await Bun.sleep(frameMs);
+					} else {
+						this.readInput(idleTimeout);
+					}
+				}
+
+				for (const event of this.drainEvents()) {
+					options.onEvent?.(event);
+					if (jsxDispatch) dispatchToJsxHandlers(event);
+				}
+
+				options.onTick?.();
+				this.render();
+			}
+		} finally {
+			signalCleanup();
+			if (options.debugOverlay) this.setDebug(false);
+		}
+	}
+
+	/**
+	 * Signal the run loop to stop after the current tick.
+	 */
+	stop(): void {
+		this._running = false;
+	}
+
+	/**
+	 * Install SIGINT/SIGTERM handlers that call stop().
+	 * Returns a cleanup function that removes the handlers.
+	 */
+	private _installSignalHandlers(): () => void {
+		const handler = () => {
+			this.stop();
+		};
+		process.on("SIGINT", handler);
+		process.on("SIGTERM", handler);
+		return () => {
+			process.removeListener("SIGINT", handler);
+			process.removeListener("SIGTERM", handler);
+		};
 	}
 }

@@ -11,6 +11,7 @@
 
 // Imperative API
 export { Kraken } from "./app";
+export type { RunOptions } from "./app";
 export { Widget } from "./widget";
 export { Box } from "./widgets/box";
 export { Text } from "./widgets/text";
