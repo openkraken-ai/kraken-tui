@@ -22,6 +22,8 @@ export interface LoopOptions {
 	idleTimeout?: number;
 	/** Disable automatic dispatch to JSX event handler props. Default: false. */
 	disableJsxDispatch?: boolean;
+	/** Loop mode. "onChange" (default) auto-detects animations; "continuous" forces fixed-fps. */
+	mode?: "onChange" | "continuous";
 }
 
 export interface Loop {
@@ -32,7 +34,7 @@ export interface Loop {
 }
 
 /** Perf counter ID for active animation count (TechSpec §5.7, lib.rs:1397). */
-const PERF_ACTIVE_ANIMATIONS = 6;
+export const PERF_ACTIVE_ANIMATIONS = 6;
 
 // Maps event type string to JSX handler prop name
 const EVENT_TYPE_TO_PROP: Record<string, string> = {
@@ -71,12 +73,15 @@ export function createLoop(options: LoopOptions): Loop {
 	const frameMs = Math.round(1000 / (options.fps ?? 60));
 	const idleTimeout = options.idleTimeout ?? 100;
 	const jsxDispatch = !options.disableJsxDispatch;
+	const forceContinuous = options.mode === "continuous";
 	let running = false;
 
 	async function start(): Promise<void> {
 		running = true;
 		while (running) {
-			const animating = app.getPerfCounter(PERF_ACTIVE_ANIMATIONS) > 0n;
+			const animating =
+				forceContinuous ||
+				app.getPerfCounter(PERF_ACTIVE_ANIMATIONS) > 0n;
 
 			if (animating) {
 				app.readInput(0);
