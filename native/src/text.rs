@@ -5,8 +5,10 @@
 //! - Syntax-highlighted code → styled spans (via syntect)
 //! - Built-in parsers are native; custom formats pre-process in Host Layer
 
+use std::hash::{Hash, Hasher};
+
 use crate::context::TuiContext;
-use crate::types::{CellAttrs, ContentFormat, StyledSpan};
+use crate::types::{CellAttrs, ContentFormat, StyledSpan, TextCacheKey};
 
 /// Resolve a syntax definition from a language hint using tolerant matching.
 ///
@@ -90,6 +92,73 @@ pub(crate) fn parse_content(
         }],
         ContentFormat::Markdown => parse_markdown(content),
         ContentFormat::Code => parse_code(ctx, content, language),
+    }
+}
+
+/// Parse content with cache lookup. On hit, returns cached spans. On miss,
+/// parses via `parse_content`, inserts into cache, and returns the result.
+///
+/// Instruments perf counters: parse duration (10), cache hits (12), misses (13).
+pub(crate) fn parse_content_cached(
+    ctx: &mut TuiContext,
+    content: &str,
+    format: ContentFormat,
+    language: Option<&str>,
+    wrap_width: u16,
+) -> Vec<StyledSpan> {
+    let key = TextCacheKey {
+        content_hash: hash_content(content),
+        format: format as u8,
+        language_hash: hash_language(language),
+        wrap_width,
+        style_fingerprint: style_fingerprint(format),
+    };
+
+    // Check cache
+    if let Some(spans) = crate::text_cache::get(&mut ctx.text_cache, &key) {
+        ctx.perf_text_cache_hits += 1;
+        return spans.clone();
+    }
+
+    // Cache miss — parse and time it
+    ctx.perf_text_cache_misses += 1;
+    let parse_start = std::time::Instant::now();
+    let spans = parse_content(ctx, content, format, language);
+    ctx.perf_text_parse_us += parse_start.elapsed().as_micros() as u64;
+
+    // Insert into cache
+    crate::text_cache::insert(&mut ctx.text_cache, key, spans.clone());
+
+    spans
+}
+
+fn hash_content(content: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    content.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn hash_language(language: Option<&str>) -> u64 {
+    match language {
+        Some(lang) => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            lang.hash(&mut hasher);
+            hasher.finish()
+        }
+        None => 0,
+    }
+}
+
+fn style_fingerprint(format: ContentFormat) -> u64 {
+    match format {
+        // Plain and Markdown don't depend on external style configuration
+        ContentFormat::Plain | ContentFormat::Markdown => 0,
+        // Code uses the syntect theme — hash the theme name as fingerprint
+        ContentFormat::Code => {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            "base16-ocean.dark".hash(&mut hasher);
+            hasher.finish()
+        }
     }
 }
 
@@ -412,6 +481,68 @@ mod tests {
             colors.len() > 1,
             "expected syntax highlighting to produce multiple token colors for TypeScript"
         );
+    }
+    #[test]
+    fn test_cached_parse_returns_same_result() {
+        let mut ctx = TuiContext::new_for_test();
+        let content = "# Hello\n\nSome **bold** text.";
+        let uncached = parse_content(&ctx, content, ContentFormat::Markdown, None);
+        let cached = parse_content_cached(&mut ctx, content, ContentFormat::Markdown, None, 80);
+        assert_eq!(uncached.len(), cached.len());
+        for (a, b) in uncached.iter().zip(cached.iter()) {
+            assert_eq!(a.text, b.text);
+            assert_eq!(a.fg, b.fg);
+            assert_eq!(a.bg, b.bg);
+            assert_eq!(a.attrs, b.attrs);
+        }
+    }
+
+    #[test]
+    fn test_cache_hit_on_repeated_parse() {
+        let mut ctx = TuiContext::new_for_test();
+        let content = "# Heading\n\nParagraph.";
+
+        // First call — miss
+        let _ = parse_content_cached(&mut ctx, content, ContentFormat::Markdown, None, 80);
+        assert_eq!(ctx.perf_text_cache_misses, 1);
+        assert_eq!(ctx.perf_text_cache_hits, 0);
+
+        // Second call — hit
+        let _ = parse_content_cached(&mut ctx, content, ContentFormat::Markdown, None, 80);
+        assert_eq!(ctx.perf_text_cache_hits, 1);
+        assert_eq!(ctx.perf_text_cache_misses, 1);
+    }
+
+    #[test]
+    fn test_cache_miss_on_content_change() {
+        let mut ctx = TuiContext::new_for_test();
+        let _ = parse_content_cached(&mut ctx, "hello", ContentFormat::Markdown, None, 80);
+        assert_eq!(ctx.perf_text_cache_misses, 1);
+
+        let _ = parse_content_cached(&mut ctx, "world", ContentFormat::Markdown, None, 80);
+        assert_eq!(ctx.perf_text_cache_misses, 2);
+    }
+
+    #[test]
+    fn test_cache_miss_on_format_change() {
+        let mut ctx = TuiContext::new_for_test();
+        let content = "hello world";
+        let _ = parse_content_cached(&mut ctx, content, ContentFormat::Plain, None, 80);
+        assert_eq!(ctx.perf_text_cache_misses, 1);
+
+        let _ = parse_content_cached(&mut ctx, content, ContentFormat::Markdown, None, 80);
+        assert_eq!(ctx.perf_text_cache_misses, 2);
+    }
+
+    #[test]
+    fn test_cache_miss_on_language_change() {
+        let mut ctx = TuiContext::new_for_test();
+        let code = "const x = 1;";
+        let _ = parse_content_cached(&mut ctx, code, ContentFormat::Code, Some("javascript"), 80);
+        assert_eq!(ctx.perf_text_cache_misses, 1);
+
+        let _ = parse_content_cached(&mut ctx, code, ContentFormat::Code, Some("rust"), 80);
+        assert_eq!(ctx.perf_text_cache_misses, 2);
     }
 }
 

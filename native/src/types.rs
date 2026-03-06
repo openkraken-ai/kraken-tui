@@ -524,6 +524,66 @@ pub struct StyledSpan {
 }
 
 // ============================================================================
+// Text Cache (ADR-T25)
+// ============================================================================
+
+/// Cache key for parsed text content.
+///
+/// Invalidation mapping:
+/// - Content change → content_hash differs → cache miss
+/// - Format change → format differs → cache miss
+/// - Language change → language_hash differs → cache miss
+/// - Wrap width change → wrap_width differs → cache miss (reserved for future pre-wrap caching)
+/// - Style fingerprint change → style_fingerprint differs → cache miss (syntect theme for Code)
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct TextCacheKey {
+    pub content_hash: u64,
+    pub format: u8,
+    pub language_hash: u64,
+    pub wrap_width: u16,
+    pub style_fingerprint: u64,
+}
+
+/// Cached parse result for a text content entry.
+#[derive(Debug, Clone)]
+pub struct TextCacheEntry {
+    pub spans: Vec<StyledSpan>,
+    pub byte_size: u32,
+    pub last_access_tick: u64,
+}
+
+/// Bounded LRU cache for parsed text content.
+///
+/// Capacity is hard bounded at `max_bytes` (default 8 MiB).
+/// Eviction is LRU by access tick, tracked via `lru_order`.
+/// Memory accounting: `used_bytes` never exceeds `max_bytes`.
+pub struct TextCache {
+    pub entries: std::collections::HashMap<TextCacheKey, TextCacheEntry>,
+    pub lru_order: std::collections::VecDeque<TextCacheKey>,
+    pub max_bytes: u32,
+    pub used_bytes: u32,
+    pub tick: u64,
+}
+
+impl TextCache {
+    pub fn new(max_bytes: u32) -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+            lru_order: std::collections::VecDeque::new(),
+            max_bytes,
+            used_bytes: 0,
+            tick: 0,
+        }
+    }
+}
+
+impl Default for TextCache {
+    fn default() -> Self {
+        Self::new(8_388_608) // 8 MiB
+    }
+}
+
+// ============================================================================
 // TuiNode
 // ============================================================================
 

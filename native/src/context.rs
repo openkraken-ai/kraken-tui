@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::animation::{Animation, ChoreographyGroup};
 use crate::terminal::TerminalBackend;
 use crate::theme::Theme;
-use crate::types::{Buffer, TuiEvent, TuiNode};
+use crate::types::{Buffer, TextCache, TuiEvent, TuiNode};
 use crate::writer::WriterState;
 
 pub struct TuiContext {
@@ -38,6 +38,7 @@ pub struct TuiContext {
     // Text Module
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub theme_set: syntect::highlighting::ThemeSet,
+    pub text_cache: TextCache,
 
     // Theme Module
     pub themes: HashMap<u32, Theme>,
@@ -61,6 +62,10 @@ pub struct TuiContext {
     pub perf_write_bytes_estimate: u64,
     pub perf_write_runs: u32,
     pub perf_style_deltas: u32,
+    pub perf_text_parse_us: u64,
+    pub perf_text_wrap_us: u64,
+    pub perf_text_cache_hits: u32,
+    pub perf_text_cache_misses: u32,
 }
 
 // SAFETY: ADR-T16 preserves Kraken TUI's single-threaded execution model.
@@ -90,6 +95,7 @@ impl TuiContext {
 
             syntax_set: syntect::parsing::SyntaxSet::load_defaults_newlines(),
             theme_set: syntect::highlighting::ThemeSet::load_defaults(),
+            text_cache: TextCache::default(),
 
             themes: {
                 let mut t = HashMap::new();
@@ -114,6 +120,10 @@ impl TuiContext {
             perf_write_bytes_estimate: 0,
             perf_write_runs: 0,
             perf_style_deltas: 0,
+            perf_text_parse_us: 0,
+            perf_text_wrap_us: 0,
+            perf_text_cache_hits: 0,
+            perf_text_cache_misses: 0,
         }
     }
 

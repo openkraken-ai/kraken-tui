@@ -129,6 +129,12 @@ fn blend_opacity(fg: u32, bg: u32, opacity: f32) -> u32 {
 pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     let start = std::time::Instant::now();
 
+    // Reset per-frame text cache counters
+    ctx.perf_text_parse_us = 0;
+    ctx.perf_text_wrap_us = 0;
+    ctx.perf_text_cache_hits = 0;
+    ctx.perf_text_cache_misses = 0;
+
     // 0. Advance animations (ADR-T13: before layout resolution)
     let elapsed_ms = match ctx.last_render_time {
         Some(last) => (start.duration_since(last).as_secs_f64() * 1000.0) as f32,
@@ -289,16 +295,19 @@ fn render_node(
                     clip,
                 );
             } else {
-                // For Markdown/Code, render as styled spans via Text Module
-                let spans = crate::text::parse_content(
+                // For Markdown/Code, render as styled spans via Text Module (cached, ADR-T25)
+                let spans = crate::text::parse_content_cached(
                     ctx,
                     &content,
                     content_format,
                     code_language.as_deref(),
+                    content_w as u16,
                 );
+                let wrap_start = std::time::Instant::now();
                 render_styled_spans(
                     ctx, &spans, content_x, content_y, content_w, content_h, fg, bg, clip, opacity,
                 );
+                ctx.perf_text_wrap_us += wrap_start.elapsed().as_micros() as u64;
             }
 
             // Guard: only Input (not Text) gets a cursor
