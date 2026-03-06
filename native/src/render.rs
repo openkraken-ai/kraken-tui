@@ -303,9 +303,11 @@ fn render_node(
                     code_language.as_deref(),
                     content_w as u16,
                 );
+                let wrap_start = std::time::Instant::now();
                 render_styled_spans(
                     ctx, &spans, content_x, content_y, content_w, content_h, fg, bg, clip, opacity,
                 );
+                ctx.perf_text_wrap_us += wrap_start.elapsed().as_micros() as u64;
             }
 
             // Guard: only Input (not Text) gets a cursor
