@@ -18,6 +18,10 @@ pub enum NodeType {
     Select = 3,
     ScrollBox = 4,
     TextArea = 5,
+    Table = 6,
+    List = 7,
+    Tabs = 8,
+    Overlay = 9,
 }
 
 impl NodeType {
@@ -29,6 +33,10 @@ impl NodeType {
             3 => Some(Self::Select),
             4 => Some(Self::ScrollBox),
             5 => Some(Self::TextArea),
+            6 => Some(Self::Table),
+            7 => Some(Self::List),
+            8 => Some(Self::Tabs),
+            9 => Some(Self::Overlay),
             _ => None,
         }
     }
@@ -37,7 +45,13 @@ impl NodeType {
     pub fn is_leaf(self) -> bool {
         matches!(
             self,
-            Self::Text | Self::Input | Self::Select | Self::TextArea
+            Self::Text
+                | Self::Input
+                | Self::Select
+                | Self::TextArea
+                | Self::Table
+                | Self::List
+                | Self::Tabs
         )
     }
 }
@@ -584,6 +598,57 @@ impl Default for TextCache {
 }
 
 // ============================================================================
+// v3 Widget State (ADR-T27)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct TableColumn {
+    pub label: String,
+    pub width_value: u16,
+    pub width_unit: u8, // 0=fixed, 1=percent, 2=flex
+}
+
+#[derive(Debug, Clone)]
+pub struct TableState {
+    pub columns: Vec<TableColumn>,
+    pub rows: Vec<Vec<String>>,
+    pub selected_row: Option<u32>,
+    pub header_visible: bool,
+}
+
+impl Default for TableState {
+    fn default() -> Self {
+        Self {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            selected_row: None,
+            header_visible: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ListState {
+    pub items: Vec<String>,
+    pub selected: Option<u32>,
+    pub viewport_offset: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TabsState {
+    pub labels: Vec<String>,
+    pub active_index: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OverlayState {
+    pub open: bool,
+    pub modal: bool,
+    pub clear_under: bool,
+    pub dismiss_on_escape: bool,
+}
+
+// ============================================================================
 // TuiNode
 // ============================================================================
 
@@ -620,13 +685,23 @@ pub struct TuiNode {
     pub role: Option<AccessibilityRole>,
     pub label: Option<String>,
     pub description: Option<String>,
+    // v3 widget state (ADR-T27)
+    pub table_state: Option<TableState>,
+    pub list_state: Option<ListState>,
+    pub tabs_state: Option<TabsState>,
+    pub overlay_state: Option<OverlayState>,
 }
 
 impl TuiNode {
     pub fn new(node_type: NodeType, taffy_node: taffy::NodeId) -> Self {
         let focusable = matches!(
             node_type,
-            NodeType::Input | NodeType::Select | NodeType::TextArea
+            NodeType::Input
+                | NodeType::Select
+                | NodeType::TextArea
+                | NodeType::Table
+                | NodeType::List
+                | NodeType::Tabs
         );
         Self {
             node_type,
@@ -656,6 +731,26 @@ impl TuiNode {
             role: None,
             label: None,
             description: None,
+            table_state: if node_type == NodeType::Table {
+                Some(TableState::default())
+            } else {
+                None
+            },
+            list_state: if node_type == NodeType::List {
+                Some(ListState::default())
+            } else {
+                None
+            },
+            tabs_state: if node_type == NodeType::Tabs {
+                Some(TabsState::default())
+            } else {
+                None
+            },
+            overlay_state: if node_type == NodeType::Overlay {
+                Some(OverlayState::default())
+            } else {
+                None
+            },
         }
     }
 }
@@ -670,7 +765,11 @@ mod tests {
         assert_eq!(NodeType::from_u8(1), Some(NodeType::Text));
         assert_eq!(NodeType::from_u8(4), Some(NodeType::ScrollBox));
         assert_eq!(NodeType::from_u8(5), Some(NodeType::TextArea));
-        assert_eq!(NodeType::from_u8(6), None);
+        assert_eq!(NodeType::from_u8(6), Some(NodeType::Table));
+        assert_eq!(NodeType::from_u8(7), Some(NodeType::List));
+        assert_eq!(NodeType::from_u8(8), Some(NodeType::Tabs));
+        assert_eq!(NodeType::from_u8(9), Some(NodeType::Overlay));
+        assert_eq!(NodeType::from_u8(10), None);
     }
 
     #[test]

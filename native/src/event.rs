@@ -60,6 +60,24 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 continue;
                             }
                         }
+                        Some(crate::types::NodeType::Table) => {
+                            if handle_table_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::List) => {
+                            if handle_list_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::Tabs) => {
+                            if handle_tabs_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -404,6 +422,144 @@ fn handle_select_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
                 node.selected_index = Some(current + 1);
                 node.dirty = true;
                 ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a key press on a focused Table widget. Returns true if consumed.
+fn handle_table_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let table = match node.table_state.as_mut() {
+        Some(t) => t,
+        None => return false,
+    };
+
+    let row_count = table.rows.len() as u32;
+    if row_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::UP => {
+            let current = table.selected_row.unwrap_or(0);
+            if current > 0 {
+                table.selected_row = Some(current - 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current - 1));
+            }
+            return true;
+        }
+        key::DOWN => {
+            let current = table.selected_row.unwrap_or(0);
+            if current + 1 < row_count {
+                table.selected_row = Some(current + 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a key press on a focused List widget. Returns true if consumed.
+fn handle_list_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let list = match node.list_state.as_mut() {
+        Some(l) => l,
+        None => return false,
+    };
+
+    let item_count = list.items.len() as u32;
+    if item_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::UP => {
+            let current = list.selected.unwrap_or(0);
+            if current > 0 {
+                list.selected = Some(current - 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current - 1));
+            }
+            return true;
+        }
+        key::DOWN => {
+            let current = list.selected.unwrap_or(0);
+            if current + 1 < item_count {
+                list.selected = Some(current + 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a key press on a focused Tabs widget. Returns true if consumed.
+fn handle_tabs_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let tabs = match node.tabs_state.as_mut() {
+        Some(t) => t,
+        None => return false,
+    };
+
+    let tab_count = tabs.labels.len() as u32;
+    if tab_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::LEFT => {
+            if tabs.active_index > 0 {
+                tabs.active_index -= 1;
+                node.dirty = true;
+                ctx.event_buffer
+                    .push(TuiEvent::change(handle, tabs.active_index));
+            }
+            return true;
+        }
+        key::RIGHT => {
+            if tabs.active_index + 1 < tab_count {
+                tabs.active_index += 1;
+                node.dirty = true;
+                ctx.event_buffer
+                    .push(TuiEvent::change(handle, tabs.active_index));
             }
             return true;
         }

@@ -215,6 +215,14 @@ pub(crate) fn insert_child(
     let insert_index = (index as usize).min(parent_children.len());
     parent_children.insert(insert_index, child);
 
+    // Leaf node types cannot have children.
+    if parent_node.node_type.is_leaf() {
+        return Err(format!(
+            "{:?} nodes are leaf nodes and cannot have children",
+            parent_node.node_type
+        ));
+    }
+
     // Enforce ScrollBox single-child constraint (TechSpec 4.10).
     if parent_node.node_type == NodeType::ScrollBox && parent_children.len() > 1 {
         return Err(

@@ -114,6 +114,29 @@ export interface TextAreaProps extends CommonProps {
 	wrap?: MaybeSignal<boolean>;
 }
 
+export interface TableProps extends CommonProps {
+	columns?: MaybeSignal<Array<{ label: string; widthValue?: number; widthUnit?: number }>>;
+	headerVisible?: MaybeSignal<boolean>;
+	selectedRow?: MaybeSignal<number>;
+}
+
+export interface ListProps extends CommonProps {
+	items?: MaybeSignal<string[]>;
+	selected?: MaybeSignal<number>;
+}
+
+export interface TabsProps extends CommonProps {
+	tabs?: MaybeSignal<string[]>;
+	active?: MaybeSignal<number>;
+}
+
+export interface OverlayProps extends CommonProps {
+	open?: MaybeSignal<boolean>;
+	modal?: MaybeSignal<boolean>;
+	clearUnder?: MaybeSignal<boolean>;
+	children?: VNode | VNode[];
+}
+
 // ---------------------------------------------------------------------------
 // VNode — virtual node representation
 // ---------------------------------------------------------------------------
@@ -158,6 +181,10 @@ export declare namespace JSX {
 		Select: SelectProps;
 		ScrollBox: ScrollBoxProps;
 		TextArea: TextAreaProps;
+		Table: TableProps;
+		List: ListProps;
+		Tabs: TabsProps;
+		Overlay: OverlayProps;
 	}
 
 	interface ElementChildrenAttribute {
