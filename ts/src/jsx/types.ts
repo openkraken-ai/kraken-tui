@@ -134,6 +134,7 @@ export interface OverlayProps extends CommonProps {
 	open?: MaybeSignal<boolean>;
 	modal?: MaybeSignal<boolean>;
 	clearUnder?: MaybeSignal<boolean>;
+	dismissOnEscape?: MaybeSignal<boolean>;
 	children?: VNode | VNode[];
 }
 

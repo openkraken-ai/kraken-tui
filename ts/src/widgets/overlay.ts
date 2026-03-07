@@ -47,4 +47,14 @@ export class Overlay extends Widget {
 	setClearUnder(clearUnder: boolean): void {
 		checkResult(ffi.tui_overlay_set_clear_under(this.handle, clearUnder ? 1 : 0));
 	}
+
+	setDismissOnEscape(dismiss: boolean): void {
+		checkResult(ffi.tui_overlay_set_dismiss_on_escape(this.handle, dismiss ? 1 : 0));
+	}
+
+	getDismissOnEscape(): boolean {
+		const result = ffi.tui_overlay_get_dismiss_on_escape(this.handle);
+		checkResult(result);
+		return result === 1;
+	}
 }

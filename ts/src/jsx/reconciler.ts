@@ -469,6 +469,9 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		case "clearUnder":
 			checkResult(ffi.tui_overlay_set_clear_under(handle, value ? 1 : 0));
 			break;
+		case "dismissOnEscape":
+			checkResult(ffi.tui_overlay_set_dismiss_on_escape(handle, value ? 1 : 0));
+			break;
 
 		default:
 			break;

@@ -181,7 +181,9 @@ const lib = dlopen(LIB_PATH, {
 	tui_overlay_set_open:       { args: ["u32", "u8"] as FFIType[],              returns: "i32" as const },
 	tui_overlay_get_open:       { args: ["u32"] as FFIType[],                    returns: "i32" as const },
 	tui_overlay_set_modal:      { args: ["u32", "u8"] as FFIType[],              returns: "i32" as const },
-	tui_overlay_set_clear_under:{ args: ["u32", "u8"] as FFIType[],              returns: "i32" as const },
+	tui_overlay_set_clear_under:       { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
+	tui_overlay_set_dismiss_on_escape: { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
+	tui_overlay_get_dismiss_on_escape: { args: ["u32"] as FFIType[],             returns: "i32" as const },
 });
 
 const ffi = lib.symbols;
@@ -2167,6 +2169,13 @@ describe("FFI integration", () => {
 			// Clear under
 			expect(ffi.tui_overlay_set_clear_under(h, 1)).toBe(0);
 			expect(ffi.tui_overlay_set_clear_under(h, 0)).toBe(0);
+
+			// Dismiss on escape (default true)
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(1);
+			expect(ffi.tui_overlay_set_dismiss_on_escape(h, 0)).toBe(0);
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(0);
+			expect(ffi.tui_overlay_set_dismiss_on_escape(h, 1)).toBe(0);
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(1);
 
 			// Overlay is a container — can have children
 			const child = ffi.tui_create_node(0); // Box

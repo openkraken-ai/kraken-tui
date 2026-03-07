@@ -478,6 +478,14 @@ const symbols = {
 		args: ["u32", "u8"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_overlay_set_dismiss_on_escape: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_dismiss_on_escape: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);

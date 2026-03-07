@@ -1294,6 +1294,35 @@ pub extern "C" fn tui_overlay_set_clear_under(handle: u32, clear_under: u8) -> i
 }
 
 #[no_mangle]
+pub extern "C" fn tui_overlay_set_dismiss_on_escape(handle: u32, dismiss: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_mut().unwrap();
+        overlay.dismiss_on_escape = dismiss != 0;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_get_dismiss_on_escape(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_ref().unwrap();
+        Ok(if overlay.dismiss_on_escape { 1 } else { 0 })
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_textarea_set_cursor(handle: u32, row: u32, col: u32) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;

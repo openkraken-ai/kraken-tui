@@ -631,7 +631,6 @@ impl Default for TableState {
 pub struct ListState {
     pub items: Vec<String>,
     pub selected: Option<u32>,
-    pub viewport_offset: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -640,12 +639,23 @@ pub struct TabsState {
     pub active_index: u32,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct OverlayState {
     pub open: bool,
     pub modal: bool,
     pub clear_under: bool,
     pub dismiss_on_escape: bool,
+}
+
+impl Default for OverlayState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            modal: false,
+            clear_under: false,
+            dismiss_on_escape: true,
+        }
+    }
 }
 
 // ============================================================================
