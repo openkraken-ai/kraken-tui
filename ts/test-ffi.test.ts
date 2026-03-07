@@ -147,6 +147,43 @@ const lib = dlopen(LIB_PATH, {
 
 	// Memory
 	tui_free_string:   { args: ["ptr"] as FFIType[],                            returns: "void" as const },
+
+	// Table Widget (ADR-T27)
+	tui_table_set_column_count: { args: ["u32", "u32"] as FFIType[],             returns: "i32" as const },
+	tui_table_set_column:       { args: ["u32", "u32", "ptr", "u32", "u16", "u8"] as FFIType[], returns: "i32" as const },
+	tui_table_insert_row:       { args: ["u32", "u32"] as FFIType[],             returns: "i32" as const },
+	tui_table_remove_row:       { args: ["u32", "u32"] as FFIType[],             returns: "i32" as const },
+	tui_table_clear_rows:       { args: ["u32"] as FFIType[],                    returns: "i32" as const },
+	tui_table_set_cell:         { args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[], returns: "i32" as const },
+	tui_table_get_cell:         { args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[], returns: "i32" as const },
+	tui_table_set_selected_row: { args: ["u32", "i32"] as FFIType[],             returns: "i32" as const },
+	tui_table_get_selected_row: { args: ["u32"] as FFIType[],                    returns: "i32" as const },
+	tui_table_set_header_visible: { args: ["u32", "u8"] as FFIType[],            returns: "i32" as const },
+
+	// List Widget (ADR-T27)
+	tui_list_add_item:     { args: ["u32", "ptr", "u32"] as FFIType[],           returns: "i32" as const },
+	tui_list_remove_item:  { args: ["u32", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_list_clear_items:  { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_list_get_count:    { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+	tui_list_get_item:     { args: ["u32", "u32", "ptr", "u32"] as FFIType[],    returns: "i32" as const },
+	tui_list_set_selected: { args: ["u32", "i32"] as FFIType[],                  returns: "i32" as const },
+	tui_list_get_selected: { args: ["u32"] as FFIType[],                         returns: "i32" as const },
+
+	// Tabs Widget (ADR-T27)
+	tui_tabs_add_tab:    { args: ["u32", "ptr", "u32"] as FFIType[],             returns: "i32" as const },
+	tui_tabs_remove_tab: { args: ["u32", "u32"] as FFIType[],                    returns: "i32" as const },
+	tui_tabs_clear_tabs: { args: ["u32"] as FFIType[],                           returns: "i32" as const },
+	tui_tabs_get_count:  { args: ["u32"] as FFIType[],                           returns: "i32" as const },
+	tui_tabs_set_active: { args: ["u32", "u32"] as FFIType[],                    returns: "i32" as const },
+	tui_tabs_get_active: { args: ["u32"] as FFIType[],                           returns: "i32" as const },
+
+	// Overlay Widget (ADR-T27)
+	tui_overlay_set_open:       { args: ["u32", "u8"] as FFIType[],              returns: "i32" as const },
+	tui_overlay_get_open:       { args: ["u32"] as FFIType[],                    returns: "i32" as const },
+	tui_overlay_set_modal:      { args: ["u32", "u8"] as FFIType[],              returns: "i32" as const },
+	tui_overlay_set_clear_under:       { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
+	tui_overlay_set_dismiss_on_escape: { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
+	tui_overlay_get_dismiss_on_escape: { args: ["u32"] as FFIType[],             returns: "i32" as const },
 });
 
 const ffi = lib.symbols;
@@ -1924,6 +1961,275 @@ describe("FFI integration", () => {
 			expect(eventView.getUint32(0, true)).toBe(7);
 			expect(eventView.getUint32(4, true)).toBe(btn2);
 			expect(eventView.getUint32(8, true)).toBe(1);
+
+			ffi.tui_destroy_subtree(root);
+		});
+	});
+
+	// ── v3 Dashboard Widgets (ADR-T27) ───────────────────────────────────
+
+	describe("Table widget", () => {
+		test("create table, set columns, insert rows, set/get cells", () => {
+			const h = ffi.tui_create_node(6); // Table
+			expect(h).toBeGreaterThan(0);
+			expect(ffi.tui_get_node_type(h)).toBe(6);
+
+			// Set up 3 columns
+			expect(ffi.tui_table_set_column_count(h, 3)).toBe(0);
+
+			const setCol = (handle: number, idx: number, label: string, wv: number, wu: number) => {
+				const encoded = new TextEncoder().encode(label);
+				return ffi.tui_table_set_column(handle, idx, Buffer.from(encoded), encoded.length, wv, wu);
+			};
+			expect(setCol(h, 0, "Name", 20, 0)).toBe(0); // fixed
+			expect(setCol(h, 1, "Age", 1, 2)).toBe(0);   // flex
+			expect(setCol(h, 2, "City", 50, 1)).toBe(0);  // percent
+
+			// Insert 2 rows
+			expect(ffi.tui_table_insert_row(h, 0)).toBe(0);
+			expect(ffi.tui_table_insert_row(h, 1)).toBe(0);
+
+			// Set cells
+			const setCell = (handle: number, row: number, col: number, text: string) => {
+				const encoded = new TextEncoder().encode(text);
+				return ffi.tui_table_set_cell(handle, row, col, Buffer.from(encoded), encoded.length);
+			};
+			expect(setCell(h, 0, 0, "Alice")).toBe(0);
+			expect(setCell(h, 0, 1, "30")).toBe(0);
+			expect(setCell(h, 1, 0, "Bob")).toBe(0);
+
+			// Get cell
+			const buf = Buffer.alloc(256);
+			const written = ffi.tui_table_get_cell(h, 0, 0, buf, 256);
+			expect(written).toBe(5);
+			expect(buf.toString("utf-8", 0, written)).toBe("Alice");
+
+			// Selected row
+			expect(ffi.tui_table_get_selected_row(h)).toBe(-1);
+			expect(ffi.tui_table_set_selected_row(h, 0)).toBe(0);
+			expect(ffi.tui_table_get_selected_row(h)).toBe(0);
+			expect(ffi.tui_table_set_selected_row(h, -1)).toBe(0);
+			expect(ffi.tui_table_get_selected_row(h)).toBe(-1);
+
+			// Remove row
+			expect(ffi.tui_table_insert_row(h, 2)).toBe(0); // now 3 rows
+			expect(ffi.tui_table_set_selected_row(h, 2)).toBe(0);
+			expect(ffi.tui_table_remove_row(h, 0)).toBe(0); // row 2 becomes row 1
+			expect(ffi.tui_table_get_selected_row(h)).toBe(1);
+
+			// Clear rows
+			expect(ffi.tui_table_clear_rows(h)).toBe(0);
+			expect(ffi.tui_table_get_selected_row(h)).toBe(-1);
+
+			// Header visibility
+			expect(ffi.tui_table_set_header_visible(h, 0)).toBe(0);
+			expect(ffi.tui_table_set_header_visible(h, 1)).toBe(0);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("table type check rejects non-table", () => {
+			const box_h = ffi.tui_create_node(0); // Box
+			expect(ffi.tui_table_set_column_count(box_h, 1)).toBe(-1);
+			ffi.tui_destroy_node(box_h);
+		});
+
+		test("table bounds checking", () => {
+			const h = ffi.tui_create_node(6);
+			expect(ffi.tui_table_set_column_count(h, 2)).toBe(0);
+			// Out of bounds column
+			const encoded = new TextEncoder().encode("test");
+			expect(ffi.tui_table_set_column(h, 5, Buffer.from(encoded), encoded.length, 1, 0)).toBe(-1);
+			// Out of bounds cell (no rows)
+			expect(ffi.tui_table_set_cell(h, 0, 0, Buffer.from(encoded), encoded.length)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	describe("List widget", () => {
+		test("create list, add/remove/clear items, selection", () => {
+			const h = ffi.tui_create_node(7); // List
+			expect(h).toBeGreaterThan(0);
+			expect(ffi.tui_get_node_type(h)).toBe(7);
+
+			// Add items
+			const addItem = (handle: number, text: string) => {
+				const encoded = new TextEncoder().encode(text);
+				return ffi.tui_list_add_item(handle, Buffer.from(encoded), encoded.length);
+			};
+			expect(addItem(h, "Apple")).toBe(0);
+			expect(addItem(h, "Banana")).toBe(0);
+			expect(addItem(h, "Cherry")).toBe(0);
+
+			expect(ffi.tui_list_get_count(h)).toBe(3);
+
+			// Get item
+			const buf = Buffer.alloc(256);
+			const written = ffi.tui_list_get_item(h, 1, buf, 256);
+			expect(written).toBe(6);
+			expect(buf.toString("utf-8", 0, written)).toBe("Banana");
+
+			// Selection
+			expect(ffi.tui_list_get_selected(h)).toBe(-1);
+			expect(ffi.tui_list_set_selected(h, 2)).toBe(0);
+			expect(ffi.tui_list_get_selected(h)).toBe(2);
+
+			// Remove item adjusts selection
+			expect(ffi.tui_list_remove_item(h, 0)).toBe(0); // remove Apple
+			expect(ffi.tui_list_get_count(h)).toBe(2);
+			expect(ffi.tui_list_get_selected(h)).toBe(1); // adjusted
+
+			// Clear
+			expect(ffi.tui_list_clear_items(h)).toBe(0);
+			expect(ffi.tui_list_get_count(h)).toBe(0);
+			expect(ffi.tui_list_get_selected(h)).toBe(-1);
+
+			// Clear selection with -1
+			expect(addItem(h, "Test")).toBe(0);
+			expect(ffi.tui_list_set_selected(h, 0)).toBe(0);
+			expect(ffi.tui_list_set_selected(h, -1)).toBe(0);
+			expect(ffi.tui_list_get_selected(h)).toBe(-1);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("list type check rejects non-list", () => {
+			const box_h = ffi.tui_create_node(0); // Box
+			expect(ffi.tui_list_get_count(box_h)).toBe(-1);
+			ffi.tui_destroy_node(box_h);
+		});
+	});
+
+	describe("Tabs widget", () => {
+		test("create tabs, add/remove/clear, active index", () => {
+			const h = ffi.tui_create_node(8); // Tabs
+			expect(h).toBeGreaterThan(0);
+			expect(ffi.tui_get_node_type(h)).toBe(8);
+
+			// Add tabs
+			const addTab = (handle: number, text: string) => {
+				const encoded = new TextEncoder().encode(text);
+				return ffi.tui_tabs_add_tab(handle, Buffer.from(encoded), encoded.length);
+			};
+			expect(addTab(h, "Home")).toBe(0);
+			expect(addTab(h, "Settings")).toBe(0);
+			expect(addTab(h, "About")).toBe(0);
+
+			expect(ffi.tui_tabs_get_count(h)).toBe(3);
+
+			// Active tab
+			expect(ffi.tui_tabs_get_active(h)).toBe(0);
+			expect(ffi.tui_tabs_set_active(h, 2)).toBe(0);
+			expect(ffi.tui_tabs_get_active(h)).toBe(2);
+
+			// Out of bounds
+			expect(ffi.tui_tabs_set_active(h, 10)).toBe(-1);
+
+			// Remove tab adjusts active
+			expect(ffi.tui_tabs_remove_tab(h, 0)).toBe(0); // remove "Home"
+			expect(ffi.tui_tabs_get_count(h)).toBe(2);
+			expect(ffi.tui_tabs_get_active(h)).toBe(1); // adjusted
+
+			// Clear
+			expect(ffi.tui_tabs_clear_tabs(h)).toBe(0);
+			expect(ffi.tui_tabs_get_count(h)).toBe(0);
+			expect(ffi.tui_tabs_get_active(h)).toBe(0);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("tabs type check rejects non-tabs", () => {
+			const box_h = ffi.tui_create_node(0);
+			expect(ffi.tui_tabs_get_count(box_h)).toBe(-1);
+			ffi.tui_destroy_node(box_h);
+		});
+	});
+
+	describe("Overlay widget", () => {
+		test("create overlay, open/close, modal, clear_under", () => {
+			const h = ffi.tui_create_node(9); // Overlay
+			expect(h).toBeGreaterThan(0);
+			expect(ffi.tui_get_node_type(h)).toBe(9);
+
+			// Default closed
+			expect(ffi.tui_overlay_get_open(h)).toBe(0);
+
+			// Open
+			expect(ffi.tui_overlay_set_open(h, 1)).toBe(0);
+			expect(ffi.tui_overlay_get_open(h)).toBe(1);
+
+			// Close
+			expect(ffi.tui_overlay_set_open(h, 0)).toBe(0);
+			expect(ffi.tui_overlay_get_open(h)).toBe(0);
+
+			// Modal
+			expect(ffi.tui_overlay_set_modal(h, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(h, 0)).toBe(0);
+
+			// Clear under
+			expect(ffi.tui_overlay_set_clear_under(h, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_clear_under(h, 0)).toBe(0);
+
+			// Dismiss on escape (default true)
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(1);
+			expect(ffi.tui_overlay_set_dismiss_on_escape(h, 0)).toBe(0);
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(0);
+			expect(ffi.tui_overlay_set_dismiss_on_escape(h, 1)).toBe(0);
+			expect(ffi.tui_overlay_get_dismiss_on_escape(h)).toBe(1);
+
+			// Overlay is a container — can have children
+			const child = ffi.tui_create_node(0); // Box
+			expect(ffi.tui_append_child(h, child)).toBe(0);
+			expect(ffi.tui_get_child_count(h)).toBe(1);
+
+			ffi.tui_destroy_subtree(h);
+		});
+
+		test("overlay type check rejects non-overlay", () => {
+			const box_h = ffi.tui_create_node(0);
+			expect(ffi.tui_overlay_get_open(box_h)).toBe(-1);
+			ffi.tui_destroy_node(box_h);
+		});
+	});
+
+	describe("v3 widget leaf/container semantics", () => {
+		test("Table, List, Tabs are leaf nodes (no children)", () => {
+			const table = ffi.tui_create_node(6);
+			const list = ffi.tui_create_node(7);
+			const tabs = ffi.tui_create_node(8);
+			const child = ffi.tui_create_node(0);
+
+			// Leaf nodes reject children
+			expect(ffi.tui_append_child(table, child)).toBe(-1);
+			expect(ffi.tui_append_child(list, child)).toBe(-1);
+			expect(ffi.tui_append_child(tabs, child)).toBe(-1);
+
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(tabs);
+			ffi.tui_destroy_node(list);
+			ffi.tui_destroy_node(table);
+		});
+
+		test("Table, List, Tabs are focusable by default", () => {
+			const root = ffi.tui_create_node(0); // Box
+			const table = ffi.tui_create_node(6);
+			const list = ffi.tui_create_node(7);
+			const tabs = ffi.tui_create_node(8);
+
+			ffi.tui_set_root(root);
+			ffi.tui_append_child(root, table);
+			ffi.tui_append_child(root, list);
+			ffi.tui_append_child(root, tabs);
+
+			// Focus next should cycle through table, list, tabs
+			expect(ffi.tui_focus_next()).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(table);
+
+			expect(ffi.tui_focus_next()).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(list);
+
+			expect(ffi.tui_focus_next()).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(tabs);
 
 			ffi.tui_destroy_subtree(root);
 		});

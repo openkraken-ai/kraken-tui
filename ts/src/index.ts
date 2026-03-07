@@ -19,6 +19,10 @@ export { Input } from "./widgets/input";
 export { TextArea } from "./widgets/textarea";
 export { Select } from "./widgets/select";
 export { ScrollBox } from "./widgets/scrollbox";
+export { Table } from "./widgets/table";
+export { List } from "./widgets/list";
+export { Tabs } from "./widgets/tabs";
+export { Overlay } from "./widgets/overlay";
 export { Theme, DARK_THEME, LIGHT_THEME } from "./theme";
 export { KrakenError, checkResult } from "./errors";
 export { parseColor, parseDimension } from "./style";
@@ -44,4 +48,8 @@ export type {
 	SelectProps,
 	ScrollBoxProps,
 	TextAreaProps,
+	TableProps,
+	ListProps,
+	TabsProps,
+	OverlayProps,
 } from "./jsx/types";

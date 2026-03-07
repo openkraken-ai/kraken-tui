@@ -691,6 +691,637 @@ pub extern "C" fn tui_select_get_selected(handle: u32) -> i32 {
     })
 }
 
+// ============================================================================
+// Table Widget FFI (ADR-T27)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_table_set_column_count(handle: u32, count: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        table.columns.resize(
+            count as usize,
+            crate::types::TableColumn {
+                label: String::new(),
+                width_value: 1,
+                width_unit: 2, // flex
+            },
+        );
+        // Truncate row cells if columns shrunk
+        for row in &mut table.rows {
+            row.resize(count as usize, String::new());
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_set_column(
+    handle: u32,
+    index: u32,
+    label_ptr: *const u8,
+    label_len: u32,
+    width_value: u16,
+    width_unit: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        let label = if label_ptr.is_null() || label_len == 0 {
+            String::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(label_ptr, label_len as usize) };
+            std::str::from_utf8(slice)
+                .map_err(|_| "Invalid UTF-8".to_string())?
+                .to_string()
+        };
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        let col = table
+            .columns
+            .get_mut(index as usize)
+            .ok_or_else(|| format!("Column index {index} out of bounds"))?;
+        col.label = label;
+        col.width_value = width_value;
+        col.width_unit = width_unit;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_insert_row(handle: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        let col_count = table.columns.len();
+        let new_row = vec![String::new(); col_count];
+        let idx = (index as usize).min(table.rows.len());
+        table.rows.insert(idx, new_row);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_remove_row(handle: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        if (index as usize) >= table.rows.len() {
+            return Err(format!("Row index {index} out of bounds"));
+        }
+        table.rows.remove(index as usize);
+        // Adjust selected_row
+        if let Some(sel) = table.selected_row {
+            if sel == index {
+                table.selected_row = None;
+            } else if sel > index {
+                table.selected_row = Some(sel - 1);
+            }
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_clear_rows(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        table.rows.clear();
+        table.selected_row = None;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_set_cell(
+    handle: u32,
+    row: u32,
+    col: u32,
+    ptr: *const u8,
+    len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let text = if ptr.is_null() || len == 0 {
+            String::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(slice)
+                .map_err(|_| "Invalid UTF-8".to_string())?
+                .to_string()
+        };
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        let row_data = table
+            .rows
+            .get_mut(row as usize)
+            .ok_or_else(|| format!("Row index {row} out of bounds"))?;
+        let cell = row_data
+            .get_mut(col as usize)
+            .ok_or_else(|| format!("Column index {col} out of bounds"))?;
+        *cell = text;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_get_cell(
+    handle: u32,
+    row: u32,
+    col: u32,
+    buffer: *mut u8,
+    buffer_len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_ref().unwrap();
+        let row_data = table
+            .rows
+            .get(row as usize)
+            .ok_or_else(|| format!("Row index {row} out of bounds"))?;
+        let cell = row_data
+            .get(col as usize)
+            .ok_or_else(|| format!("Column index {col} out of bounds"))?;
+        let bytes = cell.as_bytes();
+        let copy_len = bytes.len().min(buffer_len as usize);
+        if !buffer.is_null() && copy_len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+            }
+        }
+        if !buffer.is_null() && (buffer_len as usize) > copy_len {
+            unsafe {
+                *buffer.add(copy_len) = 0;
+            }
+        }
+        Ok(copy_len as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_set_selected_row(handle: u32, row: i32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        if row < 0 {
+            table.selected_row = None;
+        } else {
+            if (row as usize) >= table.rows.len() {
+                return Err(format!("Row index {row} out of bounds"));
+            }
+            table.selected_row = Some(row as u32);
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_get_selected_row(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_ref().unwrap();
+        Ok(table.selected_row.map(|i| i as i32).unwrap_or(-1))
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_table_set_header_visible(handle: u32, visible: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Table {
+            return Err(format!("Handle {handle} is not a Table widget"));
+        }
+        let table = node.table_state.as_mut().unwrap();
+        table.header_visible = visible != 0;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+// ============================================================================
+// List Widget FFI (ADR-T27)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_list_add_item(handle: u32, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let text = if ptr.is_null() || len == 0 {
+            String::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(slice)
+                .map_err(|_| "Invalid UTF-8".to_string())?
+                .to_string()
+        };
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_mut().unwrap();
+        list.items.push(text);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_remove_item(handle: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_mut().unwrap();
+        if (index as usize) >= list.items.len() {
+            return Err(format!("Item index {index} out of bounds"));
+        }
+        list.items.remove(index as usize);
+        if let Some(sel) = list.selected {
+            if sel == index {
+                list.selected = None;
+            } else if sel > index {
+                list.selected = Some(sel - 1);
+            }
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_clear_items(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_mut().unwrap();
+        list.items.clear();
+        list.selected = None;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_get_count(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_ref().unwrap();
+        Ok(list.items.len() as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_get_item(
+    handle: u32,
+    index: u32,
+    buffer: *mut u8,
+    buffer_len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_ref().unwrap();
+        let item = list
+            .items
+            .get(index as usize)
+            .ok_or_else(|| format!("Item index {index} out of bounds"))?;
+        let bytes = item.as_bytes();
+        let copy_len = bytes.len().min(buffer_len as usize);
+        if !buffer.is_null() && copy_len > 0 {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+            }
+        }
+        if !buffer.is_null() && (buffer_len as usize) > copy_len {
+            unsafe {
+                *buffer.add(copy_len) = 0;
+            }
+        }
+        Ok(copy_len as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_set_selected(handle: u32, index: i32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_mut().unwrap();
+        if index < 0 {
+            list.selected = None;
+        } else {
+            if (index as usize) >= list.items.len() {
+                return Err(format!("Item index {index} out of bounds"));
+            }
+            list.selected = Some(index as u32);
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_list_get_selected(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::List {
+            return Err(format!("Handle {handle} is not a List widget"));
+        }
+        let list = node.list_state.as_ref().unwrap();
+        Ok(list.selected.map(|i| i as i32).unwrap_or(-1))
+    })
+}
+
+// ============================================================================
+// Tabs Widget FFI (ADR-T27)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_add_tab(handle: u32, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let text = if ptr.is_null() || len == 0 {
+            String::new()
+        } else {
+            let slice = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(slice)
+                .map_err(|_| "Invalid UTF-8".to_string())?
+                .to_string()
+        };
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_mut().unwrap();
+        tabs.labels.push(text);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_remove_tab(handle: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_mut().unwrap();
+        if (index as usize) >= tabs.labels.len() {
+            return Err(format!("Tab index {index} out of bounds"));
+        }
+        tabs.labels.remove(index as usize);
+        // Adjust active_index
+        if tabs.labels.is_empty() {
+            tabs.active_index = 0;
+        } else if tabs.active_index >= tabs.labels.len() as u32 {
+            tabs.active_index = tabs.labels.len() as u32 - 1;
+        }
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_clear_tabs(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_mut().unwrap();
+        tabs.labels.clear();
+        tabs.active_index = 0;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_get_count(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_ref().unwrap();
+        Ok(tabs.labels.len() as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_set_active(handle: u32, index: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_mut().unwrap();
+        if (index as usize) >= tabs.labels.len() {
+            return Err(format!("Tab index {index} out of bounds"));
+        }
+        tabs.active_index = index;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_tabs_get_active(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Tabs {
+            return Err(format!("Handle {handle} is not a Tabs widget"));
+        }
+        let tabs = node.tabs_state.as_ref().unwrap();
+        Ok(tabs.active_index as i32)
+    })
+}
+
+// ============================================================================
+// Overlay Widget FFI (ADR-T27)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_mut().unwrap();
+        overlay.open = open != 0;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_get_open(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_ref().unwrap();
+        Ok(if overlay.open { 1 } else { 0 })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_set_modal(handle: u32, modal: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_mut().unwrap();
+        overlay.modal = modal != 0;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_set_clear_under(handle: u32, clear_under: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_mut().unwrap();
+        overlay.clear_under = clear_under != 0;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_set_dismiss_on_escape(handle: u32, dismiss: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_mut().unwrap();
+        overlay.dismiss_on_escape = dismiss != 0;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_overlay_get_dismiss_on_escape(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::Overlay {
+            return Err(format!("Handle {handle} is not an Overlay widget"));
+        }
+        let overlay = node.overlay_state.as_ref().unwrap();
+        Ok(if overlay.dismiss_on_escape { 1 } else { 0 })
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn tui_textarea_set_cursor(handle: u32, row: u32, col: u32) -> i32 {
     ffi_wrap(|| {
