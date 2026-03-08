@@ -1384,7 +1384,13 @@ mod tests {
         ctx.root = Some(root);
 
         // Open overlay with dismiss_on_escape (default true)
-        ctx.nodes.get_mut(&overlay).unwrap().overlay_state.as_mut().unwrap().open = true;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
         ctx.focused = Some(input);
 
         // Press ESC
@@ -1422,7 +1428,13 @@ mod tests {
         ctx.root = Some(root);
 
         // Open overlay but disable dismiss_on_escape
-        let ov = ctx.nodes.get_mut(&overlay).unwrap().overlay_state.as_mut().unwrap();
+        let ov = ctx
+            .nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap();
         ov.open = true;
         ov.dismiss_on_escape = false;
         ctx.focused = Some(input);
