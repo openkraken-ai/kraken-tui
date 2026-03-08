@@ -116,6 +116,7 @@ export interface TextAreaProps extends CommonProps {
 
 export interface TableProps extends CommonProps {
 	columns?: MaybeSignal<Array<{ label: string; widthValue?: number; widthUnit?: number }>>;
+	rows?: MaybeSignal<string[][]>;
 	headerVisible?: MaybeSignal<boolean>;
 	selectedRow?: MaybeSignal<number>;
 }

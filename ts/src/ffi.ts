@@ -474,8 +474,16 @@ const symbols = {
 		args: ["u32", "u8"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_overlay_get_modal: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_overlay_set_clear_under: {
 		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_clear_under: {
+		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
 	tui_overlay_set_dismiss_on_escape: {

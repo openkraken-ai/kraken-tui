@@ -452,6 +452,20 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 			}
 			break;
 		}
+		case "rows": {
+			checkResult(ffi.tui_table_clear_rows(handle));
+			const rows = value as string[][];
+			for (let r = 0; r < rows.length; r++) {
+				checkResult(ffi.tui_table_insert_row(handle, r));
+				const row = rows[r]!;
+				for (let c = 0; c < row.length; c++) {
+					const encoded = new TextEncoder().encode(row[c]!);
+					const buf = Buffer.from(encoded);
+					checkResult(ffi.tui_table_set_cell(handle, r, c, buf, encoded.length));
+				}
+			}
+			break;
+		}
 		case "headerVisible":
 			checkResult(ffi.tui_table_set_header_visible(handle, value ? 1 : 0));
 			break;

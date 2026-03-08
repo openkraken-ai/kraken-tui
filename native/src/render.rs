@@ -13,7 +13,7 @@ use crate::text_utils::{
 };
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 // ============================================================================
 // Clip Rectangle
@@ -646,7 +646,7 @@ fn render_plain_text(
             col = 0;
             continue;
         }
-        let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
         if col + char_width > max_w {
             row += 1;
             col = 0;
@@ -702,7 +702,7 @@ fn render_styled_spans(
                 col = 0;
                 continue;
             }
-            let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col + char_width > max_w {
                 row += 1;
                 col = 0;
@@ -1219,7 +1219,7 @@ fn render_select_options(
         let opt = &options[option_idx];
         let mut col = 0i32;
         for ch in opt.chars() {
-            let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col + char_width > content_w {
                 break;
             }
@@ -1282,8 +1282,7 @@ fn render_table(
             let cw = col_widths.get(ci).copied().unwrap_or(0);
             let mut char_col = 0i32;
             for ch in col.label.chars() {
-                let char_width =
-                    unicode_width::UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+                let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
                 if char_col + char_width > cw {
                     break;
                 }
@@ -1357,8 +1356,7 @@ fn render_table(
             let cell_text = row_data.get(ci).map(|s| s.as_str()).unwrap_or("");
             let mut char_col = 0i32;
             for ch in cell_text.chars() {
-                let char_width =
-                    unicode_width::UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+                let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
                 if char_col + char_width > *cw {
                     break;
                 }
@@ -1502,7 +1500,7 @@ fn render_list(
         let item = &list.items[item_idx];
         let mut col = 0i32;
         for ch in item.chars() {
-            let char_width = unicode_width::UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col + char_width > content_w {
                 break;
             }
@@ -1606,7 +1604,7 @@ fn render_tabs(
         }
 
         for ch in label.chars() {
-            let char_width = unicode_width::UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col_x + char_width > content_w {
                 break;
             }
