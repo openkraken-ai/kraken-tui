@@ -419,9 +419,36 @@ fn render_node(
             }
             return Ok(());
         }
-        NodeType::Box | NodeType::Overlay => {
-            // Box and Overlay render children normally
-            // (Overlay visibility is handled at the top of render_node via node.visible)
+        NodeType::Overlay => {
+            // If clear_under is set, fill the content area with background color
+            // before rendering children, erasing any content rendered beneath.
+            let clear_under = ctx
+                .nodes
+                .get(&handle)
+                .and_then(|n| n.overlay_state.as_ref())
+                .map(|s| s.clear_under)
+                .unwrap_or(false);
+            if clear_under {
+                for row in 0..content_h {
+                    for col in 0..content_w {
+                        clip_set(
+                            &mut ctx.front_buffer,
+                            content_x + col,
+                            content_y + row,
+                            Cell {
+                                ch: ' ',
+                                fg: 0,
+                                bg,
+                                attrs: CellAttrs::empty(),
+                            },
+                            clip,
+                        );
+                    }
+                }
+            }
+        }
+        NodeType::Box => {
+            // Box renders children normally (handled below)
         }
         NodeType::Table => {
             render_table(

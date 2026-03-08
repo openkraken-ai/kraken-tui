@@ -2190,6 +2190,47 @@ describe("FFI integration", () => {
 			expect(ffi.tui_overlay_get_open(box_h)).toBe(-1);
 			ffi.tui_destroy_node(box_h);
 		});
+
+		test("modal overlay traps focus within its subtree", () => {
+			// Build tree: root(Box) -> [input_outside, overlay -> input_inside]
+			const root = ffi.tui_create_node(0);
+			ffi.tui_set_root(root);
+			ffi.tui_set_layout_dimension(root, 0, 80);
+			ffi.tui_set_layout_dimension(root, 1, 24);
+
+			const input_outside = ffi.tui_create_node(2); // Input
+			ffi.tui_append_child(root, input_outside);
+
+			const overlay = ffi.tui_create_node(9); // Overlay
+			ffi.tui_append_child(root, overlay);
+			ffi.tui_overlay_set_open(overlay, 1);
+
+			const input_inside = ffi.tui_create_node(2); // Input
+			ffi.tui_append_child(overlay, input_inside);
+
+			// Navigate focus: first focus_next lands on input_outside, second on input_inside
+			ffi.tui_focus_next(); // -> input_outside
+			expect(ffi.tui_get_focused()).toBe(input_outside);
+			ffi.tui_focus_next(); // -> input_inside
+			expect(ffi.tui_get_focused()).toBe(input_inside);
+
+			// Now enable modal — focus should be trapped inside overlay
+			ffi.tui_overlay_set_modal(overlay, 1);
+
+			// Tab should cycle within the overlay — only input_inside is focusable inside
+			ffi.tui_focus_next();
+			expect(ffi.tui_get_focused()).toBe(input_inside); // stays trapped
+
+			ffi.tui_focus_prev();
+			expect(ffi.tui_get_focused()).toBe(input_inside); // stays trapped
+
+			// When modal is disabled, focus can move outside
+			ffi.tui_overlay_set_modal(overlay, 0);
+			ffi.tui_focus_next();
+			expect(ffi.tui_get_focused()).toBe(input_outside); // escapes
+
+			ffi.tui_destroy_subtree(root);
+		});
 	});
 
 	describe("v3 widget leaf/container semantics", () => {
