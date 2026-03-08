@@ -571,14 +571,18 @@ All v2.1 + Epic M symbols remain valid and unchanged unless explicitly supersede
 | `tui_tabs_set_active` | `(u32 handle, u32 index) -> i32`              | 0 / -1     | Set active tab   |
 | `tui_tabs_get_active` | `(u32 handle) -> i32`                         | index / -1 | Read active tab  |
 
-### 4.3.6 Overlay Widget (+4)
+### 4.3.6 Overlay Widget (+8)
 
-| Function                      | Signature                             | Returns | Description                       |
-| ----------------------------- | ------------------------------------- | ------- | --------------------------------- |
-| `tui_overlay_set_open`        | `(u32 handle, u8 open) -> i32`        | 0 / -1  | Open or close overlay             |
-| `tui_overlay_get_open`        | `(u32 handle) -> i32`                 | 1/0/-1  | Read open state                   |
-| `tui_overlay_set_modal`       | `(u32 handle, u8 modal) -> i32`       | 0 / -1  | Enable or disable modal behavior  |
-| `tui_overlay_set_clear_under` | `(u32 handle, u8 clear_under) -> i32` | 0 / -1  | Clear underlay region before draw |
+| Function                          | Signature                             | Returns | Description                       |
+| --------------------------------- | ------------------------------------- | ------- | --------------------------------- |
+| `tui_overlay_set_open`            | `(u32 handle, u8 open) -> i32`        | 0 / -1  | Open or close overlay             |
+| `tui_overlay_get_open`            | `(u32 handle) -> i32`                 | 1/0/-1  | Read open state                   |
+| `tui_overlay_set_modal`           | `(u32 handle, u8 modal) -> i32`       | 0 / -1  | Enable or disable modal behavior  |
+| `tui_overlay_get_modal`           | `(u32 handle) -> i32`                 | 1/0/-1  | Read modal state                  |
+| `tui_overlay_set_clear_under`     | `(u32 handle, u8 clear_under) -> i32` | 0 / -1  | Clear underlay region before draw |
+| `tui_overlay_get_clear_under`     | `(u32 handle) -> i32`                 | 1/0/-1  | Read clear-under state            |
+| `tui_overlay_set_dismiss_on_escape` | `(u32 handle, u8 dismiss) -> i32`   | 0 / -1  | Enable ESC key dismissal          |
+| `tui_overlay_get_dismiss_on_escape` | `(u32 handle) -> i32`               | 1/0/-1  | Read dismiss-on-escape state      |
 
 ### 4.4 Event Payload (v3 additions)
 
@@ -611,8 +615,8 @@ All v2.1 + Epic M symbols remain valid and unchanged unless explicitly supersede
 ### 4.6 Symbol Count
 
 - Baseline at end of v2 + Epic M: **96**
-- v3 additions in this spec: **+38**
-- Projected total after v3: **134**
+- v3 additions in this spec: **+42**
+- Projected total after v3: **138**
 
 Breakdown of v3 additions:
 
@@ -621,7 +625,7 @@ Breakdown of v3 additions:
 - Table: +10
 - List: +7
 - Tabs: +6
-- Overlay: +4
+- Overlay: +8
 
 ### 4.7 Host Runner Contract (TS-only, no new C ABI)
 
