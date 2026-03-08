@@ -36,6 +36,26 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     continue;
                 }
 
+                // ESC → dismiss overlay if focused node is inside one with dismiss_on_escape
+                if code == key::ESCAPE {
+                    if let Some(focused_handle) = ctx.focused {
+                        if let Some(overlay_handle) =
+                            find_dismissable_overlay_ancestor(ctx, focused_handle)
+                        {
+                            if let Some(node) = ctx.nodes.get_mut(&overlay_handle) {
+                                if let Some(ref mut ov) = node.overlay_state {
+                                    ov.open = false;
+                                    node.dirty = true;
+                                }
+                            }
+                            // Emit change event (data[0] = 0 meaning closed)
+                            ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
+                            count += 1;
+                            continue;
+                        }
+                    }
+                }
+
                 let target = ctx.focused.unwrap_or(0);
 
                 // If focused on an Input or Select widget, handle widget-specific keys
@@ -691,6 +711,22 @@ fn collect_focusable_recursive(ctx: &TuiContext, handle: u32, result: &mut Vec<u
     }
 }
 
+/// Walk ancestors to find the nearest open Overlay with `dismiss_on_escape` enabled.
+fn find_dismissable_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let mut current = handle;
+    loop {
+        let node = ctx.nodes.get(&current)?;
+        if node.node_type == NodeType::Overlay {
+            if let Some(ref ov) = node.overlay_state {
+                if ov.open && ov.dismiss_on_escape {
+                    return Some(current);
+                }
+            }
+        }
+        current = node.parent?;
+    }
+}
+
 /// Walk ancestors to find the nearest open modal Overlay containing `handle`.
 fn find_modal_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
     let mut current = handle;
@@ -1334,5 +1370,81 @@ mod tests {
             a11y.data[0],
             crate::types::AccessibilityRole::Checkbox as u32
         );
+    }
+
+    #[test]
+    fn test_escape_dismisses_overlay() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        // Open overlay with dismiss_on_escape (default true)
+        ctx.nodes.get_mut(&overlay).unwrap().overlay_state.as_mut().unwrap().open = true;
+        ctx.focused = Some(input);
+
+        // Press ESC
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Overlay should be closed
+        assert!(!ctx.nodes[&overlay].overlay_state.as_ref().unwrap().open);
+
+        // Change event emitted for overlay
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Change as u32);
+        assert_eq!(event.target, overlay);
+        assert_eq!(event.data[0], 0); // closed
+    }
+
+    #[test]
+    fn test_escape_does_not_dismiss_when_disabled() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        // Open overlay but disable dismiss_on_escape
+        let ov = ctx.nodes.get_mut(&overlay).unwrap().overlay_state.as_mut().unwrap();
+        ov.open = true;
+        ov.dismiss_on_escape = false;
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Overlay should still be open
+        assert!(ctx.nodes[&overlay].overlay_state.as_ref().unwrap().open);
+
+        // Should be a regular Key event, not a Change event
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Key as u32);
+        assert_eq!(event.data[0], key::ESCAPE);
     }
 }
