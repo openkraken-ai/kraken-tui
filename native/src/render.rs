@@ -13,7 +13,7 @@ use crate::text_utils::{
 };
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 // ============================================================================
 // Clip Rectangle
@@ -205,6 +205,15 @@ fn render_node(
 
     if !node.visible {
         return Ok(());
+    }
+
+    // Overlay: skip rendering when not open
+    if node.node_type == NodeType::Overlay {
+        if let Some(ref ov) = node.overlay_state {
+            if !ov.open {
+                return Ok(());
+            }
+        }
     }
 
     let taffy_node = node.taffy_node;
@@ -410,13 +419,56 @@ fn render_node(
             }
             return Ok(());
         }
+        NodeType::Overlay => {
+            // If clear_under is set, fill the content area with background color
+            // before rendering children, erasing any content rendered beneath.
+            let clear_under = ctx
+                .nodes
+                .get(&handle)
+                .and_then(|n| n.overlay_state.as_ref())
+                .map(|s| s.clear_under)
+                .unwrap_or(false);
+            if clear_under {
+                for row in 0..content_h {
+                    for col in 0..content_w {
+                        clip_set(
+                            &mut ctx.front_buffer,
+                            content_x + col,
+                            content_y + row,
+                            Cell {
+                                ch: ' ',
+                                fg: 0,
+                                bg,
+                                attrs: CellAttrs::empty(),
+                            },
+                            clip,
+                        );
+                    }
+                }
+            }
+        }
         NodeType::Box => {
-            // Box renders children normally
+            // Box renders children normally (handled below)
+        }
+        NodeType::Table => {
+            render_table(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
+            );
+        }
+        NodeType::List => {
+            render_list(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
+            );
+        }
+        NodeType::Tabs => {
+            render_tabs(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
+            );
         }
     }
 
-    // Render children (except ScrollBox which handled above)
-    if node_type != NodeType::ScrollBox {
+    // Render children (except ScrollBox which handled above; leaf types have no children)
+    if !node_type.is_leaf() && node_type != NodeType::ScrollBox {
         for &child_handle in &children {
             render_node(ctx, child_handle, abs_x, abs_y, clip)?;
         }
@@ -594,7 +646,7 @@ fn render_plain_text(
             col = 0;
             continue;
         }
-        let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
         if col + char_width > max_w {
             row += 1;
             col = 0;
@@ -650,7 +702,7 @@ fn render_styled_spans(
                 col = 0;
                 continue;
             }
-            let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col + char_width > max_w {
                 row += 1;
                 col = 0;
@@ -1167,7 +1219,7 @@ fn render_select_options(
         let opt = &options[option_idx];
         let mut col = 0i32;
         for ch in opt.chars() {
-            let char_width = UnicodeWidthStr::width(ch.to_string().as_str()) as i32;
+            let char_width = UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
             if col + char_width > content_w {
                 break;
             }
@@ -1184,6 +1236,391 @@ fn render_select_options(
                 clip,
             );
             col += char_width;
+        }
+    }
+}
+
+// ============================================================================
+// Table Rendering (ADR-T27)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_table(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let table = match &node.table_state {
+        Some(t) => t.clone(),
+        None => return,
+    };
+
+    if table.columns.is_empty() {
+        return;
+    }
+
+    // Compute column widths
+    let col_widths = compute_column_widths(&table.columns, content_w);
+
+    let mut draw_row = 0i32;
+
+    // Render header
+    if table.header_visible {
+        let mut col_x = 0i32;
+        for (ci, col) in table.columns.iter().enumerate() {
+            let cw = col_widths.get(ci).copied().unwrap_or(0);
+            let mut char_col = 0i32;
+            for ch in col.label.chars() {
+                let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+                if char_col + char_width > cw {
+                    break;
+                }
+                clip_set(
+                    &mut ctx.front_buffer,
+                    content_x + col_x + char_col,
+                    content_y + draw_row,
+                    Cell {
+                        ch,
+                        fg,
+                        bg,
+                        attrs: attrs | CellAttrs::BOLD,
+                    },
+                    clip,
+                );
+                char_col += char_width;
+            }
+            col_x += cw;
+        }
+        draw_row += 1;
+    }
+
+    let data_height = (content_h - draw_row).max(0);
+    let row_count = table.rows.len() as i32;
+
+    // Compute viewport offset
+    let viewport_offset = if row_count > data_height {
+        let selected = table.selected_row.unwrap_or(0) as i32;
+        let ideal = selected - data_height / 2;
+        ideal.max(0).min(row_count - data_height)
+    } else {
+        0
+    };
+
+    for r in 0..data_height {
+        let row_idx = (viewport_offset + r) as usize;
+        if row_idx >= table.rows.len() {
+            break;
+        }
+
+        let is_selected = table.selected_row == Some(row_idx as u32);
+        let (row_fg, row_bg) = if is_selected {
+            let sel_fg = if bg != 0 { bg } else { 0x00000000 };
+            let sel_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+            (sel_fg, sel_bg)
+        } else {
+            (fg, bg)
+        };
+
+        // Fill selected row background
+        if is_selected {
+            for col in 0..content_w {
+                clip_set(
+                    &mut ctx.front_buffer,
+                    content_x + col,
+                    content_y + draw_row + r,
+                    Cell {
+                        ch: ' ',
+                        fg: row_fg,
+                        bg: row_bg,
+                        attrs: CellAttrs::empty(),
+                    },
+                    clip,
+                );
+            }
+        }
+
+        let row_data = &table.rows[row_idx];
+        let mut col_x = 0i32;
+        for (ci, cw) in col_widths.iter().enumerate() {
+            let cell_text = row_data.get(ci).map(|s| s.as_str()).unwrap_or("");
+            let mut char_col = 0i32;
+            for ch in cell_text.chars() {
+                let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+                if char_col + char_width > *cw {
+                    break;
+                }
+                clip_set(
+                    &mut ctx.front_buffer,
+                    content_x + col_x + char_col,
+                    content_y + draw_row + r,
+                    Cell {
+                        ch,
+                        fg: row_fg,
+                        bg: row_bg,
+                        attrs,
+                    },
+                    clip,
+                );
+                char_col += char_width;
+            }
+            col_x += cw;
+        }
+    }
+}
+
+fn compute_column_widths(columns: &[crate::types::TableColumn], total_w: i32) -> Vec<i32> {
+    let mut widths: Vec<i32> = Vec::with_capacity(columns.len());
+    let mut remaining = total_w;
+    let mut total_flex: u16 = 0;
+
+    // First pass: fixed and percent
+    for col in columns {
+        match col.width_unit {
+            0 => {
+                // fixed
+                let w = (col.width_value as i32).min(remaining).max(0);
+                widths.push(w);
+                remaining = (remaining - w).max(0);
+            }
+            1 => {
+                // percent
+                let w = ((col.width_value as f32 / 100.0) * total_w as f32) as i32;
+                let w = w.min(remaining).max(0);
+                widths.push(w);
+                remaining = (remaining - w).max(0);
+            }
+            2 => {
+                // flex — placeholder, computed in second pass
+                total_flex += col.width_value.max(1);
+                widths.push(0);
+            }
+            _ => {
+                widths.push(0);
+            }
+        }
+    }
+
+    // Second pass: distribute remaining space to flex columns
+    if total_flex > 0 && remaining > 0 {
+        for (i, col) in columns.iter().enumerate() {
+            if col.width_unit == 2 {
+                let flex = col.width_value.max(1) as f32;
+                let w = ((flex / total_flex as f32) * remaining as f32) as i32;
+                widths[i] = w;
+            }
+        }
+    }
+
+    widths
+}
+
+// ============================================================================
+// List Rendering (ADR-T27)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_list(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let list = match &node.list_state {
+        Some(l) => l.clone(),
+        None => return,
+    };
+
+    let item_count = list.items.len() as i32;
+    if item_count == 0 {
+        return;
+    }
+
+    // Compute viewport offset (same pattern as Select)
+    let viewport_offset = if item_count > content_h {
+        let selected = list.selected.unwrap_or(0) as i32;
+        let ideal = selected - content_h / 2;
+        ideal.max(0).min(item_count - content_h)
+    } else {
+        0
+    };
+
+    for row in 0..content_h {
+        let item_idx = (viewport_offset + row) as usize;
+        if item_idx >= list.items.len() {
+            break;
+        }
+
+        let is_selected = list.selected == Some(item_idx as u32);
+        let (row_fg, row_bg) = if is_selected {
+            let sel_fg = if bg != 0 { bg } else { 0x00000000 };
+            let sel_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+            (sel_fg, sel_bg)
+        } else {
+            (fg, bg)
+        };
+
+        if is_selected {
+            for col in 0..content_w {
+                clip_set(
+                    &mut ctx.front_buffer,
+                    content_x + col,
+                    content_y + row,
+                    Cell {
+                        ch: ' ',
+                        fg: row_fg,
+                        bg: row_bg,
+                        attrs: CellAttrs::empty(),
+                    },
+                    clip,
+                );
+            }
+        }
+
+        let item = &list.items[item_idx];
+        let mut col = 0i32;
+        for ch in item.chars() {
+            let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+            if col + char_width > content_w {
+                break;
+            }
+            clip_set(
+                &mut ctx.front_buffer,
+                content_x + col,
+                content_y + row,
+                Cell {
+                    ch,
+                    fg: row_fg,
+                    bg: row_bg,
+                    attrs,
+                },
+                clip,
+            );
+            col += char_width;
+        }
+    }
+}
+
+// ============================================================================
+// Tabs Rendering (ADR-T27)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_tabs(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    _content_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let tabs = match &node.tabs_state {
+        Some(t) => t.clone(),
+        None => return,
+    };
+
+    if tabs.labels.is_empty() {
+        return;
+    }
+
+    // Render tabs horizontally on the first row
+    let mut col_x = 0i32;
+    for (i, label) in tabs.labels.iter().enumerate() {
+        let is_active = i as u32 == tabs.active_index;
+
+        // Separator between tabs
+        if i > 0 && col_x < content_w {
+            clip_set(
+                &mut ctx.front_buffer,
+                content_x + col_x,
+                content_y,
+                Cell {
+                    ch: ' ',
+                    fg,
+                    bg,
+                    attrs: CellAttrs::empty(),
+                },
+                clip,
+            );
+            col_x += 1;
+        }
+
+        let (tab_fg, tab_bg, tab_attrs) = if is_active {
+            let sel_fg = if bg != 0 { bg } else { 0x00000000 };
+            let sel_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+            (sel_fg, sel_bg, attrs | CellAttrs::BOLD)
+        } else {
+            (fg, bg, attrs)
+        };
+
+        // Fill background for active tab
+        if is_active {
+            let label_w = unicode_width::UnicodeWidthStr::width(label.as_str()) as i32;
+            for c in 0..label_w {
+                if col_x + c >= content_w {
+                    break;
+                }
+                clip_set(
+                    &mut ctx.front_buffer,
+                    content_x + col_x + c,
+                    content_y,
+                    Cell {
+                        ch: ' ',
+                        fg: tab_fg,
+                        bg: tab_bg,
+                        attrs: CellAttrs::empty(),
+                    },
+                    clip,
+                );
+            }
+        }
+
+        for ch in label.chars() {
+            let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+            if col_x + char_width > content_w {
+                break;
+            }
+            clip_set(
+                &mut ctx.front_buffer,
+                content_x + col_x,
+                content_y,
+                Cell {
+                    ch,
+                    fg: tab_fg,
+                    bg: tab_bg,
+                    attrs: tab_attrs,
+                },
+                clip,
+            );
+            col_x += char_width;
         }
     }
 }

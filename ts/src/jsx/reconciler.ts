@@ -33,6 +33,10 @@ const WIDGET_MAP: Record<string, number> = {
 	Select: NodeType.Select,
 	ScrollBox: NodeType.ScrollBox,
 	TextArea: NodeType.TextArea,
+	Table: NodeType.Table,
+	List: NodeType.List,
+	Tabs: NodeType.Tabs,
+	Overlay: NodeType.Overlay,
 };
 
 // ---------------------------------------------------------------------------
@@ -409,6 +413,78 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		}
 		case "wrap":
 			checkResult(ffi.tui_textarea_set_wrap(handle, value ? 1 : 0));
+			break;
+
+		// --- List-specific ---
+		case "items": {
+			checkResult(ffi.tui_list_clear_items(handle));
+			for (const item of value as string[]) {
+				const encoded = new TextEncoder().encode(item);
+				const buf = Buffer.from(encoded);
+				checkResult(ffi.tui_list_add_item(handle, buf, encoded.length));
+			}
+			break;
+		}
+
+		// --- Tabs-specific ---
+		case "tabs": {
+			checkResult(ffi.tui_tabs_clear_tabs(handle));
+			for (const tab of value as string[]) {
+				const encoded = new TextEncoder().encode(tab);
+				const buf = Buffer.from(encoded);
+				checkResult(ffi.tui_tabs_add_tab(handle, buf, encoded.length));
+			}
+			break;
+		}
+		case "active":
+			checkResult(ffi.tui_tabs_set_active(handle, value as number));
+			break;
+
+		// --- Table-specific ---
+		case "columns": {
+			const cols = value as Array<{ label: string; widthValue?: number; widthUnit?: number }>;
+			checkResult(ffi.tui_table_set_column_count(handle, cols.length));
+			for (let i = 0; i < cols.length; i++) {
+				const col = cols[i]!;
+				const encoded = new TextEncoder().encode(col.label);
+				const buf = Buffer.from(encoded);
+				checkResult(ffi.tui_table_set_column(handle, i, buf, encoded.length, col.widthValue ?? 1, col.widthUnit ?? 2));
+			}
+			break;
+		}
+		case "rows": {
+			checkResult(ffi.tui_table_clear_rows(handle));
+			const rows = value as string[][];
+			for (let r = 0; r < rows.length; r++) {
+				checkResult(ffi.tui_table_insert_row(handle, r));
+				const row = rows[r]!;
+				for (let c = 0; c < row.length; c++) {
+					const encoded = new TextEncoder().encode(row[c]!);
+					const buf = Buffer.from(encoded);
+					checkResult(ffi.tui_table_set_cell(handle, r, c, buf, encoded.length));
+				}
+			}
+			break;
+		}
+		case "headerVisible":
+			checkResult(ffi.tui_table_set_header_visible(handle, value ? 1 : 0));
+			break;
+		case "selectedRow":
+			checkResult(ffi.tui_table_set_selected_row(handle, value as number));
+			break;
+
+		// --- Overlay-specific ---
+		case "open":
+			checkResult(ffi.tui_overlay_set_open(handle, value ? 1 : 0));
+			break;
+		case "modal":
+			checkResult(ffi.tui_overlay_set_modal(handle, value ? 1 : 0));
+			break;
+		case "clearUnder":
+			checkResult(ffi.tui_overlay_set_clear_under(handle, value ? 1 : 0));
+			break;
+		case "dismissOnEscape":
+			checkResult(ffi.tui_overlay_set_dismiss_on_escape(handle, value ? 1 : 0));
 			break;
 
 		default:

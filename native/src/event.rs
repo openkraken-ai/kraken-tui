@@ -11,7 +11,7 @@ use crate::context::TuiContext;
 use crate::text_utils::{
     clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned,
 };
-use crate::types::{key, TerminalInputEvent, TuiEvent};
+use crate::types::{key, NodeType, TerminalInputEvent, TuiEvent};
 
 /// Read terminal input, classify events, store in buffer.
 /// Returns the number of events captured.
@@ -36,6 +36,26 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     continue;
                 }
 
+                // ESC → dismiss overlay if focused node is inside one with dismiss_on_escape
+                if code == key::ESCAPE {
+                    if let Some(focused_handle) = ctx.focused {
+                        if let Some(overlay_handle) =
+                            find_dismissable_overlay_ancestor(ctx, focused_handle)
+                        {
+                            if let Some(node) = ctx.nodes.get_mut(&overlay_handle) {
+                                if let Some(ref mut ov) = node.overlay_state {
+                                    ov.open = false;
+                                    node.dirty = true;
+                                }
+                            }
+                            // Emit change event (data[0] = 0 meaning closed)
+                            ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
+                            count += 1;
+                            continue;
+                        }
+                    }
+                }
+
                 let target = ctx.focused.unwrap_or(0);
 
                 // If focused on an Input or Select widget, handle widget-specific keys
@@ -56,6 +76,24 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                         }
                         Some(crate::types::NodeType::Select) => {
                             if handle_select_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::Table) => {
+                            if handle_table_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::List) => {
+                            if handle_list_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
+                        Some(crate::types::NodeType::Tabs) => {
+                            if handle_tabs_key(ctx, focused_handle, code) {
                                 count += 1;
                                 continue;
                             }
@@ -86,12 +124,25 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                 if button <= 2 && target != 0 {
                     if let Some(node) = ctx.nodes.get(&target) {
                         if node.focusable {
-                            let old_focus = ctx.focused.unwrap_or(0);
-                            if old_focus != target {
-                                ctx.focused = Some(target);
-                                ctx.event_buffer
-                                    .push(TuiEvent::focus_change(old_focus, target));
-                                maybe_emit_accessibility_event(ctx, target);
+                            // Modal overlay: block focus changes to nodes outside the overlay
+                            let allow = if let Some(focused) = ctx.focused {
+                                if let Some(modal_root) = find_modal_overlay_ancestor(ctx, focused)
+                                {
+                                    is_descendant_of(ctx, target, modal_root)
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            };
+                            if allow {
+                                let old_focus = ctx.focused.unwrap_or(0);
+                                if old_focus != target {
+                                    ctx.focused = Some(target);
+                                    ctx.event_buffer
+                                        .push(TuiEvent::focus_change(old_focus, target));
+                                    maybe_emit_accessibility_event(ctx, target);
+                                }
                             }
                         }
                     }
@@ -417,6 +468,144 @@ fn handle_select_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
     false
 }
 
+/// Handle a key press on a focused Table widget. Returns true if consumed.
+fn handle_table_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let table = match node.table_state.as_mut() {
+        Some(t) => t,
+        None => return false,
+    };
+
+    let row_count = table.rows.len() as u32;
+    if row_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::UP => {
+            let current = table.selected_row.unwrap_or(0);
+            if current > 0 {
+                table.selected_row = Some(current - 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current - 1));
+            }
+            return true;
+        }
+        key::DOWN => {
+            let current = table.selected_row.unwrap_or(0);
+            if current + 1 < row_count {
+                table.selected_row = Some(current + 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a key press on a focused List widget. Returns true if consumed.
+fn handle_list_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let list = match node.list_state.as_mut() {
+        Some(l) => l,
+        None => return false,
+    };
+
+    let item_count = list.items.len() as u32;
+    if item_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::UP => {
+            let current = list.selected.unwrap_or(0);
+            if current > 0 {
+                list.selected = Some(current - 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current - 1));
+            }
+            return true;
+        }
+        key::DOWN => {
+            let current = list.selected.unwrap_or(0);
+            if current + 1 < item_count {
+                list.selected = Some(current + 1);
+                node.dirty = true;
+                ctx.event_buffer.push(TuiEvent::change(handle, current + 1));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Handle a key press on a focused Tabs widget. Returns true if consumed.
+fn handle_tabs_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return false,
+    };
+
+    let tabs = match node.tabs_state.as_mut() {
+        Some(t) => t,
+        None => return false,
+    };
+
+    let tab_count = tabs.labels.len() as u32;
+    if tab_count == 0 {
+        return false;
+    }
+
+    match code {
+        key::LEFT => {
+            if tabs.active_index > 0 {
+                tabs.active_index -= 1;
+                node.dirty = true;
+                ctx.event_buffer
+                    .push(TuiEvent::change(handle, tabs.active_index));
+            }
+            return true;
+        }
+        key::RIGHT => {
+            if tabs.active_index + 1 < tab_count {
+                tabs.active_index += 1;
+                node.dirty = true;
+                ctx.event_buffer
+                    .push(TuiEvent::change(handle, tabs.active_index));
+            }
+            return true;
+        }
+        key::ENTER => {
+            ctx.event_buffer.push(TuiEvent::submit(handle));
+            return true;
+        }
+        _ => {}
+    }
+
+    false
+}
+
 /// If the newly-focused node has an accessibility role or label, emit an
 /// `Accessibility` event into the event buffer (ADR-T23).
 pub(crate) fn maybe_emit_accessibility_event(ctx: &mut TuiContext, new_focus: u32) {
@@ -481,7 +670,18 @@ pub(crate) fn focus_prev(ctx: &mut TuiContext) {
 }
 
 /// Collect focusable nodes in depth-first tree order.
+/// If the currently focused node is inside a modal open overlay,
+/// only nodes within that overlay's subtree are returned (focus trapping).
 fn collect_focusable_order(ctx: &TuiContext) -> Vec<u32> {
+    // Check if focus is inside a modal overlay — if so, trap focus within it.
+    if let Some(focused) = ctx.focused {
+        if let Some(modal_root) = find_modal_overlay_ancestor(ctx, focused) {
+            let mut result = Vec::new();
+            collect_focusable_recursive(ctx, modal_root, &mut result);
+            return result;
+        }
+    }
+
     let mut result = Vec::new();
     if let Some(root) = ctx.root {
         collect_focusable_recursive(ctx, root, &mut result);
@@ -494,11 +694,65 @@ fn collect_focusable_recursive(ctx: &TuiContext, handle: u32, result: &mut Vec<u
         if !node.visible {
             return;
         }
+        // Skip closed overlays — their children are not reachable.
+        if node.node_type == NodeType::Overlay {
+            if let Some(ref ov) = node.overlay_state {
+                if !ov.open {
+                    return;
+                }
+            }
+        }
         if node.focusable {
             result.push(handle);
         }
         for &child in &node.children {
             collect_focusable_recursive(ctx, child, result);
+        }
+    }
+}
+
+/// Walk ancestors to find the nearest open Overlay with `dismiss_on_escape` enabled.
+fn find_dismissable_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let mut current = handle;
+    loop {
+        let node = ctx.nodes.get(&current)?;
+        if node.node_type == NodeType::Overlay {
+            if let Some(ref ov) = node.overlay_state {
+                if ov.open && ov.dismiss_on_escape {
+                    return Some(current);
+                }
+            }
+        }
+        current = node.parent?;
+    }
+}
+
+/// Walk ancestors to find the nearest open modal Overlay containing `handle`.
+fn find_modal_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let mut current = handle;
+    loop {
+        let node = ctx.nodes.get(&current)?;
+        if node.node_type == NodeType::Overlay {
+            if let Some(ref ov) = node.overlay_state {
+                if ov.modal && ov.open {
+                    return Some(current);
+                }
+            }
+        }
+        current = node.parent?;
+    }
+}
+
+/// Check if `handle` is a descendant of `ancestor`.
+fn is_descendant_of(ctx: &TuiContext, handle: u32, ancestor: u32) -> bool {
+    let mut current = handle;
+    loop {
+        if current == ancestor {
+            return true;
+        }
+        match ctx.nodes.get(&current).and_then(|n| n.parent) {
+            Some(parent) => current = parent,
+            None => return false,
         }
     }
 }
@@ -1116,5 +1370,93 @@ mod tests {
             a11y.data[0],
             crate::types::AccessibilityRole::Checkbox as u32
         );
+    }
+
+    #[test]
+    fn test_escape_dismisses_overlay() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        // Open overlay with dismiss_on_escape (default true)
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
+        ctx.focused = Some(input);
+
+        // Press ESC
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Overlay should be closed
+        assert!(!ctx.nodes[&overlay].overlay_state.as_ref().unwrap().open);
+
+        // Change event emitted for overlay
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Change as u32);
+        assert_eq!(event.target, overlay);
+        assert_eq!(event.data[0], 0); // closed
+    }
+
+    #[test]
+    fn test_escape_does_not_dismiss_when_disabled() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        // Open overlay but disable dismiss_on_escape
+        let ov = ctx
+            .nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap();
+        ov.open = true;
+        ov.dismiss_on_escape = false;
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+
+        // Overlay should still be open
+        assert!(ctx.nodes[&overlay].overlay_state.as_ref().unwrap().open);
+
+        // Should be a regular Key event, not a Change event
+        let event = next_event(&mut ctx).unwrap();
+        assert_eq!(event.event_type, TuiEventType::Key as u32);
+        assert_eq!(event.data[0], key::ESCAPE);
     }
 }

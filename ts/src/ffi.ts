@@ -362,6 +362,138 @@ const symbols = {
 		returns: "u64" as const,
 	},
 	tui_free_string: { args: ["ptr"] as FFIType[], returns: "void" as const },
+
+	// Table Widget (ADR-T27)
+	tui_table_set_column_count: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_set_column: {
+		args: ["u32", "u32", "ptr", "u32", "u16", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_insert_row: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_remove_row: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_clear_rows: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_set_cell: {
+		args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_get_cell: {
+		args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_set_selected_row: {
+		args: ["u32", "i32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_get_selected_row: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_table_set_header_visible: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+
+	// List Widget (ADR-T27)
+	tui_list_add_item: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_remove_item: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_clear_items: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_get_count: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_get_item: {
+		args: ["u32", "u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_set_selected: {
+		args: ["u32", "i32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_list_get_selected: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
+	// Tabs Widget (ADR-T27)
+	tui_tabs_add_tab: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_tabs_remove_tab: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_tabs_clear_tabs: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_tabs_get_count: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_tabs_set_active: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_tabs_get_active: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
+	// Overlay Widget (ADR-T27)
+	tui_overlay_set_open: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_open: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_set_modal: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_modal: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_set_clear_under: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_clear_under: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_set_dismiss_on_escape: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_overlay_get_dismiss_on_escape: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);

@@ -98,6 +98,10 @@ export const NodeType = {
 	Select: 3,
 	ScrollBox: 4,
 	TextArea: 5,
+	Table: 6,
+	List: 7,
+	Tabs: 8,
+	Overlay: 9,
 } as const;
 
 /**
