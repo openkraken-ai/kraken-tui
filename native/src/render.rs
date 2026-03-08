@@ -1393,14 +1393,14 @@ fn compute_column_widths(columns: &[crate::types::TableColumn], total_w: i32) ->
                 // fixed
                 let w = (col.width_value as i32).min(remaining).max(0);
                 widths.push(w);
-                remaining -= w;
+                remaining = (remaining - w).max(0);
             }
             1 => {
                 // percent
                 let w = ((col.width_value as f32 / 100.0) * total_w as f32) as i32;
                 let w = w.min(remaining).max(0);
                 widths.push(w);
-                remaining -= w;
+                remaining = (remaining - w).max(0);
             }
             2 => {
                 // flex — placeholder, computed in second pass
