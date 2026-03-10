@@ -1644,6 +1644,9 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
             while state.undo_stack.len() > limit as usize {
                 state.undo_stack.pop_front();
             }
+            while state.redo_stack.len() > limit as usize {
+                state.redo_stack.pop_front();
+            }
         }
         Ok(0)
     })

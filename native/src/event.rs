@@ -1157,6 +1157,60 @@ mod tests {
     }
 
     #[test]
+    fn test_textarea_history_limit_enforced_on_redo() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "x".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        // Type 5 characters with default limit (256)
+        for ch in ['a', 'b', 'c', 'd', 'e'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "xabcde");
+
+        // Undo all 5
+        for _ in 0..5 {
+            textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "x");
+        // Now redo_stack has 5 entries, undo_stack has 0
+
+        // Lower history limit to 2
+        {
+            let state = ctx
+                .nodes
+                .get_mut(&textarea)
+                .unwrap()
+                .textarea_state
+                .as_mut()
+                .unwrap();
+            state.history_limit = 2;
+            // Trim redo_stack like tui_textarea_set_history_limit does
+            while state.redo_stack.len() > 2 {
+                state.redo_stack.pop_front();
+            }
+        }
+
+        // Redo both available entries
+        for _ in 0..2 {
+            textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        }
+
+        // Undo stack should not exceed the limit of 2
+        let state = ctx.nodes[&textarea].textarea_state.as_ref().unwrap();
+        assert!(state.undo_stack.len() <= 2);
+
+        // 3rd redo should return false
+        let r = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(r.unwrap(), false);
+    }
+
+    #[test]
     fn test_next_event_drain() {
         let mut ctx = test_ctx();
         ctx.event_buffer.push(TuiEvent::resize(100, 50));

@@ -162,6 +162,10 @@ pub(crate) fn redo(node: &mut TuiNode) -> Result<bool, String> {
     state.clear_selection();
 
     state.undo_stack.push_back(edit);
+    let limit = state.history_limit as usize;
+    if limit > 0 && state.undo_stack.len() > limit {
+        state.undo_stack.pop_front();
+    }
 
     Ok(true)
 }
