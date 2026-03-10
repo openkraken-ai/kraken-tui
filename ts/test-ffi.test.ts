@@ -868,16 +868,19 @@ describe("FFI integration", () => {
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
 
-		test("undo and redo round-trip", () => {
+		test("undo and redo on empty history preserves content", () => {
 			const h = ffi.tui_create_node(5);
 			expect(setContent(h, "original")).toBe(0);
 
-			// Modify via setContent (not tracked by undo — only key events are)
-			// So let's test via the FFI directly: set content, then manually test undo/redo
-			// The undo stack is populated by handle_textarea_key in event.rs
-			// For direct testing, we verify the FFI functions don't error
+			// Undo/redo with empty stacks should succeed without changing content.
+			// Note: undo history is populated by key events (handle_textarea_key),
+			// not by tui_set_content. Full undo/redo round-trip logic is tested
+			// in Rust unit tests (event.rs::test_textarea_undo_redo_round_trip et al.)
 			expect(ffi.tui_textarea_undo(h)).toBe(0);
+			expect(getContent(h)).toBe("original");
+
 			expect(ffi.tui_textarea_redo(h)).toBe(0);
+			expect(getContent(h)).toBe("original");
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
@@ -966,6 +969,60 @@ describe("FFI integration", () => {
 			findNext(h, "me");
 			// After find, selection should highlight "me"
 			expect(getSelectedText(h)).toBe("me");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("selection with multi-byte UTF-8 (emoji)", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "Hello \u{1F30D} World")).toBe(0);
+
+			// Select the emoji at grapheme col 6
+			expect(ffi.tui_textarea_set_selection(h, 0, 6, 0, 7)).toBe(0);
+			expect(getSelectedText(h)).toBe("\u{1F30D}");
+
+			// Select "Hello " (cols 0-6)
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 6)).toBe(0);
+			expect(getSelectedText(h)).toBe("Hello ");
+
+			// Select " World" after emoji (cols 7-13)
+			expect(ffi.tui_textarea_set_selection(h, 0, 7, 0, 13)).toBe(0);
+			expect(getSelectedText(h)).toBe(" World");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("selection with CJK characters", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "\u{4F60}\u{597D}\u{4E16}\u{754C}")).toBe(0);
+
+			// Select middle two chars (好世)
+			expect(ffi.tui_textarea_set_selection(h, 0, 1, 0, 3)).toBe(0);
+			expect(getSelectedText(h)).toBe("\u{597D}\u{4E16}");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next with multi-byte UTF-8 content", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "\u{4F60}\u{597D}\u{4E16}\u{754C}\n\u{518D}\u{89C1}\u{4E16}\u{754C}")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// First find: from (0,0)+1 finds "世界" at (0,2)
+			let result = findNext(h, "\u{4E16}\u{754C}");
+			expect(result).toBe(1);
+
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(2);
+
+			// Second find: from (0,2)+1 finds "世界" at (1,2)
+			result = findNext(h, "\u{4E16}\u{754C}");
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(1);
+			expect(col[0]).toBe(2);
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});

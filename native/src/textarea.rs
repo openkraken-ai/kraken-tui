@@ -139,9 +139,7 @@ pub(crate) fn undo(node: &mut TuiNode) -> Result<bool, String> {
     node.cursor_row = edit.cursor_row_before;
     node.cursor_col = edit.cursor_col_before;
 
-    // Clear selection on undo
-    state.selection_anchor = None;
-    state.selection_focus = None;
+    state.clear_selection();
 
     state.redo_stack.push(edit);
 
@@ -161,9 +159,7 @@ pub(crate) fn redo(node: &mut TuiNode) -> Result<bool, String> {
     node.cursor_row = edit.cursor_row_after;
     node.cursor_col = edit.cursor_col_after;
 
-    // Clear selection on redo
-    state.selection_anchor = None;
-    state.selection_focus = None;
+    state.clear_selection();
 
     state.undo_stack.push(edit);
 
@@ -283,7 +279,6 @@ pub(crate) fn find_match_end(
     start_row: u32,
     start_col: u32,
     pattern: &str,
-    _case_sensitive: bool,
     is_regex: bool,
 ) -> (u32, u32) {
     let start_offset = position_to_byte_offset(content, start_row, start_col);
@@ -399,6 +394,49 @@ mod tests {
         let content = "hello world";
         let result = find_next(content, 0, 0, "xyz", true, false).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_selected_text_utf8_emoji() {
+        // "Hello 🌍 World" — 🌍 is a single grapheme at col 6
+        let content = "Hello \u{1F30D} World";
+        let text = get_selected_text(content, (0, 6), (0, 7));
+        assert_eq!(text, "\u{1F30D}");
+    }
+
+    #[test]
+    fn test_get_selected_text_utf8_accented() {
+        // "café" — 'é' is U+0065 U+0301 (two code points, one grapheme)
+        let content = "cafe\u{0301}";
+        let text = get_selected_text(content, (0, 0), (0, 4));
+        assert_eq!(text, "cafe\u{0301}");
+    }
+
+    #[test]
+    fn test_get_selected_text_utf8_cjk() {
+        let content = "你好世界";
+        let text = get_selected_text(content, (0, 1), (0, 3));
+        assert_eq!(text, "好世");
+    }
+
+    #[test]
+    fn test_delete_selection_utf8_emoji() {
+        let content = "A\u{1F30D}B";
+        let (new_content, row, col) = delete_selection(content, (0, 1), (0, 2));
+        assert_eq!(new_content, "AB");
+        assert_eq!(row, 0);
+        assert_eq!(col, 1);
+    }
+
+    #[test]
+    fn test_find_next_utf8_content() {
+        let content = "你好世界\n再见世界";
+        // Cursor at (0,0), find_next searches from cursor+1 → finds "世界" at (0,2)
+        let result = find_next(content, 0, 0, "世界", true, false).unwrap();
+        assert_eq!(result, Some((0, 2)));
+        // From (0,2) it should find the next "世界" on line 2
+        let result2 = find_next(content, 0, 2, "世界", true, false).unwrap();
+        assert_eq!(result2, Some((1, 2)));
     }
 
     #[test]

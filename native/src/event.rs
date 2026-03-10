@@ -324,9 +324,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
             clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
             // Clear selection
-            let state = node.textarea_state.as_mut().unwrap();
-            state.selection_anchor = None;
-            state.selection_focus = None;
+            node.textarea_state.as_mut().unwrap().clear_selection();
 
             emit_change = true;
 
@@ -446,8 +444,7 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         // Clear selection on navigation keys
         if consumed && !is_mutating {
             if let Some(state) = node.textarea_state.as_mut() {
-                state.selection_anchor = None;
-                state.selection_focus = None;
+                state.clear_selection();
             }
         }
 
@@ -1017,6 +1014,146 @@ mod tests {
         let node = &ctx.nodes[&textarea];
         assert_eq!(node.cursor_row, 0);
         assert_eq!(node.cursor_col, 2);
+    }
+
+    #[test]
+    fn test_textarea_undo_redo_round_trip() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+        }
+
+        // Type " world" (6 characters → 6 undo entries)
+        for ch in [' ', 'w', 'o', 'r', 'l', 'd'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello world");
+
+        // Undo all 6 character inserts
+        for _ in 0..6 {
+            let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(result.unwrap(), true);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello");
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 5);
+
+        // Undo on empty stack returns false
+        let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "hello");
+
+        // Redo all 6 character inserts
+        for _ in 0..6 {
+            let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(result.unwrap(), true);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello world");
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 11);
+
+        // Redo on empty stack returns false
+        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn test_textarea_undo_after_newline_and_backspace() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "ab".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        // Insert newline between 'a' and 'b'
+        handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 1);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
+
+        // Undo → content restored to "ab", cursor back to (0, 1)
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "ab");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 1);
+
+        // Redo → "a\nb" again
+        textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+
+        // Now backspace at (1, 0) → joins lines back to "ab"
+        handle_textarea_key(&mut ctx, textarea, key::BACKSPACE, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "ab");
+
+        // Undo the backspace → "a\nb"
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+    }
+
+    #[test]
+    fn test_textarea_new_edit_clears_redo_stack() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abc".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 3;
+        }
+
+        // Type 'x'
+        handle_textarea_key(&mut ctx, textarea, 0, 'x');
+        assert_eq!(ctx.nodes[&textarea].content, "abcx");
+
+        // Undo → "abc"
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "abc");
+
+        // Type 'y' (diverge from redo history)
+        handle_textarea_key(&mut ctx, textarea, 0, 'y');
+        assert_eq!(ctx.nodes[&textarea].content, "abcy");
+
+        // Redo should now return false (redo stack was cleared)
+        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "abcy");
+    }
+
+    #[test]
+    fn test_textarea_undo_respects_history_limit() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "start".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            node.textarea_state.as_mut().unwrap().history_limit = 3;
+        }
+
+        // Type 5 characters → only last 3 should be in undo stack
+        for ch in ['a', 'b', 'c', 'd', 'e'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "startabcde");
+
+        // Undo 3 times (the limit)
+        for _ in 0..3 {
+            let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(r.unwrap(), true);
+        }
+        // Should have undone 'e', 'd', 'c' — left with "startab"
+        assert_eq!(ctx.nodes[&textarea].content, "startab");
+
+        // 4th undo returns false (oldest entries were trimmed)
+        let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(r.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "startab");
     }
 
     #[test]

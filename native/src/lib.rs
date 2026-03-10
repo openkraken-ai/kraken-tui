@@ -1423,8 +1423,7 @@ pub extern "C" fn tui_textarea_set_wrap(handle: u32, wrap_mode: u8) -> i32 {
         }
         // Clear selection on wrap mode change (ADR-T28)
         if let Some(state) = node.textarea_state.as_mut() {
-            state.selection_anchor = None;
-            state.selection_focus = None;
+            state.clear_selection();
         }
         node.dirty = true;
         Ok(0)
@@ -1477,9 +1476,7 @@ pub extern "C" fn tui_textarea_clear_selection(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        let state = node.textarea_state.as_mut().unwrap();
-        state.selection_anchor = None;
-        state.selection_focus = None;
+        node.textarea_state.as_mut().unwrap().clear_selection();
         node.dirty = true;
         Ok(0)
     })
@@ -1579,14 +1576,7 @@ pub extern "C" fn tui_textarea_find_next(
                 node.cursor_col = col;
 
                 // Set selection to highlight the match
-                let end = textarea::find_match_end(
-                    &node.content,
-                    row,
-                    col,
-                    &pattern,
-                    case_sensitive != 0,
-                    regex != 0,
-                );
+                let end = textarea::find_match_end(&node.content, row, col, &pattern, regex != 0);
                 let state = node.textarea_state.as_mut().unwrap();
                 state.selection_anchor = Some((row, col));
                 state.selection_focus = Some(end);

@@ -681,6 +681,14 @@ pub struct TextAreaState {
     pub history_limit: u32,
 }
 
+impl TextAreaState {
+    /// Clear the current selection (anchor and focus).
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_focus = None;
+    }
+}
+
 impl Default for TextAreaState {
     fn default() -> Self {
         Self {
