@@ -1576,7 +1576,14 @@ pub extern "C" fn tui_textarea_find_next(
                 node.cursor_col = col;
 
                 // Set selection to highlight the match
-                let end = textarea::find_match_end(&node.content, row, col, &pattern, regex != 0);
+                let end = textarea::find_match_end(
+                    &node.content,
+                    row,
+                    col,
+                    &pattern,
+                    case_sensitive != 0,
+                    regex != 0,
+                );
                 let state = node.textarea_state.as_mut().unwrap();
                 state.selection_anchor = Some((row, col));
                 state.selection_focus = Some(end);
@@ -1635,7 +1642,7 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
         // Truncate existing history if needed
         if limit > 0 {
             while state.undo_stack.len() > limit as usize {
-                state.undo_stack.remove(0);
+                state.undo_stack.pop_front();
             }
         }
         Ok(0)

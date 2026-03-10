@@ -2,6 +2,8 @@
 //!
 //! All types that cross module boundaries or define the FFI data model live here.
 
+use std::collections::VecDeque;
+
 #[allow(unused)]
 use bitflags::bitflags;
 
@@ -676,8 +678,8 @@ pub struct TextAreaEdit {
 pub struct TextAreaState {
     pub selection_anchor: Option<(u32, u32)>,
     pub selection_focus: Option<(u32, u32)>,
-    pub undo_stack: Vec<TextAreaEdit>,
-    pub redo_stack: Vec<TextAreaEdit>,
+    pub undo_stack: VecDeque<TextAreaEdit>,
+    pub redo_stack: VecDeque<TextAreaEdit>,
     pub history_limit: u32,
 }
 
@@ -694,8 +696,8 @@ impl Default for TextAreaState {
         Self {
             selection_anchor: None,
             selection_focus: None,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            undo_stack: VecDeque::new(),
+            redo_stack: VecDeque::new(),
             history_limit: 256,
         }
     }

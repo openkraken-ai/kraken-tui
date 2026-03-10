@@ -119,10 +119,10 @@ pub(crate) fn delete_selection(
 /// Record an edit into the undo stack and clear the redo stack.
 pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit) {
     state.redo_stack.clear();
-    state.undo_stack.push(edit);
+    state.undo_stack.push_back(edit);
     let limit = state.history_limit as usize;
     if limit > 0 && state.undo_stack.len() > limit {
-        state.undo_stack.remove(0);
+        state.undo_stack.pop_front();
     }
 }
 
@@ -130,7 +130,7 @@ pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit) {
 pub(crate) fn undo(node: &mut TuiNode) -> Result<bool, String> {
     let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
 
-    let edit = match state.undo_stack.pop() {
+    let edit = match state.undo_stack.pop_back() {
         Some(e) => e,
         None => return Ok(false),
     };
@@ -141,7 +141,7 @@ pub(crate) fn undo(node: &mut TuiNode) -> Result<bool, String> {
 
     state.clear_selection();
 
-    state.redo_stack.push(edit);
+    state.redo_stack.push_back(edit);
 
     Ok(true)
 }
@@ -150,7 +150,7 @@ pub(crate) fn undo(node: &mut TuiNode) -> Result<bool, String> {
 pub(crate) fn redo(node: &mut TuiNode) -> Result<bool, String> {
     let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
 
-    let edit = match state.redo_stack.pop() {
+    let edit = match state.redo_stack.pop_back() {
         Some(e) => e,
         None => return Ok(false),
     };
@@ -161,7 +161,7 @@ pub(crate) fn redo(node: &mut TuiNode) -> Result<bool, String> {
 
     state.clear_selection();
 
-    state.undo_stack.push(edit);
+    state.undo_stack.push_back(edit);
 
     Ok(true)
 }
@@ -252,14 +252,22 @@ pub(crate) fn find_next(
     let haystack = &content[search_offset..];
 
     let match_offset = if is_regex {
-        let re = Regex::new(pattern).map_err(|e| format!("Invalid regex: {e}"))?;
+        let effective_pattern = if case_sensitive {
+            pattern.to_string()
+        } else {
+            format!("(?i){pattern}")
+        };
+        let re = Regex::new(&effective_pattern).map_err(|e| format!("Invalid regex: {e}"))?;
         re.find(haystack).map(|m| m.start())
     } else if case_sensitive {
         haystack.find(pattern)
     } else {
-        let lower_haystack = haystack.to_lowercase();
-        let lower_pattern = pattern.to_lowercase();
-        lower_haystack.find(&lower_pattern)
+        // Use regex with escaped literal + (?i) to get correct byte offsets
+        // on the original string (avoids lowercasing byte offset mismatch).
+        let escaped = regex::escape(pattern);
+        let re =
+            Regex::new(&format!("(?i){escaped}")).map_err(|e| format!("Invalid pattern: {e}"))?;
+        re.find(haystack).map(|m| m.start())
     };
 
     match match_offset {
@@ -279,19 +287,33 @@ pub(crate) fn find_match_end(
     start_row: u32,
     start_col: u32,
     pattern: &str,
+    case_sensitive: bool,
     is_regex: bool,
 ) -> (u32, u32) {
     let start_offset = position_to_byte_offset(content, start_row, start_col);
     let haystack = &content[start_offset..];
 
     let match_len = if is_regex {
-        if let Ok(re) = Regex::new(pattern) {
+        let effective = if case_sensitive {
+            pattern.to_string()
+        } else {
+            format!("(?i){pattern}")
+        };
+        if let Ok(re) = Regex::new(&effective) {
             re.find(haystack).map(|m| m.end()).unwrap_or(0)
         } else {
             0
         }
-    } else {
+    } else if case_sensitive {
         pattern.len()
+    } else {
+        // Case-insensitive literal: find actual match length at this position
+        let escaped = regex::escape(pattern);
+        if let Ok(re) = Regex::new(&format!("(?i){escaped}")) {
+            re.find(haystack).map(|m| m.end()).unwrap_or(0)
+        } else {
+            0
+        }
     };
 
     let end_offset = start_offset + match_len;
@@ -472,7 +494,7 @@ mod tests {
     #[test]
     fn test_record_edit_clears_redo() {
         let mut state = TextAreaState::default();
-        state.redo_stack.push(TextAreaEdit {
+        state.redo_stack.push_back(TextAreaEdit {
             content_before: "old".to_string(),
             cursor_row_before: 0,
             cursor_col_before: 0,
