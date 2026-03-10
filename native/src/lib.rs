@@ -27,6 +27,7 @@ mod terminal;
 mod text;
 pub mod text_cache;
 mod text_utils;
+mod textarea;
 mod theme;
 mod tree;
 pub mod types;
@@ -1420,7 +1421,233 @@ pub extern "C" fn tui_textarea_set_wrap(handle: u32, wrap_mode: u8) -> i32 {
         if wrap_mode != 0 {
             node.textarea_view_col = 0;
         }
+        // Clear selection on wrap mode change (ADR-T28)
+        if let Some(state) = node.textarea_state.as_mut() {
+            state.selection_anchor = None;
+            state.selection_focus = None;
+        }
         node.dirty = true;
+        Ok(0)
+    })
+}
+
+// ============================================================================
+// 4.6.2 TextArea Editor Extensions (ADR-T28)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_set_selection(
+    handle: u32,
+    s_row: u32,
+    s_col: u32,
+    e_row: u32,
+    e_col: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        let state = node.textarea_state.as_mut().unwrap();
+
+        // Clamp to content bounds
+        let lines = split_textarea_lines_owned(&node.content);
+        let mut ar = s_row;
+        let mut ac = s_col;
+        let mut fr = e_row;
+        let mut fc = e_col;
+        clamp_textarea_cursor_lines(&lines, &mut ar, &mut ac);
+        clamp_textarea_cursor_lines(&lines, &mut fr, &mut fc);
+
+        state.selection_anchor = Some((ar, ac));
+        state.selection_focus = Some((fr, fc));
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_clear_selection(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        let state = node.textarea_state.as_mut().unwrap();
+        state.selection_anchor = None;
+        state.selection_focus = None;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_get_selected_text_len(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        let state = node.textarea_state.as_ref().unwrap();
+        match (state.selection_anchor, state.selection_focus) {
+            (Some(anchor), Some(focus)) => {
+                let text = textarea::get_selected_text(&node.content, anchor, focus);
+                Ok(text.len() as i32)
+            }
+            _ => Ok(0),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_get_selected_text(
+    handle: u32,
+    buffer: *mut u8,
+    buffer_len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        if buffer.is_null() {
+            return Err("Null buffer pointer".to_string());
+        }
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        let state = node.textarea_state.as_ref().unwrap();
+        match (state.selection_anchor, state.selection_focus) {
+            (Some(anchor), Some(focus)) => {
+                let text = textarea::get_selected_text(&node.content, anchor, focus);
+                let bytes = text.as_bytes();
+                let copy_len = bytes.len().min(buffer_len as usize);
+                unsafe {
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+                }
+                Ok(copy_len as i32)
+            }
+            _ => Ok(0),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_find_next(
+    handle: u32,
+    ptr: *const u8,
+    len: u32,
+    case_sensitive: u8,
+    regex: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        if ptr.is_null() {
+            return Err("Null pattern pointer".to_string());
+        }
+        let pattern = unsafe {
+            let slice = std::slice::from_raw_parts(ptr, len as usize);
+            std::str::from_utf8(slice)
+                .map_err(|_| "Pattern is not valid UTF-8".to_string())?
+                .to_string()
+        };
+
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+
+        let result = textarea::find_next(
+            &node.content,
+            node.cursor_row,
+            node.cursor_col,
+            &pattern,
+            case_sensitive != 0,
+            regex != 0,
+        )?;
+
+        match result {
+            Some((row, col)) => {
+                // Move cursor to match start
+                node.cursor_row = row;
+                node.cursor_col = col;
+
+                // Set selection to highlight the match
+                let end = textarea::find_match_end(
+                    &node.content,
+                    row,
+                    col,
+                    &pattern,
+                    case_sensitive != 0,
+                    regex != 0,
+                );
+                let state = node.textarea_state.as_mut().unwrap();
+                state.selection_anchor = Some((row, col));
+                state.selection_focus = Some(end);
+
+                node.dirty = true;
+                Ok(1)
+            }
+            None => Ok(0),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_undo(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        textarea::undo(node)?;
+        clamp_textarea_cursor(node);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_redo(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        textarea::redo(node)?;
+        clamp_textarea_cursor(node);
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        if node.node_type != NodeType::TextArea {
+            return Err(format!("Handle {handle} is not a TextArea widget"));
+        }
+        let state = node.textarea_state.as_mut().unwrap();
+        state.history_limit = limit;
+        // Truncate existing history if needed
+        if limit > 0 {
+            while state.undo_stack.len() > limit as usize {
+                state.undo_stack.remove(0);
+            }
+        }
         Ok(0)
     })
 }

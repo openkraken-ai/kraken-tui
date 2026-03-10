@@ -659,6 +659,41 @@ impl Default for OverlayState {
 }
 
 // ============================================================================
+// TextArea Editor State (ADR-T28)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct TextAreaEdit {
+    pub content_before: String,
+    pub cursor_row_before: u32,
+    pub cursor_col_before: u32,
+    pub content_after: String,
+    pub cursor_row_after: u32,
+    pub cursor_col_after: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TextAreaState {
+    pub selection_anchor: Option<(u32, u32)>,
+    pub selection_focus: Option<(u32, u32)>,
+    pub undo_stack: Vec<TextAreaEdit>,
+    pub redo_stack: Vec<TextAreaEdit>,
+    pub history_limit: u32,
+}
+
+impl Default for TextAreaState {
+    fn default() -> Self {
+        Self {
+            selection_anchor: None,
+            selection_focus: None,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            history_limit: 256,
+        }
+    }
+}
+
+// ============================================================================
 // TuiNode
 // ============================================================================
 
@@ -695,6 +730,8 @@ pub struct TuiNode {
     pub role: Option<AccessibilityRole>,
     pub label: Option<String>,
     pub description: Option<String>,
+    // TextArea editor state (ADR-T28)
+    pub textarea_state: Option<TextAreaState>,
     // v3 widget state (ADR-T27)
     pub table_state: Option<TableState>,
     pub list_state: Option<ListState>,
@@ -741,6 +778,11 @@ impl TuiNode {
             role: None,
             label: None,
             description: None,
+            textarea_state: if node_type == NodeType::TextArea {
+                Some(TextAreaState::default())
+            } else {
+                None
+            },
             table_state: if node_type == NodeType::Table {
                 Some(TableState::default())
             } else {

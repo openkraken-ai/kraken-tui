@@ -14,6 +14,7 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 bitflags = "2"
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
+regex = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

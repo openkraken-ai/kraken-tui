@@ -136,6 +136,40 @@ const symbols = {
 		returns: "i32" as const,
 	},
 
+	// TextArea Editor Extensions (ADR-T28)
+	tui_textarea_set_selection: {
+		args: ["u32", "u32", "u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_clear_selection: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_get_selected_text_len: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_get_selected_text: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_find_next: {
+		args: ["u32", "ptr", "u32", "u8", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_undo: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_redo: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_textarea_set_history_limit: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
 	// Widget Properties (Select)
 	tui_select_add_option: {
 		args: ["u32", "ptr", "u32"] as FFIType[],
