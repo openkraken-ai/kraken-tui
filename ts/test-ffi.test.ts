@@ -89,6 +89,16 @@ const lib = dlopen(LIB_PATH, {
 	tui_textarea_get_line_count: { args: ["u32"] as FFIType[],                   returns: "i32" as const },
 	tui_textarea_set_wrap: { args: ["u32", "u8"] as FFIType[],                   returns: "i32" as const },
 
+	// TextArea Editor Extensions (ADR-T28)
+	tui_textarea_set_selection: { args: ["u32", "u32", "u32", "u32", "u32"] as FFIType[], returns: "i32" as const },
+	tui_textarea_clear_selection: { args: ["u32"] as FFIType[],                          returns: "i32" as const },
+	tui_textarea_get_selected_text_len: { args: ["u32"] as FFIType[],                    returns: "i32" as const },
+	tui_textarea_get_selected_text: { args: ["u32", "ptr", "u32"] as FFIType[],          returns: "i32" as const },
+	tui_textarea_find_next: { args: ["u32", "ptr", "u32", "u8", "u8"] as FFIType[],      returns: "i32" as const },
+	tui_textarea_undo: { args: ["u32"] as FFIType[],                                     returns: "i32" as const },
+	tui_textarea_redo: { args: ["u32"] as FFIType[],                                     returns: "i32" as const },
+	tui_textarea_set_history_limit: { args: ["u32", "u32"] as FFIType[],                 returns: "i32" as const },
+
 	// Select widget
 	tui_select_add_option:    { args: ["u32", "ptr", "u32"] as FFIType[],        returns: "i32" as const },
 	tui_select_remove_option: { args: ["u32", "u32"] as FFIType[],               returns: "i32" as const },
@@ -801,6 +811,310 @@ describe("FFI integration", () => {
 
 			expect(ffi.tui_destroy_node(box)).toBe(0);
 			expect(ffi.tui_destroy_node(textarea)).toBe(0);
+		});
+	});
+
+	// ── TextArea Editor Extensions (ADR-T28) ────────────────────────────────
+
+	describe("textarea editor extensions", () => {
+		function getSelectedText(handle: number): string {
+			const len = ffi.tui_textarea_get_selected_text_len(handle);
+			if (len <= 0) return "";
+			const buf = Buffer.alloc(len + 1);
+			const written = ffi.tui_textarea_get_selected_text(handle, buf, len + 1);
+			return buf.toString("utf-8", 0, written);
+		}
+
+		function findNext(handle: number, pattern: string, caseSensitive = 1, regex = 0): number {
+			const encoded = new TextEncoder().encode(pattern);
+			return ffi.tui_textarea_find_next(handle, Buffer.from(encoded), encoded.length, caseSensitive, regex);
+		}
+
+		test("selection set, get text, and clear", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+
+			// Set selection: "llo w"
+			expect(ffi.tui_textarea_set_selection(h, 0, 2, 0, 7)).toBe(0);
+			expect(getSelectedText(h)).toBe("llo w");
+
+			// Clear selection
+			expect(ffi.tui_textarea_clear_selection(h)).toBe(0);
+			expect(ffi.tui_textarea_get_selected_text_len(h)).toBe(0);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("multi-line selection text extraction", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "abc\ndef\nghi")).toBe(0);
+
+			// Select from (0,1) to (2,2): "bc\ndef\ngh"
+			expect(ffi.tui_textarea_set_selection(h, 0, 1, 2, 2)).toBe(0);
+			expect(getSelectedText(h)).toBe("bc\ndef\ngh");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("selection clamps to content bounds", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "ab\ncd")).toBe(0);
+
+			// Out-of-bounds selection gets clamped
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 10, 10)).toBe(0);
+			const text = getSelectedText(h);
+			expect(text).toBe("ab\ncd");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("undo and redo on empty history preserves content", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "original")).toBe(0);
+
+			// Undo/redo with empty stacks should succeed without changing content.
+			// Note: undo history is populated by key events (handle_textarea_key),
+			// not by tui_set_content. Full undo/redo round-trip logic is tested
+			// in Rust unit tests (event.rs::test_textarea_undo_redo_round_trip et al.)
+			expect(ffi.tui_textarea_undo(h)).toBe(0);
+			expect(getContent(h)).toBe("original");
+
+			expect(ffi.tui_textarea_redo(h)).toBe(0);
+			expect(getContent(h)).toBe("original");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("set history limit", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "test")).toBe(0);
+
+			expect(ffi.tui_textarea_set_history_limit(h, 10)).toBe(0);
+			expect(ffi.tui_textarea_set_history_limit(h, 0)).toBe(0);
+			expect(ffi.tui_textarea_set_history_limit(h, 256)).toBe(0);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next literal match", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world hello")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// Find "hello" — inclusive search finds first occurrence at cursor
+			const result = findNext(h, "hello");
+			expect(result).toBe(1);
+
+			// Cursor moves to match end (0, 5)
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(5);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next repeated advances through matches", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world hello")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// First find: "hello" at (0,0), cursor moves to end (0,5)
+			expect(findNext(h, "hello")).toBe(1);
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(5);
+
+			// Second find: "hello" at (0,12), cursor moves to end (0,17)
+			expect(findNext(h, "hello")).toBe(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(17);
+
+			// Third find: no more matches
+			expect(findNext(h, "hello")).toBe(0);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next no match returns 0", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			const result = findNext(h, "xyz");
+			expect(result).toBe(0);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next case insensitive", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "Hello World")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// Case insensitive search for "world"
+			const result = findNext(h, "world", 0, 0);
+			expect(result).toBe(1);
+
+			// Cursor at match end (0, 11)
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(11);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next regex match", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "abc 123 def 456")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			const result = findNext(h, "\\d+", 1, 1);
+			expect(result).toBe(1);
+
+			// Cursor at match end: "123" starts at col 4, ends at col 7
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(7);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next sets selection to highlight match", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "find me here")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			findNext(h, "me");
+			// After find, selection should highlight "me"
+			expect(getSelectedText(h)).toBe("me");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("selection with multi-byte UTF-8 (emoji)", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "Hello \u{1F30D} World")).toBe(0);
+
+			// Select the emoji at grapheme col 6
+			expect(ffi.tui_textarea_set_selection(h, 0, 6, 0, 7)).toBe(0);
+			expect(getSelectedText(h)).toBe("\u{1F30D}");
+
+			// Select "Hello " (cols 0-6)
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 6)).toBe(0);
+			expect(getSelectedText(h)).toBe("Hello ");
+
+			// Select " World" after emoji (cols 7-13)
+			expect(ffi.tui_textarea_set_selection(h, 0, 7, 0, 13)).toBe(0);
+			expect(getSelectedText(h)).toBe(" World");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("selection with CJK characters", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "\u{4F60}\u{597D}\u{4E16}\u{754C}")).toBe(0);
+
+			// Select middle two chars (好世)
+			expect(ffi.tui_textarea_set_selection(h, 0, 1, 0, 3)).toBe(0);
+			expect(getSelectedText(h)).toBe("\u{597D}\u{4E16}");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next with multi-byte UTF-8 content", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "\u{4F60}\u{597D}\u{4E16}\u{754C}\n\u{518D}\u{89C1}\u{4E16}\u{754C}")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// First find: inclusive from (0,0), "世界" at (0,2), cursor to match end (0,4)
+			let result = findNext(h, "\u{4E16}\u{754C}");
+			expect(result).toBe(1);
+
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(4);
+
+			// Second find: from (0,4) finds "世界" at (1,2), cursor to match end (1,4)
+			result = findNext(h, "\u{4E16}\u{754C}");
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(1);
+			expect(col[0]).toBe(4);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("setCursor clears stale selection", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+
+			// Set a selection
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 5)).toBe(0);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Move cursor — should clear selection
+			expect(ffi.tui_textarea_set_cursor(h, 0, 8)).toBe(0);
+			expect(getSelectedText(h)).toBe("");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("setContent clears stale selection", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+
+			// Set a selection
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 5)).toBe(0);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Replace content — should clear selection
+			expect(setContent(h, "new content")).toBe(0);
+			expect(getSelectedText(h)).toBe("");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next at cursor position finds match inclusively", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// "hello" starts right at cursor — inclusive search should find it
+			const result = findNext(h, "hello");
+			expect(result).toBe(1);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Cursor should be at match end (0, 5)
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(5);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("type guard: editor extensions reject non-TextArea", () => {
+			const box = ffi.tui_create_node(0);
+
+			expect(ffi.tui_textarea_set_selection(box, 0, 0, 1, 1)).toBe(-1);
+			expect(ffi.tui_textarea_clear_selection(box)).toBe(-1);
+			expect(ffi.tui_textarea_get_selected_text_len(box)).toBe(-1);
+			expect(ffi.tui_textarea_undo(box)).toBe(-1);
+			expect(ffi.tui_textarea_redo(box)).toBe(-1);
+			expect(ffi.tui_textarea_set_history_limit(box, 10)).toBe(-1);
+
+			expect(ffi.tui_destroy_node(box)).toBe(0);
 		});
 	});
 

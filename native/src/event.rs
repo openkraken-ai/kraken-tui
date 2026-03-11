@@ -11,7 +11,8 @@ use crate::context::TuiContext;
 use crate::text_utils::{
     clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned,
 };
-use crate::types::{key, NodeType, TerminalInputEvent, TuiEvent};
+use crate::textarea;
+use crate::types::{key, NodeType, TerminalInputEvent, TextAreaEdit, TuiEvent};
 
 /// Read terminal input, classify events, store in buffer.
 /// Returns the number of events captured.
@@ -293,101 +294,164 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         let mut lines = split_textarea_lines_owned(&node.content);
         clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
-        match code {
-            key::ENTER => {
-                let row = node.cursor_row as usize;
-                let col = node.cursor_col as usize;
-                let split_at = grapheme_to_byte_idx(&lines[row], col);
-                let before = lines[row][..split_at].to_string();
-                let after = lines[row][split_at..].to_string();
-                lines[row] = before;
-                lines.insert(row + 1, after);
-                node.cursor_row += 1;
-                node.cursor_col = 0;
-                emit_change = true;
-                consumed = true;
+        // Check if we have a non-empty selection (anchor != focus)
+        let has_selection = node.textarea_state.as_ref().is_some_and(
+            |s| matches!((s.selection_anchor, s.selection_focus), (Some(a), Some(f)) if a != f),
+        );
+
+        // For mutating keys (ENTER, BACKSPACE, DELETE, char input), if selection
+        // is active, delete the selected text first and collapse cursor.
+        let is_mutating = matches!(code, key::ENTER | key::BACKSPACE | key::DELETE)
+            || (character != '\0' && !character.is_control());
+
+        // Snapshot for undo recording — only needed for mutating keys
+        let (content_before, cursor_row_before, cursor_col_before) = if is_mutating {
+            (node.content.clone(), node.cursor_row, node.cursor_col)
+        } else {
+            (String::new(), 0, 0)
+        };
+
+        if has_selection && is_mutating {
+            if let Some(state) = node.textarea_state.as_ref() {
+                if let (Some(anchor), Some(focus)) = (state.selection_anchor, state.selection_focus)
+                {
+                    let (new_content, new_row, new_col) =
+                        textarea::delete_selection(&node.content, anchor, focus);
+                    node.content = new_content;
+                    node.cursor_row = new_row;
+                    node.cursor_col = new_col;
+                    // Re-split lines after selection deletion
+                    lines = split_textarea_lines_owned(&node.content);
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+
+                    emit_change = true;
+
+                    // BACKSPACE/DELETE: selection delete is the complete action — consume.
+                    // ENTER/character: fall through to insert the key after deletion
+                    // (standard replace-selection behavior).
+                    if code == key::BACKSPACE || code == key::DELETE {
+                        consumed = true;
+                    }
+                }
             }
-            key::BACKSPACE => {
-                if node.cursor_col > 0 {
+            // Clear selection
+            if let Some(state) = node.textarea_state.as_mut() {
+                state.clear_selection();
+            }
+        }
+
+        if !consumed {
+            match code {
+                key::ENTER => {
                     let row = node.cursor_row as usize;
                     let col = node.cursor_col as usize;
-                    let start = grapheme_to_byte_idx(&lines[row], col - 1);
-                    let end = grapheme_to_byte_idx(&lines[row], col);
-                    lines[row].replace_range(start..end, "");
-                    node.cursor_col -= 1;
-                    emit_change = true;
-                } else if node.cursor_row > 0 {
-                    let row = node.cursor_row as usize;
-                    let current_line = lines.remove(row);
-                    let prev_row = row - 1;
-                    let prev_len = grapheme_count(&lines[prev_row]) as u32;
-                    lines[prev_row].push_str(&current_line);
-                    node.cursor_row -= 1;
-                    node.cursor_col = prev_len;
-                    emit_change = true;
-                }
-                consumed = true;
-            }
-            key::DELETE => {
-                let row = node.cursor_row as usize;
-                let col = node.cursor_col as usize;
-                let line_len = grapheme_count(&lines[row]);
-                if col < line_len {
-                    let start = grapheme_to_byte_idx(&lines[row], col);
-                    let end = grapheme_to_byte_idx(&lines[row], col + 1);
-                    lines[row].replace_range(start..end, "");
-                    emit_change = true;
-                } else if row + 1 < lines.len() {
-                    let next_line = lines.remove(row + 1);
-                    lines[row].push_str(&next_line);
-                    emit_change = true;
-                }
-                consumed = true;
-            }
-            key::LEFT => {
-                if node.cursor_col > 0 {
-                    node.cursor_col -= 1;
-                } else if node.cursor_row > 0 {
-                    node.cursor_row -= 1;
-                    node.cursor_col = grapheme_count(&lines[node.cursor_row as usize]) as u32;
-                }
-                consumed = true;
-            }
-            key::RIGHT => {
-                let row = node.cursor_row as usize;
-                let line_len = grapheme_count(&lines[row]) as u32;
-                if node.cursor_col < line_len {
-                    node.cursor_col += 1;
-                } else if (node.cursor_row as usize) + 1 < lines.len() {
+                    let split_at = grapheme_to_byte_idx(&lines[row], col);
+                    let before = lines[row][..split_at].to_string();
+                    let after = lines[row][split_at..].to_string();
+                    lines[row] = before;
+                    lines.insert(row + 1, after);
                     node.cursor_row += 1;
                     node.cursor_col = 0;
+                    emit_change = true;
+                    consumed = true;
                 }
-                consumed = true;
-            }
-            key::UP => {
-                if node.cursor_row > 0 {
-                    node.cursor_row -= 1;
-                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                key::BACKSPACE => {
+                    if node.cursor_col > 0 {
+                        let row = node.cursor_row as usize;
+                        let col = node.cursor_col as usize;
+                        let start = grapheme_to_byte_idx(&lines[row], col - 1);
+                        let end = grapheme_to_byte_idx(&lines[row], col);
+                        lines[row].replace_range(start..end, "");
+                        node.cursor_col -= 1;
+                        emit_change = true;
+                    } else if node.cursor_row > 0 {
+                        let row = node.cursor_row as usize;
+                        let current_line = lines.remove(row);
+                        let prev_row = row - 1;
+                        let prev_len = grapheme_count(&lines[prev_row]) as u32;
+                        lines[prev_row].push_str(&current_line);
+                        node.cursor_row -= 1;
+                        node.cursor_col = prev_len;
+                        emit_change = true;
+                    }
+                    consumed = true;
                 }
-                consumed = true;
-            }
-            key::DOWN => {
-                if (node.cursor_row as usize) + 1 < lines.len() {
-                    node.cursor_row += 1;
-                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+                key::DELETE => {
+                    let row = node.cursor_row as usize;
+                    let col = node.cursor_col as usize;
+                    let line_len = grapheme_count(&lines[row]);
+                    if col < line_len {
+                        let start = grapheme_to_byte_idx(&lines[row], col);
+                        let end = grapheme_to_byte_idx(&lines[row], col + 1);
+                        lines[row].replace_range(start..end, "");
+                        emit_change = true;
+                    } else if row + 1 < lines.len() {
+                        let next_line = lines.remove(row + 1);
+                        lines[row].push_str(&next_line);
+                        emit_change = true;
+                    }
+                    consumed = true;
                 }
-                consumed = true;
+                key::LEFT => {
+                    if node.cursor_col > 0 {
+                        node.cursor_col -= 1;
+                    } else if node.cursor_row > 0 {
+                        node.cursor_row -= 1;
+                        node.cursor_col = grapheme_count(&lines[node.cursor_row as usize]) as u32;
+                    }
+                    consumed = true;
+                }
+                key::RIGHT => {
+                    let row = node.cursor_row as usize;
+                    let line_len = grapheme_count(&lines[row]) as u32;
+                    if node.cursor_col < line_len {
+                        node.cursor_col += 1;
+                    } else if (node.cursor_row as usize) + 1 < lines.len() {
+                        node.cursor_row += 1;
+                        node.cursor_col = 0;
+                    }
+                    consumed = true;
+                }
+                key::UP => {
+                    if node.cursor_row > 0 {
+                        node.cursor_row -= 1;
+                        clamp_textarea_cursor_lines(
+                            &lines,
+                            &mut node.cursor_row,
+                            &mut node.cursor_col,
+                        );
+                    }
+                    consumed = true;
+                }
+                key::DOWN => {
+                    if (node.cursor_row as usize) + 1 < lines.len() {
+                        node.cursor_row += 1;
+                        clamp_textarea_cursor_lines(
+                            &lines,
+                            &mut node.cursor_row,
+                            &mut node.cursor_col,
+                        );
+                    }
+                    consumed = true;
+                }
+                key::HOME => {
+                    node.cursor_col = 0;
+                    consumed = true;
+                }
+                key::END => {
+                    let row = node.cursor_row as usize;
+                    node.cursor_col = grapheme_count(&lines[row]) as u32;
+                    consumed = true;
+                }
+                _ => {}
             }
-            key::HOME => {
-                node.cursor_col = 0;
-                consumed = true;
+        }
+
+        // Clear selection on navigation keys
+        if consumed && !is_mutating {
+            if let Some(state) = node.textarea_state.as_mut() {
+                state.clear_selection();
             }
-            key::END => {
-                let row = node.cursor_row as usize;
-                node.cursor_col = grapheme_count(&lines[row]) as u32;
-                consumed = true;
-            }
-            _ => {}
         }
 
         if !consumed && character != '\0' && !character.is_control() {
@@ -402,6 +466,21 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
 
         if emit_change {
             node.content = join_textarea_lines(&lines);
+
+            // Record undo entry
+            if let Some(state) = node.textarea_state.as_mut() {
+                textarea::record_edit(
+                    state,
+                    TextAreaEdit {
+                        content_before,
+                        cursor_row_before,
+                        cursor_col_before,
+                        content_after: node.content.clone(),
+                        cursor_row_after: node.cursor_row,
+                        cursor_col_after: node.cursor_col,
+                    },
+                );
+            }
         }
         clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
@@ -944,6 +1023,200 @@ mod tests {
     }
 
     #[test]
+    fn test_textarea_undo_redo_round_trip() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+        }
+
+        // Type " world" (6 characters → 6 undo entries)
+        for ch in [' ', 'w', 'o', 'r', 'l', 'd'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello world");
+
+        // Undo all 6 character inserts
+        for _ in 0..6 {
+            let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(result.unwrap(), true);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello");
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 5);
+
+        // Undo on empty stack returns false
+        let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "hello");
+
+        // Redo all 6 character inserts
+        for _ in 0..6 {
+            let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(result.unwrap(), true);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "hello world");
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 11);
+
+        // Redo on empty stack returns false
+        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+    }
+
+    #[test]
+    fn test_textarea_undo_after_newline_and_backspace() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "ab".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        // Insert newline between 'a' and 'b'
+        handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 1);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
+
+        // Undo → content restored to "ab", cursor back to (0, 1)
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "ab");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 1);
+
+        // Redo → "a\nb" again
+        textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+
+        // Now backspace at (1, 0) → joins lines back to "ab"
+        handle_textarea_key(&mut ctx, textarea, key::BACKSPACE, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "ab");
+
+        // Undo the backspace → "a\nb"
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "a\nb");
+    }
+
+    #[test]
+    fn test_textarea_new_edit_clears_redo_stack() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abc".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 3;
+        }
+
+        // Type 'x'
+        handle_textarea_key(&mut ctx, textarea, 0, 'x');
+        assert_eq!(ctx.nodes[&textarea].content, "abcx");
+
+        // Undo → "abc"
+        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        assert_eq!(ctx.nodes[&textarea].content, "abc");
+
+        // Type 'y' (diverge from redo history)
+        handle_textarea_key(&mut ctx, textarea, 0, 'y');
+        assert_eq!(ctx.nodes[&textarea].content, "abcy");
+
+        // Redo should now return false (redo stack was cleared)
+        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(result.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "abcy");
+    }
+
+    #[test]
+    fn test_textarea_undo_respects_history_limit() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "start".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            node.textarea_state.as_mut().unwrap().history_limit = 3;
+        }
+
+        // Type 5 characters → only last 3 should be in undo stack
+        for ch in ['a', 'b', 'c', 'd', 'e'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "startabcde");
+
+        // Undo 3 times (the limit)
+        for _ in 0..3 {
+            let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+            assert_eq!(r.unwrap(), true);
+        }
+        // Should have undone 'e', 'd', 'c' — left with "startab"
+        assert_eq!(ctx.nodes[&textarea].content, "startab");
+
+        // 4th undo returns false (oldest entries were trimmed)
+        let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(r.unwrap(), false);
+        assert_eq!(ctx.nodes[&textarea].content, "startab");
+    }
+
+    #[test]
+    fn test_textarea_history_limit_enforced_on_redo() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "x".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 1;
+        }
+
+        // Type 5 characters with default limit (256)
+        for ch in ['a', 'b', 'c', 'd', 'e'] {
+            handle_textarea_key(&mut ctx, textarea, 0, ch);
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "xabcde");
+
+        // Undo all 5
+        for _ in 0..5 {
+            textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        }
+        assert_eq!(ctx.nodes[&textarea].content, "x");
+        // Now redo_stack has 5 entries, undo_stack has 0
+
+        // Lower history limit to 2
+        {
+            let state = ctx
+                .nodes
+                .get_mut(&textarea)
+                .unwrap()
+                .textarea_state
+                .as_mut()
+                .unwrap();
+            state.history_limit = 2;
+            // Trim redo_stack like tui_textarea_set_history_limit does
+            while state.redo_stack.len() > 2 {
+                state.redo_stack.pop_front();
+            }
+        }
+
+        // Redo both available entries
+        for _ in 0..2 {
+            textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        }
+
+        // Undo stack should not exceed the limit of 2
+        let state = ctx.nodes[&textarea].textarea_state.as_ref().unwrap();
+        assert!(state.undo_stack.len() <= 2);
+
+        // 3rd redo should return false
+        let r = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        assert_eq!(r.unwrap(), false);
+    }
+
+    #[test]
     fn test_next_event_drain() {
         let mut ctx = test_ctx();
         ctx.event_buffer.push(TuiEvent::resize(100, 50));
@@ -1458,5 +1731,74 @@ mod tests {
         let event = next_event(&mut ctx).unwrap();
         assert_eq!(event.event_type, TuiEventType::Key as u32);
         assert_eq!(event.data[0], key::ESCAPE);
+    }
+
+    #[test]
+    fn test_textarea_selection_replace_with_char() {
+        // Typing a character with active selection: delete selection, insert char
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Type 'X' — should replace "hello" with "X"
+        handle_textarea_key(&mut ctx, textarea, 0, 'X');
+        assert_eq!(ctx.nodes[&textarea].content, "X world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 1);
+    }
+
+    #[test]
+    fn test_textarea_selection_replace_with_enter() {
+        // Pressing ENTER with active selection: delete selection, insert newline
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Press ENTER — should replace "hello" with newline
+        handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "\n world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 1);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
+    }
+
+    #[test]
+    fn test_textarea_selection_backspace_deletes_only() {
+        // BACKSPACE with active selection: just delete selection, no extra backspace
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Press BACKSPACE — should delete "hello" only
+        handle_textarea_key(&mut ctx, textarea, key::BACKSPACE, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, " world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
     }
 }

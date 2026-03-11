@@ -73,4 +73,83 @@ export class TextArea extends Widget {
 			"TextArea.setWrap",
 		);
 	}
+
+	// Editor Extensions (ADR-T28)
+
+	setSelection(
+		startRow: number,
+		startCol: number,
+		endRow: number,
+		endCol: number,
+	): void {
+		checkResult(
+			ffi.tui_textarea_set_selection(
+				this.handle,
+				startRow,
+				startCol,
+				endRow,
+				endCol,
+			),
+			"TextArea.setSelection",
+		);
+	}
+
+	clearSelection(): void {
+		checkResult(
+			ffi.tui_textarea_clear_selection(this.handle),
+			"TextArea.clearSelection",
+		);
+	}
+
+	getSelectedText(): string {
+		const len = ffi.tui_textarea_get_selected_text_len(this.handle);
+		checkResult(len, "TextArea.getSelectedText");
+		if (len === 0) return "";
+
+		const buf = Buffer.alloc(len + 1);
+		const written = ffi.tui_textarea_get_selected_text(
+			this.handle,
+			buf,
+			len + 1,
+		);
+		checkResult(written, "TextArea.getSelectedText");
+		return buf.toString("utf-8", 0, written);
+	}
+
+	findNext(
+		pattern: string,
+		options?: { caseSensitive?: boolean; regex?: boolean },
+	): boolean {
+		const encoded = new TextEncoder().encode(pattern);
+		const buf = Buffer.from(encoded);
+		const result = ffi.tui_textarea_find_next(
+			this.handle,
+			buf,
+			encoded.length,
+			options?.caseSensitive ? 1 : 0,
+			options?.regex ? 1 : 0,
+		);
+		checkResult(result, "TextArea.findNext");
+		return result === 1;
+	}
+
+	undo(): boolean {
+		const result = ffi.tui_textarea_undo(this.handle);
+		checkResult(result, "TextArea.undo");
+		return result === 1;
+	}
+
+	redo(): boolean {
+		const result = ffi.tui_textarea_redo(this.handle);
+		checkResult(result, "TextArea.redo");
+		return result === 1;
+	}
+
+	/** Set the maximum number of undo entries. Pass 0 for unlimited. */
+	setHistoryLimit(limit: number): void {
+		checkResult(
+			ffi.tui_textarea_set_history_limit(this.handle, limit),
+			"TextArea.setHistoryLimit",
+		);
+	}
 }
