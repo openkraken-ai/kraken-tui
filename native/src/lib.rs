@@ -361,9 +361,11 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
         node.content = text;
         if node.node_type == NodeType::TextArea {
             clamp_textarea_cursor(node);
-            // Clear stale selection — old anchor/focus may be invalid in new content (ADR-T28)
+            // Clear stale selection and history — old entries reference unrelated content (ADR-T28)
             if let Some(state) = node.textarea_state.as_mut() {
                 state.clear_selection();
+                state.undo_stack.clear();
+                state.redo_stack.clear();
             }
         } else if node.node_type == NodeType::Input {
             let len = grapheme_count(&node.content) as u32;
