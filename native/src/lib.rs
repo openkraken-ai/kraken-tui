@@ -1547,6 +1547,12 @@ pub extern "C" fn tui_textarea_get_selected_text(
                 unsafe {
                     std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
                 }
+                // Null-terminate if space (consistent with tui_get_content et al.)
+                if (buffer_len as usize) > copy_len {
+                    unsafe {
+                        *buffer.add(copy_len) = 0;
+                    }
+                }
                 Ok(copy_len as i32)
             }
             _ => Ok(0),
