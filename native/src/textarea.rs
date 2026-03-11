@@ -117,6 +117,7 @@ pub(crate) fn delete_selection(
 }
 
 /// Record an edit into the undo stack and clear the redo stack.
+/// When `history_limit` is 0, the stack grows without bound (unlimited).
 pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit) {
     state.redo_stack.clear();
     state.undo_stack.push_back(edit);
@@ -277,11 +278,12 @@ pub(crate) fn find_match_end(
     let start_offset = position_to_byte_offset(content, start_row, start_col);
     let haystack = &content[start_offset..];
 
+    // Anchor patterns to start of haystack so we measure the match at this position
     let match_len = if is_regex {
         let effective = if case_sensitive {
-            pattern.to_string()
+            format!("^(?:{pattern})")
         } else {
-            format!("(?i){pattern}")
+            format!("^(?i)(?:{pattern})")
         };
         if let Ok(re) = Regex::new(&effective) {
             re.find(haystack).map(|m| m.end()).unwrap_or(0)
@@ -291,9 +293,9 @@ pub(crate) fn find_match_end(
     } else if case_sensitive {
         pattern.len()
     } else {
-        // Case-insensitive literal: find actual match length at this position
+        // Case-insensitive literal: anchor to start for correct match length
         let escaped = regex::escape(pattern);
-        if let Ok(re) = Regex::new(&format!("(?i){escaped}")) {
+        if let Ok(re) = Regex::new(&format!("^(?i){escaped}")) {
             re.find(haystack).map(|m| m.end()).unwrap_or(0)
         } else {
             0

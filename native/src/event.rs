@@ -294,11 +294,6 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         let mut lines = split_textarea_lines_owned(&node.content);
         clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
-        // Snapshot for undo recording (taken before any mutation)
-        let content_before = node.content.clone();
-        let cursor_row_before = node.cursor_row;
-        let cursor_col_before = node.cursor_col;
-
         // Check if we have an active selection
         let has_selection = node
             .textarea_state
@@ -309,6 +304,13 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         // is active, delete the selected text first and collapse cursor.
         let is_mutating = matches!(code, key::ENTER | key::BACKSPACE | key::DELETE)
             || (character != '\0' && !character.is_control());
+
+        // Snapshot for undo recording — only needed for mutating keys
+        let (content_before, cursor_row_before, cursor_col_before) = if is_mutating {
+            (node.content.clone(), node.cursor_row, node.cursor_col)
+        } else {
+            (String::new(), 0, 0)
+        };
 
         if has_selection && is_mutating {
             let state = node.textarea_state.as_ref().unwrap();

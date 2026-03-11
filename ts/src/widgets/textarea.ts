@@ -141,6 +141,7 @@ export class TextArea extends Widget {
 		checkResult(ffi.tui_textarea_redo(this.handle), "TextArea.redo");
 	}
 
+	/** Set the maximum number of undo entries. Pass 0 for unlimited. */
 	setHistoryLimit(limit: number): void {
 		checkResult(
 			ffi.tui_textarea_set_history_limit(this.handle, limit),

@@ -1174,14 +1174,16 @@ fn render_textarea(
                 // Render inverted cells for the selected grapheme range
                 for gcol in col_from..col_to {
                     let local_col = (gcol - line_start) as usize;
-                    let disp_x = display_width_of_prefix_graphemes(&vline.text, local_col) - h_skip;
-                    if disp_x < 0 || disp_x >= max_w {
+                    let abs_x = display_width_of_prefix_graphemes(&vline.text, local_col);
+                    let screen_x = abs_x - h_skip;
+                    if screen_x < 0 || screen_x >= max_w {
                         continue;
                     }
-                    let ch = grapheme_char_at_display_col(&vline.text, disp_x).unwrap_or(' ');
+                    // Use absolute display col for char lookup (not viewport-relative)
+                    let ch = grapheme_char_at_display_col(&vline.text, abs_x).unwrap_or(' ');
                     clip_set(
                         &mut ctx.front_buffer,
-                        x + disp_x,
+                        x + screen_x,
                         y + screen_row,
                         Cell {
                             ch,

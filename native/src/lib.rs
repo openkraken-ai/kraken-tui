@@ -1636,6 +1636,7 @@ pub extern "C" fn tui_textarea_redo(handle: u32) -> i32 {
     })
 }
 
+/// Set the maximum number of undo entries. 0 = unlimited (no truncation).
 #[no_mangle]
 pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32 {
     ffi_wrap(|| {
@@ -1647,7 +1648,7 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
         }
         let state = node.textarea_state.as_mut().unwrap();
         state.history_limit = limit;
-        // Truncate existing history if needed
+        // Truncate existing history if needed (limit 0 = unlimited)
         if limit > 0 {
             while state.undo_stack.len() > limit as usize {
                 state.undo_stack.pop_front();
