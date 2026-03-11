@@ -312,26 +312,29 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         };
 
         if has_selection && is_mutating {
-            let state = node.textarea_state.as_ref().unwrap();
-            let anchor = state.selection_anchor.unwrap();
-            let focus = state.selection_focus.unwrap();
-            let (new_content, new_row, new_col) =
-                textarea::delete_selection(&node.content, anchor, focus);
-            node.content = new_content;
-            node.cursor_row = new_row;
-            node.cursor_col = new_col;
-            // Re-split lines after selection deletion
-            lines = split_textarea_lines_owned(&node.content);
-            clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+            if let Some(state) = node.textarea_state.as_ref() {
+                if let (Some(anchor), Some(focus)) = (state.selection_anchor, state.selection_focus)
+                {
+                    let (new_content, new_row, new_col) =
+                        textarea::delete_selection(&node.content, anchor, focus);
+                    node.content = new_content;
+                    node.cursor_row = new_row;
+                    node.cursor_col = new_col;
+                    // Re-split lines after selection deletion
+                    lines = split_textarea_lines_owned(&node.content);
+                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
+                    emit_change = true;
+
+                    // For BACKSPACE and DELETE after selection delete, we're done — just consume
+                    if code == key::BACKSPACE || code == key::DELETE {
+                        consumed = true;
+                    }
+                }
+            }
             // Clear selection
-            node.textarea_state.as_mut().unwrap().clear_selection();
-
-            emit_change = true;
-
-            // For BACKSPACE and DELETE after selection delete, we're done — just consume
-            if code == key::BACKSPACE || code == key::DELETE {
-                consumed = true;
+            if let Some(state) = node.textarea_state.as_mut() {
+                state.clear_selection();
             }
         }
 
