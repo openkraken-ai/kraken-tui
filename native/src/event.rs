@@ -326,7 +326,9 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
 
                     emit_change = true;
 
-                    // For BACKSPACE and DELETE after selection delete, we're done — just consume
+                    // BACKSPACE/DELETE: selection delete is the complete action — consume.
+                    // ENTER/character: fall through to insert the key after deletion
+                    // (standard replace-selection behavior).
                     if code == key::BACKSPACE || code == key::DELETE {
                         consumed = true;
                     }
@@ -1729,5 +1731,74 @@ mod tests {
         let event = next_event(&mut ctx).unwrap();
         assert_eq!(event.event_type, TuiEventType::Key as u32);
         assert_eq!(event.data[0], key::ESCAPE);
+    }
+
+    #[test]
+    fn test_textarea_selection_replace_with_char() {
+        // Typing a character with active selection: delete selection, insert char
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Type 'X' — should replace "hello" with "X"
+        handle_textarea_key(&mut ctx, textarea, 0, 'X');
+        assert_eq!(ctx.nodes[&textarea].content, "X world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 1);
+    }
+
+    #[test]
+    fn test_textarea_selection_replace_with_enter() {
+        // Pressing ENTER with active selection: delete selection, insert newline
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Press ENTER — should replace "hello" with newline
+        handle_textarea_key(&mut ctx, textarea, key::ENTER, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, "\n world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 1);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
+    }
+
+    #[test]
+    fn test_textarea_selection_backspace_deletes_only() {
+        // BACKSPACE with active selection: just delete selection, no extra backspace
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            // Select "hello" (cols 0-5)
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        // Press BACKSPACE — should delete "hello" only
+        handle_textarea_key(&mut ctx, textarea, key::BACKSPACE, '\0');
+        assert_eq!(ctx.nodes[&textarea].content, " world");
+        assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
+        assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
     }
 }
