@@ -361,6 +361,10 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
         node.content = text;
         if node.node_type == NodeType::TextArea {
             clamp_textarea_cursor(node);
+            // Clear stale selection — old anchor/focus may be invalid in new content (ADR-T28)
+            if let Some(state) = node.textarea_state.as_mut() {
+                state.clear_selection();
+            }
         } else if node.node_type == NodeType::Input {
             let len = grapheme_count(&node.content) as u32;
             if node.cursor_position > len {
@@ -1363,6 +1367,10 @@ pub extern "C" fn tui_textarea_set_cursor(handle: u32, row: u32, col: u32) -> i3
         node.cursor_row = row;
         node.cursor_col = col;
         clamp_textarea_cursor(node);
+        // Clear stale selection when cursor is moved programmatically (ADR-T28)
+        if let Some(state) = node.textarea_state.as_mut() {
+            state.clear_selection();
+        }
         node.dirty = true;
         Ok(0)
     })
@@ -1571,10 +1579,6 @@ pub extern "C" fn tui_textarea_find_next(
 
         match result {
             Some((row, col)) => {
-                // Move cursor to match start
-                node.cursor_row = row;
-                node.cursor_col = col;
-
                 // Set selection to highlight the match
                 let end = textarea::find_match_end(
                     &node.content,
@@ -1587,6 +1591,10 @@ pub extern "C" fn tui_textarea_find_next(
                 let state = node.textarea_state.as_mut().unwrap();
                 state.selection_anchor = Some((row, col));
                 state.selection_focus = Some(end);
+
+                // Move cursor to match end so next find_next advances past this match
+                node.cursor_row = end.0;
+                node.cursor_col = end.1;
 
                 node.dirty = true;
                 Ok(1)

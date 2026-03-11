@@ -350,27 +350,44 @@ fn render_node(
                 content_w,
                 content_h,
             );
-            let textarea_state = ctx
+            let (
+                ts_cursor_row,
+                ts_cursor_col,
+                ts_view_row,
+                ts_view_col,
+                ts_sel_anchor,
+                ts_sel_focus,
+            ) = ctx
                 .nodes
                 .get(&handle)
                 .map(|n| {
+                    let (sel_a, sel_f) = n
+                        .textarea_state
+                        .as_ref()
+                        .and_then(|s| match (s.selection_anchor, s.selection_focus) {
+                            (Some(a), Some(f)) => Some((Some(a), Some(f))),
+                            _ => None,
+                        })
+                        .unwrap_or((None, None));
                     (
                         n.cursor_row,
                         n.cursor_col,
                         n.textarea_view_row,
                         n.textarea_view_col,
+                        sel_a,
+                        sel_f,
                     )
                 })
-                .unwrap_or((0, 0, 0, 0));
+                .unwrap_or((0, 0, 0, 0, None, None));
 
             render_textarea(
                 ctx,
                 &visual,
-                textarea_state.0,
-                textarea_state.1,
+                ts_cursor_row,
+                ts_cursor_col,
                 wrap_mode,
-                textarea_state.2,
-                textarea_state.3,
+                ts_view_row,
+                ts_view_col,
                 content_x,
                 content_y,
                 content_w,
@@ -380,6 +397,8 @@ fn render_node(
                 attrs,
                 clip,
                 ctx.focused == Some(handle),
+                ts_sel_anchor,
+                ts_sel_focus,
             );
         }
         NodeType::Select => {
@@ -1089,6 +1108,8 @@ fn render_textarea(
     attrs: CellAttrs,
     clip: ClipRect,
     focused: bool,
+    sel_anchor: Option<(u32, u32)>,
+    sel_focus: Option<(u32, u32)>,
 ) {
     if max_w <= 0 || max_h <= 0 {
         return;
@@ -1104,6 +1125,75 @@ fn render_textarea(
         let line = &visual[src_row].text;
         let skip = if wrap_mode != 0 { 0 } else { view_col as i32 };
         draw_text_line_with_offset(ctx, line, x, y + row, skip, max_w, fg, bg, attrs, clip);
+    }
+
+    // Render selection highlight (ADR-T28)
+    if focused {
+        if let (Some(anchor), Some(focus)) = (sel_anchor, sel_focus) {
+            let (sel_start, sel_end) = crate::textarea::normalize_selection(anchor, focus);
+            let inv_fg = if bg != 0 { bg } else { 0x00000000 };
+            let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+            let h_skip = if wrap_mode != 0 { 0 } else { view_col as i32 };
+
+            for screen_row in 0..max_h {
+                let vis_idx = view_row as usize + screen_row as usize;
+                if vis_idx >= visual.len() {
+                    break;
+                }
+                let vline = &visual[vis_idx];
+                let log_row = vline.logical_row as u32;
+
+                // Determine grapheme col range of this visual line that overlaps selection
+                let (line_start, line_end) = (vline.start_col as u32, vline.end_col as u32);
+
+                // Skip visual lines outside selection row range
+                if log_row < sel_start.0 || log_row > sel_end.0 {
+                    continue;
+                }
+
+                // Compute selection column overlap for this logical row
+                let sel_col_start = if log_row == sel_start.0 {
+                    sel_start.1
+                } else {
+                    0
+                };
+                let sel_col_end = if log_row == sel_end.0 {
+                    sel_end.1
+                } else {
+                    // Select to end of logical line (past last grapheme)
+                    u32::MAX
+                };
+
+                // Clamp to this visual line's grapheme range
+                let col_from = sel_col_start.max(line_start);
+                let col_to = sel_col_end.min(line_end);
+                if col_from >= col_to {
+                    continue;
+                }
+
+                // Render inverted cells for the selected grapheme range
+                for gcol in col_from..col_to {
+                    let local_col = (gcol - line_start) as usize;
+                    let disp_x = display_width_of_prefix_graphemes(&vline.text, local_col) - h_skip;
+                    if disp_x < 0 || disp_x >= max_w {
+                        continue;
+                    }
+                    let ch = grapheme_char_at_display_col(&vline.text, disp_x).unwrap_or(' ');
+                    clip_set(
+                        &mut ctx.front_buffer,
+                        x + disp_x,
+                        y + screen_row,
+                        Cell {
+                            ch,
+                            fg: inv_fg,
+                            bg: inv_bg,
+                            attrs: CellAttrs::empty(),
+                        },
+                        clip,
+                    );
+                }
+            }
+        }
     }
 
     if !focused {

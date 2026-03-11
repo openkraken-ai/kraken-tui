@@ -227,28 +227,8 @@ pub(crate) fn find_next(
         return Err("Search pattern is empty".to_string());
     }
 
-    // Start searching from one grapheme after cursor
-    let lines = split_textarea_lines_owned(content);
-    let mut search_row = cursor_row;
-    let mut search_col = cursor_col;
-
-    // Advance by one grapheme to avoid re-matching at current position
-    let line_len = if (search_row as usize) < lines.len() {
-        grapheme_count(&lines[search_row as usize]) as u32
-    } else {
-        0
-    };
-    if search_col < line_len {
-        search_col += 1;
-    } else if (search_row as usize) + 1 < lines.len() {
-        search_row += 1;
-        search_col = 0;
-    } else {
-        // At the very end — no more to search
-        return Ok(None);
-    }
-
-    let search_offset = position_to_byte_offset(content, search_row, search_col);
+    // Search from cursor position (inclusive per TechSpec §4.3.2 / TASK-E3)
+    let search_offset = position_to_byte_offset(content, cursor_row, cursor_col);
     if search_offset >= content.len() {
         return Ok(None);
     }
@@ -397,8 +377,20 @@ mod tests {
     #[test]
     fn test_find_next_literal() {
         let content = "hello world\nhello there";
+        // Inclusive: finds "hello" at cursor position (0,0)
         let result = find_next(content, 0, 0, "hello", true, false).unwrap();
-        assert_eq!(result, Some((1, 0))); // skips first "hello" at cursor
+        assert_eq!(result, Some((0, 0)));
+    }
+
+    #[test]
+    fn test_find_next_repeated() {
+        let content = "hello world\nhello there";
+        // First find at cursor (0,0) → match at (0,0), cursor moves to end (0,5)
+        let first = find_next(content, 0, 0, "hello", true, false).unwrap();
+        assert_eq!(first, Some((0, 0)));
+        // Simulate cursor at match end (0,5) → next find finds second "hello" at (1,0)
+        let second = find_next(content, 0, 5, "hello", true, false).unwrap();
+        assert_eq!(second, Some((1, 0)));
     }
 
     #[test]
@@ -457,12 +449,15 @@ mod tests {
     #[test]
     fn test_find_next_utf8_content() {
         let content = "你好世界\n再见世界";
-        // Cursor at (0,0), find_next searches from cursor+1 → finds "世界" at (0,2)
+        // Inclusive: cursor at (0,0), finds "世界" at (0,2)
         let result = find_next(content, 0, 0, "世界", true, false).unwrap();
         assert_eq!(result, Some((0, 2)));
-        // From (0,2) it should find the next "世界" on line 2
+        // Cursor at match start (0,2) → inclusive finds same match
         let result2 = find_next(content, 0, 2, "世界", true, false).unwrap();
-        assert_eq!(result2, Some((1, 2)));
+        assert_eq!(result2, Some((0, 2)));
+        // Cursor at match end (0,4) → finds next "世界" on line 2
+        let result3 = find_next(content, 0, 4, "世界", true, false).unwrap();
+        assert_eq!(result3, Some((1, 2)));
     }
 
     #[test]

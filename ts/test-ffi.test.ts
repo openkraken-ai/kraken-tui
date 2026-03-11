@@ -901,16 +901,41 @@ describe("FFI integration", () => {
 			expect(setContent(h, "hello world hello")).toBe(0);
 			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
 
-			// Find "hello" — should skip first occurrence (at cursor) and find second
+			// Find "hello" — inclusive search finds first occurrence at cursor
 			const result = findNext(h, "hello");
 			expect(result).toBe(1);
 
-			// Cursor should be at second "hello" position (0, 12)
+			// Cursor moves to match end (0, 5)
 			const row = new Uint32Array(1);
 			const col = new Uint32Array(1);
 			ffi.tui_textarea_get_cursor(h, row, col);
 			expect(row[0]).toBe(0);
-			expect(col[0]).toBe(12);
+			expect(col[0]).toBe(5);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next repeated advances through matches", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world hello")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// First find: "hello" at (0,0), cursor moves to end (0,5)
+			expect(findNext(h, "hello")).toBe(1);
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(5);
+
+			// Second find: "hello" at (0,12), cursor moves to end (0,17)
+			expect(findNext(h, "hello")).toBe(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(17);
+
+			// Third find: no more matches
+			expect(findNext(h, "hello")).toBe(0);
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
@@ -935,11 +960,12 @@ describe("FFI integration", () => {
 			const result = findNext(h, "world", 0, 0);
 			expect(result).toBe(1);
 
+			// Cursor at match end (0, 11)
 			const row = new Uint32Array(1);
 			const col = new Uint32Array(1);
 			ffi.tui_textarea_get_cursor(h, row, col);
 			expect(row[0]).toBe(0);
-			expect(col[0]).toBe(6);
+			expect(col[0]).toBe(11);
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
@@ -952,11 +978,12 @@ describe("FFI integration", () => {
 			const result = findNext(h, "\\d+", 1, 1);
 			expect(result).toBe(1);
 
+			// Cursor at match end: "123" starts at col 4, ends at col 7
 			const row = new Uint32Array(1);
 			const col = new Uint32Array(1);
 			ffi.tui_textarea_get_cursor(h, row, col);
 			expect(row[0]).toBe(0);
-			expect(col[0]).toBe(4);
+			expect(col[0]).toBe(7);
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
@@ -1008,7 +1035,7 @@ describe("FFI integration", () => {
 			expect(setContent(h, "\u{4F60}\u{597D}\u{4E16}\u{754C}\n\u{518D}\u{89C1}\u{4E16}\u{754C}")).toBe(0);
 			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
 
-			// First find: from (0,0)+1 finds "世界" at (0,2)
+			// First find: inclusive from (0,0), "世界" at (0,2), cursor to match end (0,4)
 			let result = findNext(h, "\u{4E16}\u{754C}");
 			expect(result).toBe(1);
 
@@ -1016,13 +1043,63 @@ describe("FFI integration", () => {
 			const col = new Uint32Array(1);
 			ffi.tui_textarea_get_cursor(h, row, col);
 			expect(row[0]).toBe(0);
-			expect(col[0]).toBe(2);
+			expect(col[0]).toBe(4);
 
-			// Second find: from (0,2)+1 finds "世界" at (1,2)
+			// Second find: from (0,4) finds "世界" at (1,2), cursor to match end (1,4)
 			result = findNext(h, "\u{4E16}\u{754C}");
 			ffi.tui_textarea_get_cursor(h, row, col);
 			expect(row[0]).toBe(1);
-			expect(col[0]).toBe(2);
+			expect(col[0]).toBe(4);
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("setCursor clears stale selection", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+
+			// Set a selection
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 5)).toBe(0);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Move cursor — should clear selection
+			expect(ffi.tui_textarea_set_cursor(h, 0, 8)).toBe(0);
+			expect(getSelectedText(h)).toBe("");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("setContent clears stale selection", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+
+			// Set a selection
+			expect(ffi.tui_textarea_set_selection(h, 0, 0, 0, 5)).toBe(0);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Replace content — should clear selection
+			expect(setContent(h, "new content")).toBe(0);
+			expect(getSelectedText(h)).toBe("");
+
+			expect(ffi.tui_destroy_node(h)).toBe(0);
+		});
+
+		test("find_next at cursor position finds match inclusively", () => {
+			const h = ffi.tui_create_node(5);
+			expect(setContent(h, "hello world")).toBe(0);
+			expect(ffi.tui_textarea_set_cursor(h, 0, 0)).toBe(0);
+
+			// "hello" starts right at cursor — inclusive search should find it
+			const result = findNext(h, "hello");
+			expect(result).toBe(1);
+			expect(getSelectedText(h)).toBe("hello");
+
+			// Cursor should be at match end (0, 5)
+			const row = new Uint32Array(1);
+			const col = new Uint32Array(1);
+			ffi.tui_textarea_get_cursor(h, row, col);
+			expect(row[0]).toBe(0);
+			expect(col[0]).toBe(5);
 
 			expect(ffi.tui_destroy_node(h)).toBe(0);
 		});
