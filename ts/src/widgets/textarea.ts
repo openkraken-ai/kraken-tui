@@ -133,12 +133,16 @@ export class TextArea extends Widget {
 		return result === 1;
 	}
 
-	undo(): void {
-		checkResult(ffi.tui_textarea_undo(this.handle), "TextArea.undo");
+	undo(): boolean {
+		const result = ffi.tui_textarea_undo(this.handle);
+		checkResult(result, "TextArea.undo");
+		return result === 1;
 	}
 
-	redo(): void {
-		checkResult(ffi.tui_textarea_redo(this.handle), "TextArea.redo");
+	redo(): boolean {
+		const result = ffi.tui_textarea_redo(this.handle);
+		checkResult(result, "TextArea.redo");
+		return result === 1;
 	}
 
 	/** Set the maximum number of undo entries. Pass 0 for unlimited. */

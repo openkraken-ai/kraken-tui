@@ -294,11 +294,10 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
         let mut lines = split_textarea_lines_owned(&node.content);
         clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
 
-        // Check if we have an active selection
-        let has_selection = node
-            .textarea_state
-            .as_ref()
-            .is_some_and(|s| s.selection_anchor.is_some() && s.selection_focus.is_some());
+        // Check if we have a non-empty selection (anchor != focus)
+        let has_selection = node.textarea_state.as_ref().is_some_and(
+            |s| matches!((s.selection_anchor, s.selection_focus), (Some(a), Some(f)) if a != f),
+        );
 
         // For mutating keys (ENTER, BACKSPACE, DELETE, char input), if selection
         // is active, delete the selected text first and collapse cursor.

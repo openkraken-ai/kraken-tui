@@ -1457,7 +1457,10 @@ pub extern "C" fn tui_textarea_set_selection(
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        let state = node.textarea_state.as_mut().unwrap();
+        let state = node
+            .textarea_state
+            .as_mut()
+            .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
 
         // Clamp to content bounds
         let lines = split_textarea_lines_owned(&node.content);
@@ -1484,7 +1487,10 @@ pub extern "C" fn tui_textarea_clear_selection(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        node.textarea_state.as_mut().unwrap().clear_selection();
+        node.textarea_state
+            .as_mut()
+            .ok_or_else(|| format!("Handle {handle} has no textarea state"))?
+            .clear_selection();
         node.dirty = true;
         Ok(0)
     })
@@ -1499,7 +1505,10 @@ pub extern "C" fn tui_textarea_get_selected_text_len(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        let state = node.textarea_state.as_ref().unwrap();
+        let state = node
+            .textarea_state
+            .as_ref()
+            .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
         match (state.selection_anchor, state.selection_focus) {
             (Some(anchor), Some(focus)) => {
                 let text = textarea::get_selected_text(&node.content, anchor, focus);
@@ -1526,7 +1535,10 @@ pub extern "C" fn tui_textarea_get_selected_text(
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        let state = node.textarea_state.as_ref().unwrap();
+        let state = node
+            .textarea_state
+            .as_ref()
+            .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
         match (state.selection_anchor, state.selection_focus) {
             (Some(anchor), Some(focus)) => {
                 let text = textarea::get_selected_text(&node.content, anchor, focus);
@@ -1588,7 +1600,10 @@ pub extern "C" fn tui_textarea_find_next(
                     case_sensitive != 0,
                     regex != 0,
                 );
-                let state = node.textarea_state.as_mut().unwrap();
+                let state = node
+                    .textarea_state
+                    .as_mut()
+                    .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
                 state.selection_anchor = Some((row, col));
                 state.selection_focus = Some(end);
 
@@ -1613,10 +1628,12 @@ pub extern "C" fn tui_textarea_undo(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        textarea::undo(node)?;
+        let performed = textarea::undo(node)?;
         clamp_textarea_cursor(node);
-        node.dirty = true;
-        Ok(0)
+        if performed {
+            node.dirty = true;
+        }
+        Ok(if performed { 1 } else { 0 })
     })
 }
 
@@ -1629,10 +1646,12 @@ pub extern "C" fn tui_textarea_redo(handle: u32) -> i32 {
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        textarea::redo(node)?;
+        let performed = textarea::redo(node)?;
         clamp_textarea_cursor(node);
-        node.dirty = true;
-        Ok(0)
+        if performed {
+            node.dirty = true;
+        }
+        Ok(if performed { 1 } else { 0 })
     })
 }
 
@@ -1646,7 +1665,10 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
         if node.node_type != NodeType::TextArea {
             return Err(format!("Handle {handle} is not a TextArea widget"));
         }
-        let state = node.textarea_state.as_mut().unwrap();
+        let state = node
+            .textarea_state
+            .as_mut()
+            .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
         state.history_limit = limit;
         // Truncate existing history if needed (limit 0 = unlimited)
         if limit > 0 {
