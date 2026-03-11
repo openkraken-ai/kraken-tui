@@ -1615,9 +1615,30 @@ pub extern "C" fn tui_textarea_find_next(
                 state.selection_anchor = Some((row, col));
                 state.selection_focus = Some(end);
 
-                // Move cursor to match end so next find_next advances past this match
-                node.cursor_row = end.0;
-                node.cursor_col = end.1;
+                // Move cursor past match so next find_next advances.
+                // For zero-length matches (e.g. regex `^`), advance one grapheme
+                // to prevent infinite re-matching.
+                if end == (row, col) {
+                    let lines = split_textarea_lines_owned(&node.content);
+                    let line_len = lines
+                        .get(row as usize)
+                        .map(|l| grapheme_count(l) as u32)
+                        .unwrap_or(0);
+                    if col < line_len {
+                        node.cursor_row = row;
+                        node.cursor_col = col + 1;
+                    } else if (row as usize) + 1 < lines.len() {
+                        node.cursor_row = row + 1;
+                        node.cursor_col = 0;
+                    } else {
+                        // At very end of content — stay put
+                        node.cursor_row = row;
+                        node.cursor_col = col;
+                    }
+                } else {
+                    node.cursor_row = end.0;
+                    node.cursor_col = end.1;
+                }
 
                 node.dirty = true;
                 Ok(1)
