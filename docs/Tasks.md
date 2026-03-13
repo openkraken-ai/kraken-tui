@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 5.0
-**Status**: v3 Planned
+**Status**: v3 In Progress (Epics A–F Done, G–H Remaining)
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -638,32 +638,32 @@ And the final report records go or no-go with supporting metrics
 
 | ID       | Epic | Type    | SP | Dependencies | Status |
 | -------- | ---- | ------- | -- | ------------ | ------ |
-| TASK-A0  | A    | Spike   | 2  | None         | Planned |
-| TASK-A1  | A    | Feature | 5  | A0           | Planned |
-| TASK-A2  | A    | Feature | 5  | A1           | Planned |
-| TASK-A3  | A    | Chore   | 3  | A2           | Planned |
-| TASK-B0  | B    | Spike   | 2  | A3           | Planned |
-| TASK-B1  | B    | Feature | 5  | B0           | Planned |
-| TASK-B2  | B    | Feature | 5  | B1           | Planned |
-| TASK-B3  | B    | Chore   | 3  | B2           | Planned |
-| TASK-C1  | C    | Feature | 5  | B3           | Planned |
-| TASK-C2  | C    | Feature | 3  | C1           | Planned |
-| TASK-C3  | C    | Chore   | 2  | C2           | Planned |
-| TASK-D1  | D    | Feature | 3  | C3           | Planned |
-| TASK-D2  | D    | Feature | 5  | D1           | Planned |
-| TASK-D3  | D    | Feature | 5  | D2           | Planned |
-| TASK-D4  | D    | Feature | 5  | D3           | Planned |
-| TASK-D5  | D    | Feature | 3  | D4           | Planned |
-| TASK-D6  | D    | Chore   | 3  | D5           | Planned |
-| TASK-E1  | E    | Feature | 5  | D6           | Planned |
-| TASK-E2  | E    | Feature | 5  | E1           | Planned |
-| TASK-E3  | E    | Feature | 3  | E2           | Planned |
-| TASK-E4  | E    | Chore   | 3  | E3           | Planned |
-| TASK-E5  | E    | Feature | 2  | E4           | Planned |
-| TASK-F0  | F    | Spike   | 2  | E5           | Planned |
-| TASK-F1  | F    | Feature | 5  | F0           | Planned |
-| TASK-F2  | F    | Feature | 5  | F1           | Planned |
-| TASK-F3  | F    | Chore   | 3  | F2           | Planned |
+| TASK-A0  | A    | Spike   | 2  | None         | Done    |
+| TASK-A1  | A    | Feature | 5  | A0           | Done    |
+| TASK-A2  | A    | Feature | 5  | A1           | Done    |
+| TASK-A3  | A    | Chore   | 3  | A2           | Done    |
+| TASK-B0  | B    | Spike   | 2  | A3           | Done    |
+| TASK-B1  | B    | Feature | 5  | B0           | Done    |
+| TASK-B2  | B    | Feature | 5  | B1           | Done    |
+| TASK-B3  | B    | Chore   | 3  | B2           | Done    |
+| TASK-C1  | C    | Feature | 5  | B3           | Done    |
+| TASK-C2  | C    | Feature | 3  | C1           | Done    |
+| TASK-C3  | C    | Chore   | 2  | C2           | Done    |
+| TASK-D1  | D    | Feature | 3  | C3           | Done    |
+| TASK-D2  | D    | Feature | 5  | D1           | Done    |
+| TASK-D3  | D    | Feature | 5  | D2           | Done    |
+| TASK-D4  | D    | Feature | 5  | D3           | Done    |
+| TASK-D5  | D    | Feature | 3  | D4           | Done    |
+| TASK-D6  | D    | Chore   | 3  | D5           | Done    |
+| TASK-E1  | E    | Feature | 5  | D6           | Done    |
+| TASK-E2  | E    | Feature | 5  | E1           | Done    |
+| TASK-E3  | E    | Feature | 3  | E2           | Done    |
+| TASK-E4  | E    | Chore   | 3  | E3           | Done    |
+| TASK-E5  | E    | Feature | 2  | E4           | Done    |
+| TASK-F0  | F    | Spike   | 2  | E5           | Done    |
+| TASK-F1  | F    | Feature | 5  | F0           | Done    |
+| TASK-F2  | F    | Feature | 5  | F1           | Done    |
+| TASK-F3  | F    | Chore   | 3  | F2           | Done    |
 | TASK-G1  | G    | Feature | 5  | F3           | Planned |
 | TASK-G2  | G    | Feature | 5  | G1           | Planned |
 | TASK-G3  | G    | Chore   | 3  | G2           | Planned |
