@@ -54,10 +54,10 @@ describe("resolveLibraryPath", () => {
 	});
 
 	test("respects KRAKEN_LIB_PATH env override", () => {
-		// Point to the actual source build so it resolves
+		// Point to the actual source build so it resolves (platform-aware)
 		const sourceBuild = resolve(
 			import.meta.dir,
-			"../native/target/release/libkraken_tui.so",
+			`../native/target/release/${getLibraryName(process.platform)}`,
 		);
 		process.env.KRAKEN_LIB_PATH = sourceBuild;
 		const libPath = resolveLibraryPath();
