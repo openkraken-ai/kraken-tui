@@ -1,0 +1,188 @@
+name: Release — Build and Publish Prebuilt Artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+            arch: x64
+            ext: so
+            lib_prefix: lib
+            strip: strip
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            ext: so
+            lib_prefix: lib
+            strip: aarch64-linux-gnu-strip
+            cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            platform: darwin
+            arch: arm64
+            ext: dylib
+            lib_prefix: lib
+            strip: strip
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            platform: darwin
+            arch: x64
+            ext: dylib
+            lib_prefix: lib
+            strip: strip
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            platform: win32
+            arch: x64
+            ext: dll
+            lib_prefix: ""
+            strip: ""
+
+    runs-on: ${{ matrix.os }}
+    name: Build ${{ matrix.platform }}-${{ matrix.arch }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (linux-arm64)
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Configure cross-linker (linux-arm64)
+        if: matrix.cross
+        run: |
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - name: Build native library
+        run: cargo build --manifest-path native/Cargo.toml --release --target ${{ matrix.target }}
+
+      - name: Determine version tag
+        id: version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare artifact (Unix)
+        if: matrix.platform != 'win32'
+        shell: bash
+        run: |
+          SRC="native/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}kraken_tui.${{ matrix.ext }}"
+          ARTIFACT="kraken-tui-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}"
+
+          cp "$SRC" "$ARTIFACT"
+
+          # Strip debug symbols to reduce artifact size
+          if [ -n "${{ matrix.strip }}" ]; then
+            ${{ matrix.strip }} "$ARTIFACT" 2>/dev/null || true
+          fi
+
+          # Generate SHA-256 checksum
+          shasum -a 256 "$ARTIFACT" > "${ARTIFACT}.sha256"
+
+          echo "artifact=${ARTIFACT}" >> "$GITHUB_ENV"
+
+      - name: Prepare artifact (Windows)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $src = "native/target/${{ matrix.target }}/release/kraken_tui.${{ matrix.ext }}"
+          $artifact = "kraken-tui-${{ steps.version.outputs.tag }}-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.ext }}"
+
+          Copy-Item $src $artifact
+
+          # Generate SHA-256 checksum
+          $hash = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLower()
+          "$hash  $artifact" | Out-File -Encoding ascii "${artifact}.sha256"
+
+          echo "artifact=${artifact}" >> $env:GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kraken-tui-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            kraken-tui-*.${{ matrix.ext }}
+            kraken-tui-*.${{ matrix.ext }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Determine version tag
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "tag=$TAG_INPUT" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Kraken TUI ${{ steps.version.outputs.tag }}
+          body: |
+            ## Prebuilt Artifacts
+
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | Linux | x64 | `kraken-tui-${{ steps.version.outputs.tag }}-linux-x64.so` |
+            | Linux | arm64 | `kraken-tui-${{ steps.version.outputs.tag }}-linux-arm64.so` |
+            | macOS | arm64 | `kraken-tui-${{ steps.version.outputs.tag }}-darwin-arm64.dylib` |
+            | macOS | x64 | `kraken-tui-${{ steps.version.outputs.tag }}-darwin-x64.dylib` |
+            | Windows | x64 | `kraken-tui-${{ steps.version.outputs.tag }}-win32-x64.dll` |
+
+            Each artifact has a `.sha256` checksum sidecar for integrity verification.
+          files: |
+            kraken-tui-*
+          draft: false
+          prerelease: false

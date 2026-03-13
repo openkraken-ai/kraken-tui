@@ -6,21 +6,11 @@
  */
 
 import { dlopen, ptr, CString, type FFIType } from "bun:ffi";
-import { resolve } from "path";
+import { resolveLibraryPath } from "./resolver";
 
-// Resolve the shared library path relative to this file
-const LIB_NAME =
-	process.platform === "darwin"
-		? "libkraken_tui.dylib"
-		: process.platform === "win32"
-			? "kraken_tui.dll"
-			: "libkraken_tui.so";
-
-const LIB_PATH = resolve(
-	import.meta.dir,
-	"../../native/target/release",
-	LIB_NAME,
-);
+// Resolve the native library using the artifact resolver (ADR-T29).
+// Search order: KRAKEN_LIB_PATH env → prebuilds/ → source build → diagnostic error.
+const LIB_PATH = resolveLibraryPath();
 
 const symbols = {
 	// Lifecycle
