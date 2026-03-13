@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 5.0
-**Status**: v3 In Progress (Epics A–F Done, G–H Remaining)
+**Status**: v3 In Progress (Epics A–G Done, H Conditional/Remaining)
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -664,10 +664,10 @@ And the final report records go or no-go with supporting metrics
 | TASK-F1  | F    | Feature | 5  | F0           | Done    |
 | TASK-F2  | F    | Feature | 5  | F1           | Done    |
 | TASK-F3  | F    | Chore   | 3  | F2           | Done    |
-| TASK-G1  | G    | Feature | 5  | F3           | Planned |
-| TASK-G2  | G    | Feature | 5  | G1           | Planned |
-| TASK-G3  | G    | Chore   | 3  | G2           | Planned |
-| TASK-G4  | G    | Chore   | 2  | G3           | Planned |
+| TASK-G1  | G    | Feature | 5  | F3           | Done    |
+| TASK-G2  | G    | Feature | 5  | G1           | Done    |
+| TASK-G3  | G    | Chore   | 3  | G2           | Done    |
+| TASK-G4  | G    | Chore   | 2  | G3           | Done    |
 | TASK-H0  | H    | Spike   | 2  | G2           | Conditional |
 | TASK-H1  | H    | Feature | 5  | H0           | Conditional |
 | TASK-H2  | H    | Chore   | 3  | H1           | Conditional |
