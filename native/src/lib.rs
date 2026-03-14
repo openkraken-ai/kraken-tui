@@ -2232,6 +2232,50 @@ pub extern "C" fn tui_scroll_by(handle: u32, dx: i32, dy: i32) -> i32 {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_show_scrollbar(handle: u32, enabled: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.show_scrollbar = enabled != 0;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_scrollbar_side(handle: u32, side: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        if side > 1 {
+            return Err(format!(
+                "Invalid scrollbar side {side}: must be 0 (right) or 1 (left)"
+            ));
+        }
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.scrollbar_side = side;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_scrollbar_width(handle: u32, width: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        if !(1..=3).contains(&width) {
+            return Err(format!("Invalid scrollbar width {width}: must be 1..=3"));
+        }
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.scrollbar_width = width;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
 // ============================================================================
 // 4.11 Input & Rendering
 // ============================================================================
@@ -2799,5 +2843,93 @@ mod tests {
             // Focus the input to show cursor
             tui_focus(input);
         });
+    }
+
+    #[test]
+    fn test_scroll_set_show_scrollbar() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Default is disabled
+        {
+            let ctx = context_read().unwrap();
+            assert!(!ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Enable
+        assert_eq!(tui_scroll_set_show_scrollbar(sb, 1), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert!(ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Disable
+        assert_eq!(tui_scroll_set_show_scrollbar(sb, 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert!(!ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Invalid handle
+        assert_eq!(tui_scroll_set_show_scrollbar(0, 1), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_scroll_set_scrollbar_side() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Set to left (1)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 1), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_side, 1);
+        }
+
+        // Set to right (0)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_side, 0);
+        }
+
+        // Invalid side (2)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 2), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_scroll_set_scrollbar_width() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Valid widths 1..=3
+        for w in 1..=3u8 {
+            assert_eq!(tui_scroll_set_scrollbar_width(sb, w), 0);
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_width, w);
+        }
+
+        // Invalid: 0
+        assert_eq!(tui_scroll_set_scrollbar_width(sb, 0), -1);
+        // Invalid: 4
+        assert_eq!(tui_scroll_set_scrollbar_width(sb, 4), -1);
+
+        tui_shutdown();
     }
 }

@@ -722,7 +722,11 @@ pub struct TuiNode {
     pub visible: bool,
     pub scroll_x: i32,
     pub scroll_y: i32,
+    pub show_scrollbar: bool,
+    pub scrollbar_side: u8,  // 0=right, 1=left
+    pub scrollbar_width: u8, // valid 1..=3
     pub render_offset: (f32, f32),
+    pub z_index: i32,
     // Input widget state
     pub cursor_position: u32,
     pub max_length: u32,
@@ -774,7 +778,11 @@ impl TuiNode {
             visible: true,
             scroll_x: 0,
             scroll_y: 0,
+            show_scrollbar: false,
+            scrollbar_side: 0,
+            scrollbar_width: 1,
             render_offset: (0.0, 0.0),
+            z_index: 0,
             cursor_position: 0,
             max_length: 0,
             mask_char: 0,

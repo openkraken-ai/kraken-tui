@@ -217,4 +217,37 @@ mod tests {
         let (max_x, max_y) = compute_max_scroll(&ctx, sb);
         assert_eq!((max_x, max_y), (0, 0));
     }
+
+    #[test]
+    fn test_scrollbar_fields_defaults() {
+        let mut ctx = test_ctx();
+        let sb = tree::create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+        let node = ctx.nodes.get(&sb).unwrap();
+        assert!(!node.show_scrollbar);
+        assert_eq!(node.scrollbar_side, 0);
+        assert_eq!(node.scrollbar_width, 1);
+    }
+
+    #[test]
+    fn test_scrollbar_fields_set() {
+        let mut ctx = test_ctx();
+        let sb = tree::create_node(&mut ctx, NodeType::ScrollBox).unwrap();
+
+        let node = ctx.nodes.get_mut(&sb).unwrap();
+        node.show_scrollbar = true;
+        node.scrollbar_side = 1;
+        node.scrollbar_width = 3;
+
+        let node = ctx.nodes.get(&sb).unwrap();
+        assert!(node.show_scrollbar);
+        assert_eq!(node.scrollbar_side, 1);
+        assert_eq!(node.scrollbar_width, 3);
+    }
+
+    #[test]
+    fn test_z_index_default() {
+        let mut ctx = test_ctx();
+        let b = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert_eq!(ctx.nodes.get(&b).unwrap().z_index, 0);
+    }
 }
