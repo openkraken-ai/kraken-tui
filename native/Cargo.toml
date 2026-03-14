@@ -6,6 +6,10 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+threaded-render = []
+
 [dependencies]
 taffy = "0.9"
 crossterm = "0.29"
@@ -25,4 +29,8 @@ harness = false
 
 [[bench]]
 name = "writer_bench"
+harness = false
+
+[[bench]]
+name = "threaded_render_bench"
 harness = false

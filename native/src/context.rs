@@ -221,6 +221,19 @@ fn clear_owner_thread() -> Result<(), String> {
     Ok(())
 }
 
+/// Shared mutex guard for tests that use the global context singleton.
+/// All test modules must acquire this before calling init_context / destroy_context
+/// to prevent races from `cargo test`'s parallel test runner.
+#[cfg(test)]
+pub fn ffi_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 pub struct ContextReadGuard<'a> {
     guard: RwLockReadGuard<'a, Option<TuiContext>>,
 }

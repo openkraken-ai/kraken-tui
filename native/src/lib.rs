@@ -31,6 +31,8 @@ pub mod text_cache;
 mod text_utils;
 mod textarea;
 mod theme;
+#[cfg(feature = "threaded-render")]
+mod threaded_render;
 mod tree;
 pub mod types;
 pub mod writer;
@@ -246,6 +248,18 @@ pub extern "C" fn tui_get_visible(handle: u32) -> i32 {
         ctx.validate_handle(handle)?;
         let node = ctx.nodes.get(&handle).unwrap();
         Ok(if node.visible { 1 } else { 0 })
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_z_index(handle: u32, z_index: i32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.z_index = z_index;
+        node.dirty = true;
+        Ok(0)
     })
 }
 
@@ -2230,6 +2244,50 @@ pub extern "C" fn tui_scroll_by(handle: u32, dx: i32, dy: i32) -> i32 {
     })
 }
 
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_show_scrollbar(handle: u32, enabled: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.show_scrollbar = enabled != 0;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_scrollbar_side(handle: u32, side: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        if side > 1 {
+            return Err(format!(
+                "Invalid scrollbar side {side}: must be 0 (right) or 1 (left)"
+            ));
+        }
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.scrollbar_side = side;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_scroll_set_scrollbar_width(handle: u32, width: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        if !(1..=3).contains(&width) {
+            return Err(format!("Invalid scrollbar width {width}: must be 1..=3"));
+        }
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.scrollbar_width = width;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
 // ============================================================================
 // 4.11 Input & Rendering
 // ============================================================================
@@ -2430,18 +2488,46 @@ pub extern "C" fn tui_free_string(_ptr: *const u8) {
     // allocates strings that the host must free.
 }
 
+// ============================================================================
+// 4.19 Threaded Render Experiment (ADR-T31, TASK-H1)
+// ============================================================================
+
+#[cfg(feature = "threaded-render")]
+#[no_mangle]
+pub extern "C" fn tui_threaded_render_start() -> i32 {
+    ffi_wrap(|| {
+        // This is an experimental entry point. In a full implementation,
+        // it would spawn the background render thread and switch `tui_render()`
+        // to snapshot-dispatch mode. For the prototype, we validate that the
+        // threaded_render module compiles and the snapshot protocol works.
+        let mut ctx = context_write()?;
+        let snapshot = threaded_render::create_snapshot(&mut ctx)?;
+        ctx.debug_log(&format!(
+            "threaded_render: snapshot created with {} nodes, root={:?}",
+            snapshot.nodes.len(),
+            snapshot.root,
+        ));
+        Ok(0)
+    })
+}
+
+#[cfg(feature = "threaded-render")]
+#[no_mangle]
+pub extern "C" fn tui_threaded_render_stop() -> i32 {
+    ffi_wrap(|| {
+        // In the prototype, this is a no-op that confirms the FFI symbol exists
+        // and the rollback path is wired. A full implementation would join the
+        // render thread and switch back to synchronous mode.
+        let ctx = context_read()?;
+        ctx.debug_log("threaded_render: stop (synchronous mode restored)");
+        Ok(0)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn ffi_test_guard() -> MutexGuard<'static, ()> {
-        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
+    use crate::context::ffi_test_guard;
 
     #[test]
     fn test_get_last_error_snapshot_round_trip() {
@@ -2761,5 +2847,128 @@ mod tests {
             // Focus the input to show cursor
             tui_focus(input);
         });
+    }
+
+    #[test]
+    fn test_scroll_set_show_scrollbar() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Default is disabled
+        {
+            let ctx = context_read().unwrap();
+            assert!(!ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Enable
+        assert_eq!(tui_scroll_set_show_scrollbar(sb, 1), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert!(ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Disable
+        assert_eq!(tui_scroll_set_show_scrollbar(sb, 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert!(!ctx.nodes.get(&sb).unwrap().show_scrollbar);
+        }
+
+        // Invalid handle
+        assert_eq!(tui_scroll_set_show_scrollbar(0, 1), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_scroll_set_scrollbar_side() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Set to left (1)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 1), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_side, 1);
+        }
+
+        // Set to right (0)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 0), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_side, 0);
+        }
+
+        // Invalid side (2)
+        assert_eq!(tui_scroll_set_scrollbar_side(sb, 2), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_scroll_set_scrollbar_width() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let sb = tui_create_node(NodeType::ScrollBox as u8);
+        assert!(sb > 0);
+
+        // Valid widths 1..=3
+        for w in 1..=3u8 {
+            assert_eq!(tui_scroll_set_scrollbar_width(sb, w), 0);
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&sb).unwrap().scrollbar_width, w);
+        }
+
+        // Invalid: 0
+        assert_eq!(tui_scroll_set_scrollbar_width(sb, 0), -1);
+        // Invalid: 4
+        assert_eq!(tui_scroll_set_scrollbar_width(sb, 4), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_set_z_index() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Box as u8);
+        assert!(handle > 0);
+
+        // Default is 0
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, 0);
+        }
+
+        // Set positive
+        assert_eq!(tui_set_z_index(handle, 10), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, 10);
+        }
+
+        // Set negative
+        assert_eq!(tui_set_z_index(handle, -5), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, -5);
+        }
+
+        // Invalid handle
+        assert_eq!(tui_set_z_index(0, 1), -1);
+
+        tui_shutdown();
     }
 }
