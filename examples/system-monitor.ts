@@ -1097,7 +1097,7 @@ const loop = createLoop({
 	onTick() {
 		tickCounter++;
 		// Update every ~1 second (10 ticks at 10fps)
-		if (tickCounter % 60 === 0) {
+		if (tickCounter % 2 === 0) {
 			updateData();
 		}
 	},
