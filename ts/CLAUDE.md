@@ -10,21 +10,22 @@ Thin ergonomic wrapper over the Native Core via `bun:ffi`. Zero business logic �
 # All TS commands require a release build of the native core first:
 cargo build --manifest-path native/Cargo.toml --release
 
-# FFI integration tests
-bun test ts/test-ffi.test.ts
+# Install dependencies (required once after clone)
+cd ts && bun install
 
-# JSX reconciler tests (v2)
-bun test ts/test-jsx.test.ts
+# Tests
+bun test ts/test-ffi.test.ts           # FFI integration (160 tests)
+bun test ts/test-jsx.test.ts           # JSX reconciler (49 tests)
 
-# FFI benchmarks
-bun run ts/bench-ffi.ts
+# Benchmarks and quality
+bun run ts/bench-ffi.ts                # FFI benchmarks
+bun run ts/check-bundle.ts             # Bundle budget (<50KB)
 
-# Bundle budget check
-bun run ts/check-bundle.ts
-
-# Interactive demos
-bun run examples/demo.ts           # Imperative API
-bun run examples/migration-jsx.tsx  # JSX reconciler (v2)
+# Examples
+bun run examples/demo.ts               # Imperative API
+bun run examples/migration-jsx.tsx      # JSX reconciler
+bun run examples/system-monitor.ts      # Full dashboard showcase
+bun run examples/accessibility-demo.tsx  # Accessibility features
 ```
 
 ---
@@ -33,101 +34,66 @@ bun run examples/migration-jsx.tsx  # JSX reconciler (v2)
 
 | File | Responsibility |
 |------|----------------|
-| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so` from `../native/target/release/`. Symbol definitions for all 97 FFI functions. |
-| `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes, `#[repr(C)]`). Manual byte layout — no external FFI library (ADR-T06). |
-| `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`. Maintains `id → handle` map for developer-assigned IDs. |
-| `widget.ts` | Base `Widget` class — layout/style property setters, child management. Holds `handle: number`. v1: `animate()`, `cancelAnimation()`, primitive helpers. |
-| `widgets/box.ts` | Box widget (container, flex layout) |
-| `widgets/text.ts` | Text widget (content display, markdown, syntax highlighting) |
-| `widgets/input.ts` | Input widget (single-line text entry, cursor, password masking) |
-| `widgets/select.ts` | Select widget (option list, arrow key navigation, CRUD options). Fixed 256-byte buffer for `tui_select_get_option`. |
-| `widgets/scrollbox.ts` | ScrollBox widget (scrollable container, single child) |
-| `widgets/textarea.ts` | TextArea widget (multi-line text editing, 2D cursor, wrap mode) |
-| `events.ts` | Event types, drain loop (`while tui_next_event()` returns 1), dispatch. |
-| `style.ts` | Color parsing (`"#FF0000"` → `0x01FF0000`, `"red"` → named lookup, `196` → `0x020000C4`). Dimension parsing, flexbox enum mapping. |
-| `theme.ts` | `Theme` class. `new Theme()` for custom themes. Static constants `Theme.DARK` (handle 1), `Theme.LIGHT` (handle 2). Per-NodeType setters (`setTypeColor`, `setTypeFlag`, etc.). |
-| `animation-constants.ts` | Animation property and easing enum constants for the TS API. |
-| `errors.ts` | `KrakenError` class, `checkResult()` — translates FFI error codes to typed exceptions. |
+| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so`. Symbol definitions for all 142 FFI functions. |
+| `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes). Manual byte layout (ADR-T06). |
+| `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`, `run()`. |
+| `widget.ts` | Base `Widget` class — layout/style setters, child management, `animate()`, `destroySubtree()`, accessibility. |
+| `widgets/box.ts` | Box (container, flex layout) |
+| `widgets/text.ts` | Text (plain, markdown, syntax highlighting) |
+| `widgets/input.ts` | Input (single-line, cursor, password masking) |
+| `widgets/select.ts` | Select (option list, arrow nav, CRUD) |
+| `widgets/scrollbox.ts` | ScrollBox (scrollable container) |
+| `widgets/textarea.ts` | TextArea (multi-line editing, selection, undo/redo, find) |
+| `widgets/table.ts` | Table (columns, rows, cells, selection, header) |
+| `widgets/list.ts` | List (items, selection) |
+| `widgets/tabs.ts` | Tabs (labels, active index) |
+| `widgets/overlay.ts` | Overlay (modal, dismiss-on-escape) |
+| `events.ts` | Event types, drain loop, dispatch. |
+| `style.ts` | Color parsing (`#hex`, named, indexed), dimension parsing. |
+| `theme.ts` | `Theme` class, `Theme.dark()`/`Theme.light()`, per-NodeType setters. |
+| `animation-constants.ts` | Animation property and easing enum constants. |
+| `errors.ts` | `KrakenError` class, `checkResult()` for FFI error translation. |
+| `loop.ts` | Animation-aware async event loop (`createLoop`). |
 | `index.ts` | Public API re-exports. |
-| `loop.ts` | Animation-aware async event loop utility (`createLoop`). v2. |
-| `jsx/jsx-runtime.ts` | Custom JSX factory (`jsx`, `jsxs`, `Fragment`). v2 ADR-T20. |
-| `jsx/reconciler.ts` | Signal-driven reconciler: `render`, `mount`, `unmount`, `reconcileChildren`. v2 ADR-T20. |
-| `jsx/types.ts` | VNode, Instance, JSX namespace type definitions. v2. |
-| `effect/index.ts` | Optional Effect integration stubs (`kraken-tui/effect` subpath). v2. |
+| `jsx/jsx-runtime.ts` | Custom JSX factory (`jsx`, `jsxs`, `Fragment`). ADR-T20. |
+| `jsx/reconciler.ts` | Signal-driven reconciler: `render`, `mount`, `unmount`, `reconcileChildren`. |
+| `jsx/types.ts` | VNode, Instance, JSX namespace, per-widget prop interfaces. |
+| `effect/index.ts` | Optional Effect integration stubs. |
 
 ---
 
 ## Critical Patterns
 
 ### Zero Business Logic
-This layer **must not** contain rendering, layout computation, or event state. All of that lives in the Native Core. The TS layer:
-- Translates developer-friendly API calls into FFI function calls
+This layer translates developer-friendly API calls into FFI calls. No rendering, layout, or event state. The TS layer:
 - Parses colors and dimensions into the Native Core's encoding
 - Manages developer-assigned string IDs (mapped to u32 handles)
 - Packs/unpacks C structs for the FFI boundary
 
 ### String Protocol
-- **TS → Rust:** Encode to UTF-8, pass `(pointer, byte_length)`. Rust copies. Safe to free after call returns.
-- **Rust → TS:** Pre-allocate buffer, pass `(buffer, buffer_length)`. Rust copies into buffer. Two-call pattern: `tui_get_content_len()` → allocate → `tui_get_content()`.
-- **Error strings:** `tui_get_last_error()` returns borrowed pointer — valid until next error. Copy immediately.
+- **TS → Rust:** Encode to UTF-8, pass `(pointer, byte_length)`. Rust copies.
+- **Rust → TS:** Pre-allocate buffer, pass `(buffer, buffer_length)`. Two-call pattern: `tui_get_content_len()` → allocate → `tui_get_content()`.
+- **Error strings:** `tui_get_last_error()` returns borrowed pointer — copy immediately.
 
 ### Event Drain Loop
 ```typescript
-app.readInput(16);  // tui_read_input(16) — 16ms timeout ≈ 60fps
-for (const event of app.drainEvents()) {
-    // tui_next_event() in a while loop until it returns 0
-}
-app.render();  // tui_render() — animation advancement → layout → diff → I/O
+app.readInput(16);  // 16ms timeout ~ 60fps
+for (const event of app.drainEvents()) { /* handle */ }
+app.render();  // animation advancement → layout → diff → I/O
 ```
 
 ### f32 Bit-Casting (Animation)
-Opacity values cross FFI as u32 bit-casts of f32:
+Opacity/position values cross FFI as u32 bit-casts of f32:
 ```typescript
 const f32 = new Float32Array([0.5]);
-const bits = new Uint32Array(f32.buffer)[0]; // 0x3F000000
-lib.tui_animate(handle, 0, bits, 300, 2);
+const bits = new Uint32Array(f32.buffer)[0];
 ```
 
 ---
 
 ## Constraints
 
-- **Zero runtime dependencies** beyond `bun:ffi` (built-in). v2: `@preact/signals-core` is the one allowed exception (for reconciler).
-- **Bundle budget:** < 50KB for core package (see TechSpec §5.5). v2: optional `effect` package has separate budget.
-- **`strict: true`** TypeScript
-- `FinalizationRegistry` / `WeakRef` — allowed as **safety net only** (leak detector + warning). `destroy()` remains the primary lifecycle API. Non-deterministic GC must never be the lifecycle contract. See Architecture Appendix B v2 decisions.
-- v1: Synchronous event loop — `while (running)` pattern. v2: async loop allowed with animation-aware sleep (`await Bun.sleep(16)` when animating, longer block when idle). See TechSpec §5.7 for both patterns.
-
-## v2 Progress
-
-**Shipped:**
-- `widgets/textarea.ts` — TextArea widget wrapping `tui_textarea_*` FFI functions
-- `theme.ts` — per-NodeType theme setters (`setTypeColor`, `setTypeFlag`, `setTypeBorder`, `setTypeOpacity`)
-- `ffi.ts` — all v2 FFI symbols bound (destroy_subtree, insert_child, textarea, theme type defaults, position animation, new easings)
-- `widget.ts` — `destroySubtree()`, `insertChild()` methods
-- `animation-constants.ts` — PositionX/Y properties, CubicIn/CubicOut/Elastic/Bounce easings
-
-**Shipped (Epic L — reconciler):**
-- `jsx/jsx-runtime.ts` — custom JSX factory (`jsx`, `jsxs`, `Fragment`) per ADR-T20
-- `jsx/reconciler.ts` — signal-driven reconciler: mount, unmount, keyed reconciliation, signal effect binding
-- `jsx/types.ts` — VNode, Instance, JSX namespace, per-widget prop interfaces
-- `loop.ts` — animation-aware async event loop (`createLoop`)
-- `effect/index.ts` — optional Effect integration stubs
-- `@preact/signals-core` dependency — signal/computed/effect/batch re-exported from index.ts
-- Package split: subpath exports (`./jsx-runtime`, `./jsx-dev-runtime`, `./effect`)
-- Bundle budget: 30KB / 50KB (60% of budget)
-
-**Shipped (Epic M — accessibility):**
-- `ffi.ts` — 3 new FFI symbols: `tui_set_node_role`, `tui_set_node_label`, `tui_set_node_description`
-- `ffi/structs.ts` — `EventType.Accessibility = 7`, `AccessibilityRole` enum constant
-- `widget.ts` — `setRole()`, `setLabel()`, `setDescription()` methods
-- `events.ts` — `"accessibility"` event type, `roleCode` field on `KrakenEvent`
-- `jsx/types.ts` — `role`, `aria-label`, `aria-description` props on `CommonProps`, `onAccessibility` handler
-- `jsx/reconciler.ts` — accessibility prop handling in `applyStaticProp`
-- `loop.ts` — `accessibility` → `onAccessibility` JSX event dispatch
-- `index.ts` — `AccessibilityRole` re-exported
-- Bundle budget: 32.7KB / 50KB (65% of budget)
-
-**Remaining:**
-- ScrollBox auto-wrapping: intercept multiple children → wrap in hidden Box container (TS-layer convenience, not a native change)
-- Input `setValue(text)` — ergonomic wrapper around `tui_set_content()` (already works at FFI level)
+- **Zero runtime dependencies** beyond `bun:ffi`. `@preact/signals-core` is the one allowed exception (for JSX reconciler).
+- **Bundle budget:** < 50KB (currently 42.9KB, 86% of budget).
+- **`strict: true`** TypeScript.
+- `FinalizationRegistry` / `WeakRef` — allowed as **safety net only**. `destroy()` remains the primary lifecycle API.

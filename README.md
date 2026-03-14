@@ -1,75 +1,68 @@
-## ⚠️ EXPERIMENTAL - NOT PRODUCTION READY
-
 # Kraken TUI
 
 Rust-native terminal UI engine with TypeScript/Bun bindings.
 
-## Project Status
-
-`Kraken TUI` is pre-GA and not production-ready yet.
-
-- v1 is complete (themes + animation foundation)
-- v2 is in progress
-- Native state hardening, tree operations, feature expansion, and JSX reconciler are implemented
-- Accessibility foundation remains the main open v2 area
-
-For scope and planning details, see:
-- [PRD](./docs/PRD.md)
-- [Architecture](./docs/Architecture.md)
-- [TechSpec](./docs/TechSpec.md)
-- [Tasks](./docs/Tasks.md)
-
 ## Architecture
 
-- Native core: Rust `cdylib` owns all mutable state and rendering
-- Host API: TypeScript/Bun wrapper over `bun:ffi`
-- Boundary invariant: TypeScript holds opaque `u32` handles, Rust owns data
-- FFI contract: `0` success, `-1` error (via `tui_get_last_error()`), `-2` panic caught at boundary
+- **Native core:** Rust `cdylib` owns all mutable state and rendering
+- **Host API:** TypeScript/Bun wrapper over `bun:ffi`
+- **Boundary invariant:** TypeScript holds opaque `u32` handles, Rust owns data
+- **FFI contract:** `0` success, `-1` error (via `tui_get_last_error()`), `-2` panic caught at boundary
 
-## Implemented Capabilities
+## Widgets
 
-Widgets:
-- `Box`
-- `Text` (plain + markdown + syntax highlight pipeline)
-- `Input` (single-line + password masking)
-- `Select`
-- `ScrollBox`
-- `TextArea` (multi-line editing)
+- `Box` — container with flexbox layout
+- `Text` — plain, markdown, and syntax-highlighted content
+- `Input` — single-line text entry with password masking
+- `Select` — option list with arrow navigation
+- `ScrollBox` — scrollable container
+- `TextArea` — multi-line editor with selection, undo/redo, find
+- `Table` — columnar data with row selection
+- `List` — item list with selection
+- `Tabs` — tab labels with active index
+- `Overlay` — modal dialog with dismiss-on-escape
 
-Core features:
+## Features
+
 - Flexbox layout via Taffy
-- Incremental render/diff pipeline
-- Keyboard focus traversal + mouse events (click/scroll/hit-test)
-- Theming (`Theme.dark()`, `Theme.light()`, runtime switching, per-NodeType defaults)
-- Animation primitives + chaining + additional easing/position animation
-- Choreography groups (`tui_create_choreo_group`, add/start/cancel/destroy)
-- Reconciler primitives (`destroy_subtree`, indexed insert) for declarative updates
-- JSX + signal-driven reconciler (`render`, `mount`, `reconcileChildren`)
+- Incremental double-buffered render with dirty-region diffing
+- Keyboard focus traversal (depth-first) + mouse events (click/scroll/hit-test)
+- Theming: built-in dark/light, custom themes, per-NodeType defaults, runtime switching
+- Animation: property transitions, 8 easing functions, chaining, choreography groups, position animation
+- JSX + signal-driven reconciler (`@preact/signals-core`)
+- Runner API with `app.run()` and `createLoop()` for async event loops
+- Accessibility foundation: roles, labels, descriptions, a11y events
+- Rich text: Markdown (pulldown-cmark) and syntax highlighting (syntect)
+- Terminal writer with run compaction and style delta tracking
+- Bounded LRU text cache (8 MiB)
+- Cross-platform: Linux x64/arm64, macOS x64/arm64, Windows x64
 
 ## Quick Start
 
 ```bash
-# Build native core (required before TS usage)
+# Build native core (required before any TS usage)
 cargo build --manifest-path native/Cargo.toml --release
+
+# Install TS dependencies
+cd ts && bun install && cd ..
 
 # Run Rust tests
 cargo test --manifest-path native/Cargo.toml
 
-# Run TS FFI tests
+# Run TS tests
 cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts
-
-# Run JSX tests
 cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts
 
-# Run demos
+# Run examples
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/system-monitor.ts
 ```
 
 ## Imperative Example
 
 ```ts
-import { Kraken, Box, Text, KeyCode } from "./ts/src/index";
+import { Kraken, Box, Text, KeyCode } from "kraken-tui";
 
 const app = Kraken.init();
 const root = new Box({ width: "100%", height: "100%", flexDirection: "column" });
@@ -89,6 +82,34 @@ while (running) {
 app.shutdown();
 ```
 
+## JSX Example
+
+```tsx
+import { Kraken, signal, render, createLoop, KeyCode } from "kraken-tui";
+import { jsx, jsxs } from "kraken-tui/jsx-runtime";
+
+const count = signal(0);
+const app = Kraken.init();
+
+const tree = jsxs("Box", {
+	width: "100%", height: "100%", flexDirection: "column",
+	children: [
+		jsx("Text", { key: "label", content: count, fg: "#00FF00", height: 1 }),
+	],
+});
+
+render(tree, app);
+const loop = createLoop({
+	app,
+	onEvent(e) {
+		if (e.type === "key" && e.keyCode === KeyCode.Escape) loop.stop();
+	},
+	onTick() { count.value++; },
+});
+await loop.start();
+app.shutdown();
+```
+
 ## Quality and Budgets
 
 ```bash
@@ -98,9 +119,16 @@ bun run ts/check-bundle.ts
 # FFI benchmark
 cargo build --manifest-path native/Cargo.toml --release && bun run ts/bench-ffi.ts
 
-# Guardrails
-cargo build --manifest-path native/Cargo.toml --release && bun run ts/guardrails-ffi.ts
+# Lint
+cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
 ```
+
+## Documentation
+
+- [PRD](./docs/PRD.md) — Product requirements
+- [Architecture](./docs/Architecture.md) — System design and module boundaries
+- [TechSpec](./docs/TechSpec.md) — Technical contracts, FFI surface, ADRs
+- [Tasks](./docs/Tasks.md) — Execution status
 
 ## License
 

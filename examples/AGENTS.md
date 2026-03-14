@@ -1,124 +1,62 @@
 # AGENTS.md — Examples Usage Guide
 
-Purpose: capture practical lessons from building and iterating the v2 showcase so future examples are easier to implement and maintain.
+Practical lessons from building examples. Follow these when creating or modifying examples.
 
-## Quick Start Rules
-
-1. Build native before running any TypeScript example.
+## Quick Start
 
 ```bash
 cargo build --manifest-path native/Cargo.toml --release
+cd ts && bun install  # once after clone
 bun run examples/<example>.ts
 ```
 
-2. Prefer Bun commands in this repository (`bun run`, `bun test`).
-3. Use `../ts/src/index` exports for example code unless you explicitly need low-level FFI access.
+## Available Examples
 
-## Core Invariants To Respect
+| File | API | Demonstrates |
+|------|-----|-------------|
+| `demo.ts` | Imperative | Box, Text, Input, Select, ScrollBox, theme switching, event loop |
+| `migration-jsx.tsx` | JSX | Same app as demo.ts rewritten with JSX + signals |
+| `accessibility-demo.tsx` | JSX | Roles, labels, descriptions, accessibility events |
+| `showcase.ts` | JSX | Signals, animations, choreography, runtime tree ops, TextArea, themes |
+| `system-monitor.ts` | Imperative | All 10 widgets, tabs, overlay, table, list, animations, 4 themes |
+
+## Core Invariants
 
 1. Rust owns mutable UI state. TypeScript controls via handles/FFI.
 2. Handle `0` is invalid/sentinel.
-3. FFI lifecycle matters: initialize context first, then create runtime resources.
+3. `Kraken.init()` must be called before creating any widgets or themes.
+4. Always call `app.shutdown()` on exit.
 
-## Lessons Learned (This Session)
+## Lessons Learned
 
-## 1) Initialize before creating runtime-owned resources
+1. **Init before resources** — `Theme.create()`, widget constructors, etc. all require initialized context.
 
-- `Theme.create()` requires initialized native context.
-- Correct order:
-  1. `const app = Kraken.init()`
-  2. create custom themes, widgets, runtime structures
+2. **Normalize built-in themes for demos** — Built-in themes can over-apply defaults (especially borders). Explicitly set `theme.setTypeBorderStyle(nodeType, "none")` and add borders only where intentional.
 
-If you create themes first, example crashes with `Failed to create theme`.
+3. **Give Text nodes explicit heights** — Status/header/label rows can collapse without explicit `height: 1`.
 
-## 2) Built-in themes are broad defaults; normalize for demo UX
+4. **Keep animations structural vs. decorative** — Use `positionX/Y` only for intentional movement. Prefer `opacity`, `fgColor`, `borderColor` for subtle feedback.
 
-- Built-in themes can visually over-apply defaults (especially borders).
-- For showcase-like examples, explicitly normalize per-node-type border defaults when needed:
-  - `theme.setTypeBorderStyle("text" | "box" | ..., "none")`
-- Then set borders only where intentional in the JSX tree.
+5. **Use ASCII spinners for portability** — Unicode spinner glyphs degrade on some fonts. Use `|`, `/`, `-`, `\\` driven by `onTick`.
 
-## 3) In JSX, give important `Text` nodes explicit heights
+6. **Theme-dependent contrast** — Light and dark themes need per-surface color overrides. Set explicit colors by theme mode for readability.
 
-- Some text nodes can collapse or render inconsistently without explicit `height`.
-- For status/header/label rows, set `height: 1`.
+7. **Seed TextArea content** — Don't expect users to type test data. Pre-fill with long lines so wrap toggling is obvious.
 
-## 4) Keep layout-stability and “animation” goals separate
+8. **Keep logs useful** — Log actions (`theme switched`, `subtree inserted`) but avoid flooding with redundant entries.
 
-- If users expect static layout, avoid `positionX/positionY` animations on structural cards.
-- Prefer in-place animation effects (`opacity`, `fgColor`, `borderColor`) for “alive” feedback without block movement.
+9. **Cleanup on exit** — Destroy custom themes and runtime subtrees before `app.shutdown()`.
 
-## 5) Spinner glyph portability matters
-
-- Unicode spinner glyphs can degrade on some terminal fonts.
-- For portable demos, prefer a deterministic ASCII spinner (`|`, `/`, `-`, `\\`) driven by `onTick` + signal.
-
-## 6) Make theme-dependent contrast explicit
-
-- Light and dark themes need per-surface overrides for readability.
-- For demo-only surfaces (e.g., code sample panel, runtime hint banner), set explicit colors by theme mode.
-
-## 7) Runtime subtree demo must explain itself in UI
-
-- The center runtime block confused users when unlabeled.
-- Include an always-visible title + action hint, e.g.:
-  - `Runtime Tree Ops [b] insert/remove subtree`
-- Update hint text on state transitions (mounted/unmounted).
-
-## 8) Wrap/unwrap demos need seeded long content
-
-- Do not expect users to type test data.
-- Seed TextArea with intentionally long lines + long tokens so wrap toggling is obvious immediately.
-
-## 9) Keep logs useful but not noisy
-
-- Event log should confirm actions (`theme switched`, `subtree inserted`, `wrap set`, `a11y events`).
-- Avoid flooding with redundant entries where possible.
-
-## 10) Cleanup on exit
-
-- If custom themes were created, destroy them during teardown.
-- If runtime subtree exists, destroy it.
-- Always call `app.shutdown()`.
-
-## Example Construction Pattern (Recommended)
+## Construction Pattern
 
 1. `const app = Kraken.init()`
-2. Create custom themes and normalize demo defaults
-3. Declare signals for live UI state
-4. Build JSX tree with explicit row heights for status text
-5. `render(tree, app)` and set initial focus
-6. Create `createLoop({ onEvent, onTick })`
-7. In `onEvent`, handle controls and domain actions
-8. In `onTick`, update lightweight live state (metrics/spinner frame)
-9. On exit, cleanup resources and `app.shutdown()`
+2. Create custom themes and normalize defaults
+3. Build widget tree (imperative or JSX with signals)
+4. `app.setRoot(root)` or `render(tree, app)`
+5. Create event loop: `createLoop()` or `app.run()` or manual `while` loop
+6. Handle events, update state in `onTick`
+7. Cleanup and `app.shutdown()`
 
-## Controls Design Guidance
+## When To Use Low-Level FFI
 
-- Keep controls discoverable in footer and reflected in behavior:
-  - `Esc/q`: quit
-  - `t`: cycle theme
-  - `b`: runtime subtree toggle
-  - `w`: wrap toggle
-  - `Space`: replay in-place animation
-- If a control changes visible UI, also log it and update status line.
-
-## When To Use Low-Level FFI In Examples
-
-Use wrapper API first. Use `ffi.*` directly only when wrappers do not expose a needed readback or operation cleanly (e.g., querying selected option text buffers).
-
-If using low-level FFI:
-
-1. isolate helper functions (`getContent`, `getSelectOption`)
-2. keep unsafe/protocol logic localized
-3. continue routing state changes through high-level widget/signals where possible
-
-## Quality Checklist Before Shipping an Example
-
-1. Launches with only documented commands.
-2. Works in at least one dark and one light theme.
-3. No surprising layout shifts for primary interactions.
-4. Status line and logs accurately describe what happened.
-5. Every showcased feature is visible without manual setup.
-6. Teardown is clean (`shutdown`, resource destroy).
-
+Use wrapper API first. Use `ffi.*` directly only when wrappers don't expose a needed operation (e.g., querying selected option text). Isolate FFI helpers and keep state changes through high-level APIs.

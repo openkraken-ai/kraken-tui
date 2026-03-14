@@ -10,8 +10,6 @@ Guidance for AI Agents working in this repository. Domain-specific details are i
 
 **Core invariant:** Rust owns all mutable state. TypeScript holds opaque `u32` handles. Unidirectional: TS calls Rust; Rust never calls back.
 
-**Status:** v0 and v1 delivered. v2 complete — Epics I (safe state), J (tree ops), K (features), L (reconciler), M (accessibility) all done.
-
 **Authority documents** (read in order for design questions):
 1. [PRD.md](./docs/PRD.md) — What and why
 2. [Architecture.md](./docs/Architecture.md) — System design and module boundaries
@@ -32,9 +30,9 @@ cargo build --manifest-path native/Cargo.toml --release   # Required before any 
 cargo check --manifest-path native/Cargo.toml              # Fast type-check
 
 # Test
-cargo test --manifest-path native/Cargo.toml               # Rust unit tests
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler
+cargo test --manifest-path native/Cargo.toml               # Rust unit tests (267 tests)
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration (160 tests)
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler (49 tests)
 
 # Quality
 cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
@@ -42,8 +40,11 @@ bun run ts/check-bundle.ts                                 # Bundle budget (<50K
 
 # Demo
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
-cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx  # JSX
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/system-monitor.ts
 ```
+
+**Note:** Run `cd ts && bun install` once after cloning to install `@preact/signals-core` (needed for JSX tests).
 
 ---
 
@@ -51,21 +52,22 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/migr
 
 ```
 TypeScript/Bun (thin command client)
-  ↓ 97 public C ABI functions via bun:ffi dlopen
+  ↓ 142 public C ABI functions via bun:ffi dlopen
 Rust cdylib (native performance engine)
-  ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal (v0)
-  ├─ Theme (v1) — named style defaults, subtree binding, built-in dark/light
-  ├─ Animation (v1) — timed property transitions, easing, delta-time advancement
-  ├─ Safe state via OnceLock<RwLock> (v2, ADR-T16)
-  ├─ Subtree destroy + indexed insert (v2, ADR-T17/T18)
-  ├─ TextArea, position animation, per-NodeType themes, new easings (v2, ADR-T19/T21/T22)
-  ├─ JSX reconciler + signals (v2, ADR-T20) — TS-only, wraps imperative API
-  └─ Accessibility foundation (v2, ADR-T23) — roles, labels, descriptions, a11y events
+  ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal
+  ├─ Theme — named style defaults, subtree binding, built-in dark/light, per-NodeType defaults
+  ├─ Animation — timed property transitions, 8 easing functions, chaining, choreography, position animation
+  ├─ Safe state via OnceLock<RwLock> (ADR-T16)
+  ├─ Subtree destroy + indexed insert (ADR-T17/T18)
+  ├─ 10 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay
+  ├─ Writer — run compaction, stateful cursor/style tracking (ADR-T24)
+  ├─ Text cache — bounded LRU, 8 MiB default (ADR-T25)
+  ├─ Runner API — app.run() with onChange/continuous modes (ADR-T26)
+  ├─ JSX reconciler + signals (ADR-T20) — TS-only, wraps imperative API
+  └─ Accessibility foundation (ADR-T23) — roles, labels, descriptions, a11y events
 ```
 
 **FFI contract:** Return codes 0 = success, -1 = error (`tui_get_last_error()`), -2 = panic. Handle 0 = invalid sentinel. All `extern "C"` functions wrapped in `catch_unwind` (ADR-T03).
-
-**Key ADRs:** T01 (event drain), T03 (FFI safety), T04 (read-modify-write style patching), T05 (terminal backend trait), T06 (custom TS struct packing), T12 (theme style mask), T13 (animation delta-time), T14 (animatable property scope). **v2 (implemented):** T16 (safe state), T17 (subtree destroy), T18 (indexed insert), T19 (TextArea), T20 (JSX reconciler), T21 (theme inheritance), T22 (position animation), T23 (accessibility foundation).
 
 ---
 
