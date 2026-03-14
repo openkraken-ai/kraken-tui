@@ -200,3 +200,25 @@ test threaded_render::tests::test_clip_rect_no_overlap ... ok
 
 Result: 271 passed, 0 failed (260 baseline + 11 threaded)
 ```
+
+## Appendix B: Final TechSpec Review Findings
+
+A final review of the full codebase against TechSpec v5.0 identified 2 pre-existing
+gaps from prior epics (not related to Epic H):
+
+1. **Scroll enhancements (TechSpec §4.3.1)**: 3 scroll FFI symbols specified but not
+   implemented — `tui_scroll_set_show_scrollbar`, `tui_scroll_set_scrollbar_side`,
+   `tui_scroll_set_scrollbar_width`. The `show_scrollbar`, `scrollbar_side`, and
+   `scrollbar_width` fields are also absent from TuiNode.
+
+2. **z_index field (TechSpec §3.3)**: The `z_index: i32` field specified in the TuiNode
+   struct definition is not present in the implementation.
+
+These gaps predate Epic H and were not introduced by this experiment. The FFI symbol
+count of 136 production symbols is 2 short of the 138 projected total due to the
+missing scroll symbols (offset by utility symbols like `tui_get_capabilities` and
+`tui_init_headless` that are counted in the actual total but not in the spec's
+baseline 96).
+
+All other TechSpec requirements (39/42 v3 FFI symbols, NodeType enum, 14 perf
+counters, module structure, TS widget wrappers) are fully implemented.
