@@ -822,4 +822,6 @@ Previously tracked gaps, now resolved:
 1. **Scroll enhancements (§4.3.1)**: 3 scroll FFI symbols and TuiNode fields
    (`show_scrollbar`, `scrollbar_side`, `scrollbar_width`) — implemented.
 
-2. **z_index field (§3.3)**: `z_index: i32` added to TuiNode — implemented.
+2. **z_index field (§3.3)**: `z_index: i32` added to TuiNode with `tui_set_z_index`
+   FFI setter — implemented. Render-order sorting by z_index is not yet wired
+   into the render pipeline.

@@ -233,6 +233,7 @@ fn render_node(
     let bg = resolved.bg_color;
     let opacity = resolved.opacity;
     let fg = blend_opacity(raw_fg, bg, opacity);
+    let border_fg = blend_opacity(resolved.border_color, bg, opacity);
     let attrs = resolved.attrs;
     let border_style = resolved.border_style;
     let content = node.content.clone();
@@ -270,7 +271,7 @@ fn render_node(
 
     // Render border
     if border_style != BorderStyle::None {
-        render_border(ctx, abs_x, abs_y, w, h, border_style, fg, bg, clip);
+        render_border(ctx, abs_x, abs_y, w, h, border_style, border_fg, bg, clip);
     }
 
     // Render content area (inside border if present)

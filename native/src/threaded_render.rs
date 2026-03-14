@@ -675,15 +675,16 @@ fn render_snapshot_node(
         clip
     };
 
-    let child_offset_x = if node.node_type == NodeType::ScrollBox {
-        -node.scroll_x
+    let (child_base_x, child_base_y) = if node.node_type == NodeType::ScrollBox {
+        // Match production render: children are positioned relative to the
+        // content area (inside borders) minus the scroll offset.
+        let border_inset = if has_border { 1 } else { 0 };
+        (
+            abs_x + border_inset - node.scroll_x,
+            abs_y + border_inset - node.scroll_y,
+        )
     } else {
-        0
-    };
-    let child_offset_y = if node.node_type == NodeType::ScrollBox {
-        -node.scroll_y
-    } else {
-        0
+        (abs_x, abs_y)
     };
 
     // Recurse into children
@@ -692,8 +693,8 @@ fn render_snapshot_node(
             nodes,
             buffer,
             child_handle,
-            abs_x + child_offset_x,
-            abs_y + child_offset_y,
+            child_base_x,
+            child_base_y,
             child_clip,
             focused,
         );
@@ -1141,11 +1142,12 @@ fn diff_snapshot_buffers(front: &Buffer, back: &Buffer) -> Vec<CellUpdate> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{context_write, destroy_context, init_context};
+    use crate::context::{context_write, destroy_context, ffi_test_guard, init_context};
     use crate::terminal::HeadlessBackend;
     use crate::types::NodeType;
 
     fn setup_test_context() {
+        let _ = destroy_context(); // ensure clean slate
         let backend = Box::new(HeadlessBackend::new(40, 10));
         init_context(backend).unwrap();
     }
@@ -1156,6 +1158,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_creation() {
+        let _guard = ffi_test_guard();
         setup_test_context();
         {
             let mut ctx = context_write().unwrap();
@@ -1172,6 +1175,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_with_children() {
+        let _guard = ffi_test_guard();
         setup_test_context();
         {
             let mut ctx = context_write().unwrap();

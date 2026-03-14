@@ -252,6 +252,18 @@ pub extern "C" fn tui_get_visible(handle: u32) -> i32 {
 }
 
 #[no_mangle]
+pub extern "C" fn tui_set_z_index(handle: u32, z_index: i32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.z_index = z_index;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_get_node_count() -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
         context_read()
@@ -2515,15 +2527,7 @@ pub extern "C" fn tui_threaded_render_stop() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn ffi_test_guard() -> MutexGuard<'static, ()> {
-        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
+    use crate::context::ffi_test_guard;
 
     #[test]
     fn test_get_last_error_snapshot_round_trip() {
@@ -2929,6 +2933,41 @@ mod tests {
         assert_eq!(tui_scroll_set_scrollbar_width(sb, 0), -1);
         // Invalid: 4
         assert_eq!(tui_scroll_set_scrollbar_width(sb, 4), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_set_z_index() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        let handle = tui_create_node(NodeType::Box as u8);
+        assert!(handle > 0);
+
+        // Default is 0
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, 0);
+        }
+
+        // Set positive
+        assert_eq!(tui_set_z_index(handle, 10), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, 10);
+        }
+
+        // Set negative
+        assert_eq!(tui_set_z_index(handle, -5), 0);
+        {
+            let ctx = context_read().unwrap();
+            assert_eq!(ctx.nodes.get(&handle).unwrap().z_index, -5);
+        }
+
+        // Invalid handle
+        assert_eq!(tui_set_z_index(0, 1), -1);
 
         tui_shutdown();
     }
