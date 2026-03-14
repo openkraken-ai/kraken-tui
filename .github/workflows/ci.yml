@@ -1,0 +1,109 @@
+name: CI — Tests, Benchmarks, and Quality Gates
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Native Tests and Linting ──────────────────────────────────────────────
+  native-tests:
+    runs-on: ubuntu-latest
+    name: Native Tests + Clippy + Fmt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path native/Cargo.toml -- --check
+
+      - name: Clippy lint
+        run: cargo clippy --manifest-path native/Cargo.toml -- -D warnings
+
+      - name: Run native tests (including golden snapshots)
+        run: cargo test --manifest-path native/Cargo.toml
+
+  # ── Native Benchmarks (regression detection) ──────────────────────────────
+  native-benchmarks:
+    runs-on: ubuntu-latest
+    name: Native Benchmark Gates
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Run writer benchmarks
+        run: cargo bench --manifest-path native/Cargo.toml --bench writer_bench 2>&1 | tee /tmp/writer_bench.txt
+
+      - name: Run text cache benchmarks
+        run: cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench 2>&1 | tee /tmp/cache_bench.txt
+
+      - name: Report benchmark results
+        run: |
+          echo "=== Writer Benchmark Results ==="
+          grep -E "^writer_" /tmp/writer_bench.txt || true
+          echo ""
+          echo "=== Text Cache Benchmark Results ==="
+          grep -E "^cache_" /tmp/cache_bench.txt || true
+
+  # ── Host Layer Tests ──────────────────────────────────────────────────────
+  host-tests:
+    runs-on: ubuntu-latest
+    name: Host Tests + Bundle Budget
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install TS dependencies
+        run: bun install --cwd ts
+
+      - name: Build native library
+        run: cargo build --manifest-path native/Cargo.toml --release
+
+      - name: Run FFI integration tests
+        run: bun test ts/test-ffi.test.ts
+
+      - name: Run JSX reconciler tests
+        run: bun test ts/test-jsx.test.ts
+
+      - name: Check bundle budget (< 50KB)
+        run: bun run ts/check-bundle.ts
+
+  # ── Host Benchmarks ──────────────────────────────────────────────────────
+  host-benchmarks:
+    runs-on: ubuntu-latest
+    name: Host Benchmark Gates
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install TS dependencies
+        run: bun install --cwd ts
+
+      - name: Build native library
+        run: cargo build --manifest-path native/Cargo.toml --release
+
+      - name: Run FFI benchmarks
+        run: bun run ts/bench-ffi.ts
+
+      - name: Run render benchmarks
+        run: bun run ts/bench-render.ts
+
+  # ── Quality Gate Summary ─────────────────────────────────────────────────
+  quality-gate:
+    runs-on: ubuntu-latest
+    name: Quality Gate
+    needs: [native-tests, native-benchmarks, host-tests, host-benchmarks]
+    steps:
+      - name: All gates passed
+        run: echo "All v3 quality gates passed."

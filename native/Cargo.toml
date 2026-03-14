@@ -22,3 +22,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 [[bench]]
 name = "text_cache_bench"
 harness = false
+
+[[bench]]
+name = "writer_bench"
+harness = false

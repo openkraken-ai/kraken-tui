@@ -19,6 +19,8 @@
 mod animation;
 mod context;
 mod event;
+#[cfg(test)]
+mod golden;
 mod layout;
 mod render;
 mod scroll;
@@ -31,7 +33,7 @@ mod textarea;
 mod theme;
 mod tree;
 pub mod types;
-mod writer;
+pub mod writer;
 
 use std::cell::RefCell;
 use std::ffi::CString;
@@ -2628,5 +2630,136 @@ mod tests {
         }
 
         tui_shutdown();
+    }
+
+    // ========================================================================
+    // Golden Snapshot Tests (TASK-G1, ADR-T30)
+    // ========================================================================
+
+    /// Helper: create a scene, render, and assert golden snapshot.
+    /// Generates fixture on first run (GOLDEN_UPDATE=1).
+    fn golden_test_scene<F>(name: &str, width: u16, height: u16, setup: F)
+    where
+        F: FnOnce(),
+    {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(width, height), 0);
+
+        setup();
+
+        assert_eq!(tui_render(), 0);
+
+        {
+            let ctx = context_read().unwrap();
+            golden::assert_golden(&ctx, name).unwrap_or_else(|e| {
+                panic!("Golden test '{name}' failed:\n{e}");
+            });
+        }
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn golden_empty_screen() {
+        golden_test_scene("empty_screen", 20, 5, || {
+            // Empty screen with a minimal root box
+            let root = tui_create_node(NodeType::Box as u8);
+            tui_set_root(root);
+            tui_set_layout_dimension(root, 0, 20.0, 1);
+            tui_set_layout_dimension(root, 1, 5.0, 1);
+        });
+    }
+
+    #[test]
+    fn golden_single_text_node() {
+        golden_test_scene("single_text_node", 20, 3, || {
+            let root = tui_create_node(NodeType::Box as u8);
+            tui_set_root(root);
+            tui_set_layout_dimension(root, 0, 20.0, 1);
+            tui_set_layout_dimension(root, 1, 3.0, 1);
+
+            let text = tui_create_node(NodeType::Text as u8);
+            tui_set_layout_dimension(text, 0, 20.0, 1);
+            tui_set_layout_dimension(text, 1, 1.0, 1);
+            tui_append_child(root, text);
+            let content = "Hello!";
+            tui_set_content(text, content.as_ptr(), content.len() as u32);
+        });
+    }
+
+    #[test]
+    fn golden_bordered_box() {
+        golden_test_scene("bordered_box", 20, 5, || {
+            let root = tui_create_node(NodeType::Box as u8);
+            tui_set_root(root);
+            tui_set_layout_dimension(root, 0, 20.0, 1);
+            tui_set_layout_dimension(root, 1, 5.0, 1);
+            tui_set_style_border(root, 1); // Plain border
+
+            let text = tui_create_node(NodeType::Text as u8);
+            tui_set_layout_dimension(text, 0, 18.0, 1);
+            tui_set_layout_dimension(text, 1, 1.0, 1);
+            tui_append_child(root, text);
+            let content = "Bordered";
+            tui_set_content(text, content.as_ptr(), content.len() as u32);
+        });
+    }
+
+    #[test]
+    fn golden_nested_layout() {
+        golden_test_scene("nested_layout", 30, 5, || {
+            let root = tui_create_node(NodeType::Box as u8);
+            tui_set_root(root);
+            tui_set_layout_dimension(root, 0, 30.0, 1);
+            tui_set_layout_dimension(root, 1, 5.0, 1);
+            // flex direction = row (prop=0, value=0 for row)
+            tui_set_layout_flex(root, 0, 0);
+
+            let left = tui_create_node(NodeType::Box as u8);
+            tui_set_layout_dimension(left, 0, 15.0, 1);
+            tui_set_layout_dimension(left, 1, 5.0, 1);
+            tui_set_style_border(left, 1);
+            tui_append_child(root, left);
+
+            let left_text = tui_create_node(NodeType::Text as u8);
+            tui_set_layout_dimension(left_text, 0, 13.0, 1);
+            tui_set_layout_dimension(left_text, 1, 1.0, 1);
+            tui_append_child(left, left_text);
+            let content_l = "Left";
+            tui_set_content(left_text, content_l.as_ptr(), content_l.len() as u32);
+
+            let right = tui_create_node(NodeType::Box as u8);
+            tui_set_layout_dimension(right, 0, 15.0, 1);
+            tui_set_layout_dimension(right, 1, 5.0, 1);
+            tui_set_style_border(right, 1);
+            tui_append_child(root, right);
+
+            let right_text = tui_create_node(NodeType::Text as u8);
+            tui_set_layout_dimension(right_text, 0, 13.0, 1);
+            tui_set_layout_dimension(right_text, 1, 1.0, 1);
+            tui_append_child(right, right_text);
+            let content_r = "Right";
+            tui_set_content(right_text, content_r.as_ptr(), content_r.len() as u32);
+        });
+    }
+
+    #[test]
+    fn golden_input_with_cursor() {
+        golden_test_scene("input_with_cursor", 20, 3, || {
+            let root = tui_create_node(NodeType::Box as u8);
+            tui_set_root(root);
+            tui_set_layout_dimension(root, 0, 20.0, 1);
+            tui_set_layout_dimension(root, 1, 3.0, 1);
+
+            let input = tui_create_node(NodeType::Input as u8);
+            tui_set_layout_dimension(input, 0, 20.0, 1);
+            tui_set_layout_dimension(input, 1, 1.0, 1);
+            tui_append_child(root, input);
+            let content = "typed";
+            tui_set_content(input, content.as_ptr(), content.len() as u32);
+            // Focus the input to show cursor
+            tui_focus(input);
+        });
     }
 }

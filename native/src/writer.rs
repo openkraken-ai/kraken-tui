@@ -37,6 +37,12 @@ pub struct WriterState {
     pub force_move: bool,
 }
 
+impl Default for WriterState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WriterState {
     pub fn new() -> Self {
         Self {
@@ -106,8 +112,8 @@ impl WriterMetrics {
 // ============================================================================
 
 /// Compute the metrics that the old per-cell emission path would produce
-/// for a given set of cell updates. Used as a baseline for regression tests.
-#[cfg(test)]
+/// for a given set of cell updates. Used as a baseline for regression tests
+/// and benchmark comparison.
 pub fn baseline_metrics(diff: &[CellUpdate]) -> WriterMetrics {
     let mut metrics = WriterMetrics::new();
     for update in diff {
@@ -148,7 +154,6 @@ pub fn baseline_metrics(diff: &[CellUpdate]) -> WriterMetrics {
 }
 
 /// Rough byte estimate for per-cell emission (MoveTo + full style + Print + Reset).
-#[cfg(test)]
 fn estimate_per_cell_bytes(update: &CellUpdate) -> u64 {
     let mut bytes: u64 = 0;
     // MoveTo: \x1b[{y};{x}H  ≈ 6-10 bytes
@@ -462,76 +467,16 @@ fn count_attr_changes(added: CellAttrs, removed: CellAttrs) -> u32 {
 }
 
 // ============================================================================
-// Tests
+// Benchmark Workloads (pub for criterion benches)
 // ============================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::types::Cell;
+/// Canonical workloads module for benchmarks and tests.
+/// These generate representative CellUpdate vectors at three density levels.
+pub mod workloads {
+    use crate::types::{Cell, CellAttrs, CellUpdate};
 
-    // --- Canonical workloads ---
-
-    /// 80×24 grid, ~10% diff density, scattered positions with mixed styles.
-    fn sparse_diff() -> Vec<CellUpdate> {
-        let mut updates = Vec::new();
-        let fg_a = 0x01FF0000; // red
-        let fg_b = 0x0100FF00; // green
-        let bg = 0x01000000; // black
-        for y in 0..24u16 {
-            for x in (0..80u16).step_by(10) {
-                let fg = if (x + y) % 2 == 0 { fg_a } else { fg_b };
-                let attrs = if y % 3 == 0 {
-                    CellAttrs::BOLD
-                } else {
-                    CellAttrs::empty()
-                };
-                updates.push(CellUpdate {
-                    x,
-                    y,
-                    cell: Cell {
-                        ch: 'X',
-                        fg,
-                        bg,
-                        attrs,
-                    },
-                });
-            }
-        }
-        updates
-    }
-
-    /// 80×24 grid, ~50% diff density, mix of contiguous and scattered.
-    fn medium_diff() -> Vec<CellUpdate> {
-        let mut updates = Vec::new();
-        let fg = 0x01FFFFFF; // white
-        let bg = 0x01000080; // dark blue
-        for y in 0..24u16 {
-            for x in 0..80u16 {
-                if (x + y) % 2 == 0 {
-                    let attrs = if x < 40 {
-                        CellAttrs::BOLD
-                    } else {
-                        CellAttrs::empty()
-                    };
-                    updates.push(CellUpdate {
-                        x,
-                        y,
-                        cell: Cell {
-                            ch: '#',
-                            fg,
-                            bg,
-                            attrs,
-                        },
-                    });
-                }
-            }
-        }
-        updates
-    }
-
-    /// 80×24 grid, 100% diff density (full screen render with style bands).
-    fn full_diff() -> Vec<CellUpdate> {
+    /// Full diff: all 80x24 cells changed (100% density, 4 style bands).
+    pub fn full_diff() -> Vec<CellUpdate> {
         let mut updates = Vec::new();
         let fg = 0x01FFFFFF;
         let bg = 0x01000000;
@@ -557,6 +502,75 @@ mod tests {
         }
         updates
     }
+
+    /// Medium diff: ~50% of cells changed (checkerboard pattern, 2 attr bands).
+    pub fn medium_diff() -> Vec<CellUpdate> {
+        let mut updates = Vec::new();
+        let fg = 0x01FFFFFF;
+        let bg = 0x01000080;
+        for y in 0..24u16 {
+            for x in 0..80u16 {
+                if (x + y) % 2 == 0 {
+                    let attrs = if x < 40 {
+                        CellAttrs::BOLD
+                    } else {
+                        CellAttrs::empty()
+                    };
+                    updates.push(CellUpdate {
+                        x,
+                        y,
+                        cell: Cell {
+                            ch: '#',
+                            fg,
+                            bg,
+                            attrs,
+                        },
+                    });
+                }
+            }
+        }
+        updates
+    }
+
+    /// Sparse diff: ~10% of cells changed (every 10th column, 2 colors).
+    pub fn sparse_diff() -> Vec<CellUpdate> {
+        let mut updates = Vec::new();
+        let fg_a = 0x01FF0000;
+        let fg_b = 0x0100FF00;
+        let bg = 0x01000000;
+        for y in 0..24u16 {
+            for x in (0..80u16).step_by(10) {
+                let fg = if (x + y) % 2 == 0 { fg_a } else { fg_b };
+                let attrs = if y % 3 == 0 {
+                    CellAttrs::BOLD
+                } else {
+                    CellAttrs::empty()
+                };
+                updates.push(CellUpdate {
+                    x,
+                    y,
+                    cell: Cell {
+                        ch: 'X',
+                        fg,
+                        bg,
+                        attrs,
+                    },
+                });
+            }
+        }
+        updates
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Cell;
+    use crate::writer::workloads::{full_diff, medium_diff, sparse_diff};
 
     // --- Baseline metric tests ---
 
