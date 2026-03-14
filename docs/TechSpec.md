@@ -814,3 +814,16 @@ Exit criteria for v3 completion:
 - All v3 symbols implemented and covered by FFI tests.
 - Benchmark and golden gates pass in CI for all required targets.
 - Bundle and performance budgets remain within PRD constraints.
+
+## Appendix C: Known Spec–Implementation Gaps
+
+The following TechSpec-specified items are not yet implemented. They predate v3
+and are tracked here for future resolution.
+
+1. **Scroll enhancements (§4.3.1)**: 3 scroll FFI symbols specified but not
+   implemented — `tui_scroll_set_show_scrollbar`, `tui_scroll_set_scrollbar_side`,
+   `tui_scroll_set_scrollbar_width`. The corresponding `show_scrollbar`,
+   `scrollbar_side`, and `scrollbar_width` fields are also absent from TuiNode.
+
+2. **z_index field (§3.3)**: The `z_index: i32` field specified in the TuiNode
+   struct definition is not present in the implementation.
