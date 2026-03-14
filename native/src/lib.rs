@@ -31,6 +31,8 @@ pub mod text_cache;
 mod text_utils;
 mod textarea;
 mod theme;
+#[cfg(feature = "threaded-render")]
+mod threaded_render;
 mod tree;
 pub mod types;
 pub mod writer;
@@ -2428,6 +2430,42 @@ pub extern "C" fn tui_free_string(_ptr: *const u8) {
     // (get_last_error) or caller-provides-buffer (get_content).
     // This function is reserved for future use when the native core
     // allocates strings that the host must free.
+}
+
+// ============================================================================
+// 4.19 Threaded Render Experiment (ADR-T31, TASK-H1)
+// ============================================================================
+
+#[cfg(feature = "threaded-render")]
+#[no_mangle]
+pub extern "C" fn tui_threaded_render_start() -> i32 {
+    ffi_wrap(|| {
+        // This is an experimental entry point. In a full implementation,
+        // it would spawn the background render thread and switch `tui_render()`
+        // to snapshot-dispatch mode. For the prototype, we validate that the
+        // threaded_render module compiles and the snapshot protocol works.
+        let mut ctx = context_write()?;
+        let snapshot = threaded_render::create_snapshot(&mut ctx)?;
+        ctx.debug_log(&format!(
+            "threaded_render: snapshot created with {} nodes, root={:?}",
+            snapshot.nodes.len(),
+            snapshot.root,
+        ));
+        Ok(0)
+    })
+}
+
+#[cfg(feature = "threaded-render")]
+#[no_mangle]
+pub extern "C" fn tui_threaded_render_stop() -> i32 {
+    ffi_wrap(|| {
+        // In the prototype, this is a no-op that confirms the FFI symbol exists
+        // and the rollback path is wired. A full implementation would join the
+        // render thread and switch back to synchronous mode.
+        let ctx = context_read()?;
+        ctx.debug_log("threaded_render: stop (synchronous mode restored)");
+        Ok(0)
+    })
 }
 
 #[cfg(test)]

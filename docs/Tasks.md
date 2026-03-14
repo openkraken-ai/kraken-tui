@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 5.0
-**Status**: v3 In Progress (Epics A–G Done, H Conditional/Remaining)
+**Status**: v3 Complete (Epics A–G Done, H Done — Experiment Concluded, No-Go/Deferred)
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
 
@@ -11,9 +11,11 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-**v3 Total Estimation:** 122 Story Points (Fibonacci: 1, 2, 3, 5, 8)
+**v3 Total Estimation:** 132 Story Points (Fibonacci: 1, 2, 3, 5, 8)
 
 **v3 MVP Estimation (A-G):** 112 Story Points
+
+**v3 Completed:** 132 Story Points (all epics including conditional Epic H)
 
 **v3 Critical Path (MVP):**
 
@@ -47,12 +49,12 @@ Functional outcomes:
 6. Ship cross-platform distribution UX with prebuilt artifacts and deterministic fallback behavior (ADR-T29).
 7. Ship deterministic golden testing plus benchmark gates enforced in CI (ADR-T30).
 
-### Phase 2 (Post-Launch / Scope-Controlled)
+### Phase 2 (Post-Launch / Scope-Controlled) — COMPLETED
 
-Deferred to control complexity and protect architecture clarity:
+Experiment executed and concluded:
 
-1. Experimental background render thread behind explicit feature flag only (ADR-T31).
-2. Promotion decision for threaded rendering based on measured wins and semantic parity report.
+1. Experimental background render thread implemented behind `threaded-render` feature flag (ADR-T31).
+2. Parity and benchmark validation completed. Decision: **No-Go / Deferred** — synchronous path meets all performance budgets. See `docs/reports/TASK-H2-threaded-render-decision.md`.
 
 ---
 
@@ -668,7 +670,7 @@ And the final report records go or no-go with supporting metrics
 | TASK-G2  | G    | Feature | 5  | G1           | Done    |
 | TASK-G3  | G    | Chore   | 3  | G2           | Done    |
 | TASK-G4  | G    | Chore   | 2  | G3           | Done    |
-| TASK-H0  | H    | Spike   | 2  | G2           | Conditional |
-| TASK-H1  | H    | Feature | 5  | H0           | Conditional |
-| TASK-H2  | H    | Chore   | 3  | H1           | Conditional |
-|          |      | **TOTAL** | **122** |              |        |
+| TASK-H0  | H    | Spike   | 2  | G2           | Done    |
+| TASK-H1  | H    | Feature | 5  | H0           | Done    |
+| TASK-H2  | H    | Chore   | 3  | H1           | Done    |
+|          |      | **TOTAL** | **132** |              |        |
