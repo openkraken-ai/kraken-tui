@@ -1,19 +1,17 @@
 /**
- * Kraken TUI — System Monitor Showcase (btop-style)
+ * Kraken TUI — System Monitor Showcase
  *
- * A comprehensive, widget-heavy example demonstrating every major feature
- * of Kraken TUI in a single practical application. Simulates a system
- * monitoring dashboard similar to btop/htop/glances.
+ * A real system monitoring dashboard reading live data from /proc.
+ * Demonstrates all 10 widget types in a practical, information-dense layout.
  *
  * Features demonstrated:
  *   - All 10 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay
- *   - Flexbox layout (row/column, nested, percentage widths)
+ *   - Flexbox layout (row/column, nested)
  *   - Theming with runtime switching (4 themes)
- *   - Animation: pulsing, color transitions, position animation, choreography
+ *   - Animation: pulsing title
  *   - Accessibility roles and labels
- *   - Runtime tree mutation (insertChild / destroySubtree)
- *   - Keyboard focus traversal and mouse support
- *   - ScrollBox with live-updating log content
+ *   - Keyboard focus traversal
+ *   - ScrollBox with live-updating content
  *   - Table with dynamic row updates
  *   - List widget with selection
  *   - Tabs for panel switching
@@ -35,6 +33,7 @@
  *   q               — Quit
  */
 
+import { readFileSync, readdirSync } from "fs";
 import {
 	Kraken,
 	Box,
@@ -47,12 +46,225 @@ import {
 	List,
 	Tabs,
 	Overlay,
-	Theme,
 	KeyCode,
 	AccessibilityRole,
 	createLoop,
 } from "../ts/src/index";
 import type { KrakenEvent } from "../ts/src/index";
+
+// ── System Data Readers ───────────────────────────────────────────────
+
+function readFile(path: string): string {
+	try {
+		return readFileSync(path, "utf-8").trim();
+	} catch {
+		return "";
+	}
+}
+
+interface CpuTimes {
+	user: number;
+	nice: number;
+	system: number;
+	idle: number;
+	iowait: number;
+	total: number;
+	busy: number;
+}
+
+function readCpuTimes(): CpuTimes[] {
+	const stat = readFile("/proc/stat");
+	const cores: CpuTimes[] = [];
+	for (const line of stat.split("\n")) {
+		if (!line.startsWith("cpu")) continue;
+		// skip the aggregate "cpu " line — only keep "cpu0", "cpu1", etc.
+		if (line.startsWith("cpu ")) continue;
+		const parts = line.split(/\s+/).slice(1).map(Number);
+		const [user = 0, nice = 0, system = 0, idle = 0, iowait = 0] = parts;
+		const total = parts.reduce((a, b) => a + b, 0);
+		const busy = total - idle - iowait;
+		cores.push({ user, nice, system, idle, iowait, total, busy });
+	}
+	return cores;
+}
+
+function readMeminfo(): { memTotal: number; memUsed: number; memAvail: number; swapTotal: number; swapUsed: number; cached: number; buffers: number } {
+	const info = readFile("/proc/meminfo");
+	const get = (key: string): number => {
+		const m = info.match(new RegExp(`${key}:\\s+(\\d+)`));
+		return m ? parseInt(m[1]!) : 0;
+	};
+	const memTotal = get("MemTotal");
+	const memFree = get("MemFree");
+	const memAvail = get("MemAvailable");
+	const buffers = get("Buffers");
+	const cached = get("Cached");
+	const swapTotal = get("SwapTotal");
+	const swapFree = get("SwapFree");
+	return {
+		memTotal,
+		memUsed: memTotal - memFree - buffers - cached,
+		memAvail,
+		swapTotal,
+		swapUsed: swapTotal - swapFree,
+		cached,
+		buffers,
+	};
+}
+
+function readUptime(): number {
+	const parts = readFile("/proc/uptime").split(" ");
+	return Math.floor(parseFloat(parts[0] || "0"));
+}
+
+function readLoadAvg(): string {
+	const parts = readFile("/proc/loadavg").split(" ");
+	return `${parts[0]} ${parts[1]} ${parts[2]}`;
+}
+
+function readHostname(): string {
+	return readFile("/proc/sys/kernel/hostname") || "unknown";
+}
+
+function readKernelVersion(): string {
+	const v = readFile("/proc/version");
+	const m = v.match(/Linux version (\S+)/);
+	return m ? m[1]! : "unknown";
+}
+
+interface ProcessInfo {
+	pid: number;
+	name: string;
+	state: string;
+	threads: number;
+	rssKb: number;
+	cpuTime: number;
+}
+
+function readProcesses(): ProcessInfo[] {
+	const procs: ProcessInfo[] = [];
+	try {
+		const dirs = readdirSync("/proc").filter((d) => /^\d+$/.test(d));
+		for (const pid of dirs.slice(0, 100)) {
+			try {
+				const stat = readFile(`/proc/${pid}/stat`);
+				// Parse: pid (comm) state ... fields
+				const m = stat.match(/^(\d+)\s+\((.+?)\)\s+(\S+)\s+(.*)/);
+				if (!m) continue;
+				const fields = m[4]!.split(/\s+/);
+				const utime = parseInt(fields[10] || "0");
+				const stime = parseInt(fields[11] || "0");
+				const threads = parseInt(fields[16] || "1");
+				const rssPages = parseInt(fields[20] || "0");
+				procs.push({
+					pid: parseInt(m[1]!),
+					name: m[2]!,
+					state: m[3]!,
+					threads,
+					rssKb: rssPages * 4, // page size = 4KB typically
+					cpuTime: utime + stime,
+				});
+			} catch {
+				continue;
+			}
+		}
+	} catch {
+		// /proc not readable
+	}
+	return procs;
+}
+
+interface NetStats {
+	name: string;
+	rxBytes: number;
+	txBytes: number;
+}
+
+function readNetStats(): NetStats[] {
+	const content = readFile("/proc/net/dev");
+	const ifaces: NetStats[] = [];
+	for (const line of content.split("\n").slice(2)) {
+		const m = line.trim().match(/^(\S+):\s+(.*)/);
+		if (!m) continue;
+		const parts = m[2]!.split(/\s+/).map(Number);
+		ifaces.push({
+			name: m[1]!.replace(":", ""),
+			rxBytes: parts[0] || 0,
+			txBytes: parts[8] || 0,
+		});
+	}
+	return ifaces;
+}
+
+interface DiskInfo {
+	fs: string;
+	mount: string;
+	total: number;
+	used: number;
+	avail: number;
+}
+
+function readDiskInfo(): DiskInfo[] {
+	const content = readFile("/proc/mounts");
+	const disks: DiskInfo[] = [];
+	const seen = new Set<string>();
+	for (const line of content.split("\n")) {
+		const parts = line.split(/\s+/);
+		if (!parts[0] || !parts[1]) continue;
+		const fs = parts[0];
+		const mount = parts[1];
+		const fsType = parts[2] || "";
+		// Only real filesystems
+		if (!["ext4", "ext3", "xfs", "btrfs", "vfat", "ntfs", "tmpfs", "zfs"].includes(fsType)) continue;
+		if (seen.has(fs)) continue;
+		seen.add(fs);
+		try {
+			// statfs not easily available, use /proc/mounts data only
+			disks.push({ fs, mount, total: 0, used: 0, avail: 0 });
+		} catch {
+			continue;
+		}
+	}
+	return disks;
+}
+
+// ── Formatting ────────────────────────────────────────────────────────
+
+function formatKb(kb: number): string {
+	if (kb >= 1048576) return `${(kb / 1048576).toFixed(1)} GiB`;
+	if (kb >= 1024) return `${(kb / 1024).toFixed(0)} MiB`;
+	return `${kb} KiB`;
+}
+
+function formatBytes(b: number): string {
+	if (b >= 1073741824) return `${(b / 1073741824).toFixed(1)} GiB`;
+	if (b >= 1048576) return `${(b / 1048576).toFixed(1)} MiB`;
+	if (b >= 1024) return `${(b / 1024).toFixed(1)} KiB`;
+	return `${b} B`;
+}
+
+function formatUptime(secs: number): string {
+	const d = Math.floor(secs / 86400);
+	const h = Math.floor((secs % 86400) / 3600);
+	const m = Math.floor((secs % 3600) / 60);
+	if (d > 0) return `${d}d ${h}h ${m}m`;
+	return `${h}h ${m}m`;
+}
+
+function bar(ratio: number, width: number): string {
+	const clamped = Math.max(0, Math.min(1, ratio));
+	const filled = Math.round(clamped * width);
+	const empty = width - filled;
+	// Unicode block elements for smooth bars
+	return "\u2588".repeat(filled) + "\u2500".repeat(empty);
+}
+
+function colorBar(ratio: number, width: number): string {
+	const clamped = Math.max(0, Math.min(1, ratio));
+	const filled = Math.round(clamped * width);
+	const empty = width - filled;
+	return "\u2588".repeat(filled) + " ".repeat(empty);
+}
 
 // ── Theme Palette ─────────────────────────────────────────────────────
 
@@ -73,23 +285,9 @@ interface Palette {
 
 const palettes: Palette[] = [
 	{
-		name: "Nord",
-		bg: "#2e3440",
-		panelBg: "#3b4252",
-		fg: "#d8dee9",
-		fgDim: "#4c566a",
-		accent: "#88c0d0",
-		green: "#a3be8c",
-		yellow: "#ebcb8b",
-		red: "#bf616a",
-		cyan: "#8fbcbb",
-		border: "#4c566a",
-		headerBg: "#434c5e",
-	},
-	{
 		name: "Catppuccin",
 		bg: "#1e1e2e",
-		panelBg: "#313244",
+		panelBg: "#1e1e2e",
 		fg: "#cdd6f4",
 		fgDim: "#585b70",
 		accent: "#89b4fa",
@@ -97,13 +295,27 @@ const palettes: Palette[] = [
 		yellow: "#f9e2af",
 		red: "#f38ba8",
 		cyan: "#94e2d5",
-		border: "#45475a",
+		border: "#313244",
 		headerBg: "#181825",
+	},
+	{
+		name: "Nord",
+		bg: "#2e3440",
+		panelBg: "#2e3440",
+		fg: "#d8dee9",
+		fgDim: "#4c566a",
+		accent: "#88c0d0",
+		green: "#a3be8c",
+		yellow: "#ebcb8b",
+		red: "#bf616a",
+		cyan: "#8fbcbb",
+		border: "#3b4252",
+		headerBg: "#2e3440",
 	},
 	{
 		name: "Dracula",
 		bg: "#282a36",
-		panelBg: "#44475a",
+		panelBg: "#282a36",
 		fg: "#f8f8f2",
 		fgDim: "#6272a4",
 		accent: "#bd93f9",
@@ -111,13 +323,13 @@ const palettes: Palette[] = [
 		yellow: "#f1fa8c",
 		red: "#ff5555",
 		cyan: "#8be9fd",
-		border: "#6272a4",
+		border: "#44475a",
 		headerBg: "#21222c",
 	},
 	{
 		name: "Gruvbox",
 		bg: "#282828",
-		panelBg: "#3c3836",
+		panelBg: "#282828",
 		fg: "#ebdbb2",
 		fgDim: "#665c54",
 		accent: "#83a598",
@@ -125,183 +337,27 @@ const palettes: Palette[] = [
 		yellow: "#fabd2f",
 		red: "#fb4934",
 		cyan: "#8ec07c",
-		border: "#504945",
+		border: "#3c3836",
 		headerBg: "#1d2021",
 	},
 ];
 
-// ── Simulated System Data ─────────────────────────────────────────────
-
-function randBetween(min: number, max: number): number {
-	return min + Math.random() * (max - min);
-}
-
-function clamp(v: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, v));
-}
-
-interface CpuCore {
-	usage: number;
-	temp: number;
-	freq: number;
-}
-
-interface ProcessInfo {
-	pid: number;
-	name: string;
-	cpu: number;
-	mem: number;
-	status: string;
-	threads: number;
-}
-
-interface NetInterface {
-	name: string;
-	rxRate: number;
-	txRate: number;
-	rxTotal: number;
-	txTotal: number;
-}
-
-interface DiskInfo {
-	mount: string;
-	device: string;
-	total: number;
-	used: number;
-	fs: string;
-}
-
-const NUM_CORES = 8;
-let cpuCores: CpuCore[] = Array.from({ length: NUM_CORES }, () => ({
-	usage: randBetween(5, 40),
-	temp: randBetween(35, 55),
-	freq: randBetween(2400, 4800),
-}));
-
-let totalMemGB = 32;
-let usedMemGB = randBetween(8, 20);
-let swapTotalGB = 8;
-let swapUsedGB = randBetween(0.5, 3);
-let uptimeSeconds = Math.floor(randBetween(3600, 86400 * 7));
-
-const processPool: ProcessInfo[] = [
-	{ pid: 1, name: "systemd", cpu: 0.1, mem: 12, status: "S", threads: 1 },
-	{ pid: 423, name: "containerd", cpu: 1.2, mem: 85, status: "S", threads: 14 },
-	{ pid: 891, name: "node", cpu: 8.5, mem: 340, status: "R", threads: 12 },
-	{ pid: 1024, name: "postgres", cpu: 3.2, mem: 512, status: "S", threads: 8 },
-	{ pid: 1337, name: "redis-server", cpu: 0.8, mem: 48, status: "S", threads: 4 },
-	{ pid: 2048, name: "nginx", cpu: 1.5, mem: 32, status: "S", threads: 2 },
-	{ pid: 2650, name: "bun", cpu: 12.3, mem: 220, status: "R", threads: 6 },
-	{ pid: 3100, name: "rustc", cpu: 45.2, mem: 1200, status: "R", threads: 16 },
-	{ pid: 3500, name: "chrome", cpu: 18.7, mem: 2400, status: "S", threads: 42 },
-	{ pid: 3800, name: "vscode", cpu: 6.4, mem: 890, status: "S", threads: 28 },
-	{ pid: 4100, name: "docker", cpu: 2.1, mem: 156, status: "S", threads: 10 },
-	{ pid: 4500, name: "ssh-agent", cpu: 0.0, mem: 4, status: "S", threads: 1 },
-	{ pid: 4800, name: "pulseaudio", cpu: 0.3, mem: 18, status: "S", threads: 3 },
-	{ pid: 5200, name: "Xorg", cpu: 3.8, mem: 120, status: "S", threads: 5 },
-	{ pid: 5500, name: "tmux", cpu: 0.1, mem: 8, status: "S", threads: 1 },
-	{ pid: 5900, name: "htop", cpu: 0.5, mem: 6, status: "R", threads: 1 },
-	{ pid: 6200, name: "cargo", cpu: 35.0, mem: 680, status: "R", threads: 12 },
-	{ pid: 6600, name: "rg", cpu: 22.1, mem: 45, status: "R", threads: 4 },
-	{ pid: 7000, name: "python3", cpu: 5.6, mem: 310, status: "S", threads: 3 },
-	{ pid: 7400, name: "java", cpu: 9.8, mem: 1800, status: "S", threads: 52 },
-];
-
-const netInterfaces: NetInterface[] = [
-	{ name: "eth0", rxRate: 0, txRate: 0, rxTotal: 0, txTotal: 0 },
-	{ name: "wlan0", rxRate: 0, txRate: 0, rxTotal: 0, txTotal: 0 },
-	{ name: "docker0", rxRate: 0, txRate: 0, rxTotal: 0, txTotal: 0 },
-	{ name: "lo", rxRate: 0, txRate: 0, rxTotal: 0, txTotal: 0 },
-];
-
-const disks: DiskInfo[] = [
-	{ mount: "/", device: "/dev/nvme0n1p2", total: 512, used: 234, fs: "ext4" },
-	{ mount: "/home", device: "/dev/nvme0n1p3", total: 1024, used: 567, fs: "ext4" },
-	{ mount: "/boot/efi", device: "/dev/nvme0n1p1", total: 1, used: 0.3, fs: "vfat" },
-	{ mount: "/tmp", device: "tmpfs", total: 16, used: 2.1, fs: "tmpfs" },
-];
-
-function updateSimulation(): void {
-	// CPU
-	for (const core of cpuCores) {
-		core.usage = clamp(core.usage + randBetween(-8, 8), 0, 100);
-		core.temp = clamp(core.temp + randBetween(-2, 2), 30, 95);
-		core.freq = clamp(core.freq + randBetween(-200, 200), 800, 5200);
-	}
-
-	// Memory
-	usedMemGB = clamp(usedMemGB + randBetween(-0.5, 0.5), 4, totalMemGB - 2);
-	swapUsedGB = clamp(swapUsedGB + randBetween(-0.1, 0.1), 0, swapTotalGB);
-
-	// Processes
-	for (const proc of processPool) {
-		proc.cpu = clamp(proc.cpu + randBetween(-3, 3), 0, 100);
-		proc.mem = clamp(proc.mem + randBetween(-20, 20), 1, 4000);
-	}
-
-	// Network
-	for (const iface of netInterfaces) {
-		iface.rxRate = clamp(iface.rxRate + randBetween(-500, 500), 0, 125000);
-		iface.txRate = clamp(iface.txRate + randBetween(-200, 200), 0, 50000);
-		iface.rxTotal += iface.rxRate / 10;
-		iface.txTotal += iface.txRate / 10;
-	}
-
-	// Disks
-	for (const disk of disks) {
-		disk.used = clamp(disk.used + randBetween(-0.01, 0.02), 0, disk.total);
-	}
-
-	uptimeSeconds += 1;
-}
-
-// ── Formatting Helpers ────────────────────────────────────────────────
-
-function formatUptime(secs: number): string {
-	const d = Math.floor(secs / 86400);
-	const h = Math.floor((secs % 86400) / 3600);
-	const m = Math.floor((secs % 3600) / 60);
-	return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
-}
-
-function formatBytes(kb: number): string {
-	if (kb >= 1000000) return `${(kb / 1000000).toFixed(1)} GB`;
-	if (kb >= 1000) return `${(kb / 1000).toFixed(1)} MB`;
-	return `${kb.toFixed(0)} KB`;
-}
-
-function barGraph(value: number, max: number, width: number): string {
-	const ratio = clamp(value / max, 0, 1);
-	const filled = Math.round(ratio * width);
-	const empty = width - filled;
-	const blocks = [".", ":", "=", "#"];
-	const level = Math.min(3, Math.floor(ratio * 4));
-	return "[" + blocks[level]!.repeat(filled) + " ".repeat(empty) + "]";
-}
-
-function cpuBars(): string {
-	return cpuCores
-		.map(
-			(core, i) =>
-				`CPU${i} ${barGraph(core.usage, 100, 20)} ${core.usage.toFixed(0).padStart(3)}% ${core.temp.toFixed(0)}C ${(core.freq / 1000).toFixed(1)}GHz`,
-		)
-		.join("\n");
-}
-
-function memoryBar(): string {
-	const pct = (usedMemGB / totalMemGB) * 100;
-	return [
-		`MEM ${barGraph(usedMemGB, totalMemGB, 20)} ${usedMemGB.toFixed(1)}/${totalMemGB}G (${pct.toFixed(0)}%)`,
-		`SWP ${barGraph(swapUsedGB, swapTotalGB, 20)} ${swapUsedGB.toFixed(1)}/${swapTotalGB}G`,
-	].join("\n");
-}
-
 // ── Application ───────────────────────────────────────────────────────
 
 const app = Kraken.init();
+const termSize = app.getTerminalSize();
 let pal = palettes[0]!;
 let paletteIndex = 0;
 let activeTab = 0;
+
+// CPU delta tracking
+let prevCpuTimes = readCpuTimes();
+const numCores = prevCpuTimes.length || 1;
+let cpuUsages: number[] = new Array(numCores).fill(0);
+
+// Network delta tracking
+let prevNetStats = readNetStats();
+let netRates: { name: string; rx: number; tx: number; rxTotal: number; txTotal: number }[] = [];
 
 // ── Root Container ────────────────────────────────────────────────────
 
@@ -312,7 +368,7 @@ const root = new Box({
 	bg: pal.bg,
 });
 root.setRole(AccessibilityRole.Region);
-root.setLabel("System Monitor Dashboard");
+root.setLabel("System Monitor");
 
 // ── Header Bar ────────────────────────────────────────────────────────
 
@@ -322,36 +378,35 @@ const headerBar = new Box({
 	bg: pal.headerBg,
 });
 headerBar.setHeight(1);
-headerBar.setRole(AccessibilityRole.Region);
-headerBar.setLabel("Header bar");
 
-const titleText = new Text({
-	content: " KRAKEN MONITOR ",
-	bold: true,
-	fg: pal.accent,
-});
+const titleText = new Text({ content: " kraken-monitor ", bold: true, fg: pal.accent });
 titleText.setWidth(18);
 titleText.setHeight(1);
 
-const hostText = new Text({ content: "kraken@workstation", fg: pal.fg });
+const hostText = new Text({ content: ` ${readHostname()}`, fg: pal.fg });
 hostText.setWidth(20);
 hostText.setHeight(1);
 
 const uptimeText = new Text({ content: "", fg: pal.fgDim });
-uptimeText.setWidth(20);
+uptimeText.setWidth(18);
 uptimeText.setHeight(1);
 
-const themeText = new Text({ content: `[t] ${pal.name}`, fg: pal.accent });
+const loadText = new Text({ content: "", fg: pal.cyan });
+loadText.setWidth(28);
+loadText.setHeight(1);
+
+const themeText = new Text({ content: ` [t] ${pal.name}`, fg: pal.accent });
 themeText.setWidth(20);
 themeText.setHeight(1);
 
-const helpHint = new Text({ content: "[h] Help  [q] Quit", fg: pal.fgDim });
-helpHint.setWidth(22);
+const helpHint = new Text({ content: " [h]Help [q]Quit", fg: pal.fgDim });
+helpHint.setWidth(18);
 helpHint.setHeight(1);
 
 headerBar.append(titleText);
 headerBar.append(hostText);
 headerBar.append(uptimeText);
+headerBar.append(loadText);
 headerBar.append(themeText);
 headerBar.append(helpHint);
 
@@ -364,196 +419,135 @@ const tabs = new Tabs({
 	fg: pal.fg,
 	bg: pal.panelBg,
 });
-tabs.setRole(AccessibilityRole.List);
-tabs.setLabel("Dashboard sections");
 
-// ── Tab Panels (we'll show/hide based on active tab) ──────────────────
-
-// ==== OVERVIEW TAB ====
+// ── OVERVIEW TAB ──────────────────────────────────────────────────────
 
 const overviewPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
-	gap: 0,
 });
 
-// Top row: CPU + Memory side by side
-const topRow = new Box({
+// -- CPU section --
+const cpuBox = new Box({
 	width: "100%",
-	flexDirection: "row",
-	gap: 0,
-});
-topRow.setHeight("50%");
-
-// CPU Panel
-const cpuPanel = new Box({
-	width: "60%",
+	flexDirection: "column",
 	border: "single",
-	padding: [0, 1, 0, 1],
 	fg: pal.border,
 	bg: pal.panelBg,
-	flexDirection: "column",
+	padding: [0, 1, 0, 1],
 });
-cpuPanel.setHeight("100%");
+// Height = cores + 2 (title + avg line) + 2 (border)
+cpuBox.setHeight(numCores + 4);
 
-const cpuTitle = new Text({ content: " CPU ", bold: true, fg: pal.accent });
+const cpuTitle = new Text({ content: " cpu ", bold: true, fg: pal.accent });
 cpuTitle.setWidth("100%");
 cpuTitle.setHeight(1);
-cpuTitle.setRole(AccessibilityRole.Heading);
-cpuTitle.setLabel("CPU usage");
 
-const cpuContent = new Text({ content: cpuBars(), fg: pal.fg });
+const cpuContent = new Text({ content: "", fg: pal.fg });
 cpuContent.setWidth("100%");
-cpuContent.setHeight(NUM_CORES);
+cpuContent.setHeight(numCores);
 
-const cpuAvgText = new Text({ content: "", fg: pal.yellow, bold: true });
-cpuAvgText.setWidth("100%");
-cpuAvgText.setHeight(1);
+const cpuAvgLine = new Text({ content: "", fg: pal.yellow, bold: true });
+cpuAvgLine.setWidth("100%");
+cpuAvgLine.setHeight(1);
 
-cpuPanel.append(cpuTitle);
-cpuPanel.append(cpuContent);
-cpuPanel.append(cpuAvgText);
+cpuBox.append(cpuTitle);
+cpuBox.append(cpuContent);
+cpuBox.append(cpuAvgLine);
 
-// Memory Panel (right side of top row)
-const memPanel = new Box({
-	width: "40%",
+// -- Memory section --
+const memBox = new Box({
+	width: "100%",
+	flexDirection: "column",
 	border: "single",
-	padding: [0, 1, 0, 1],
 	fg: pal.border,
 	bg: pal.panelBg,
-	flexDirection: "column",
+	padding: [0, 1, 0, 1],
 });
-memPanel.setHeight("100%");
+memBox.setHeight(6);
 
-const memTitle = new Text({ content: " Memory ", bold: true, fg: pal.accent });
+const memTitle = new Text({ content: " mem ", bold: true, fg: pal.accent });
 memTitle.setWidth("100%");
 memTitle.setHeight(1);
-memTitle.setRole(AccessibilityRole.Heading);
-memTitle.setLabel("Memory usage");
 
-const memContent = new Text({ content: memoryBar(), fg: pal.fg });
+const memContent = new Text({ content: "", fg: pal.fg });
 memContent.setWidth("100%");
-memContent.setHeight(2);
+memContent.setHeight(3);
 
-// System info text
-const sysInfo = new Text({
-	content: [
-		"Kernel  Linux 6.18.5-arch1",
-		"Arch    x86_64",
-		`Cores   ${NUM_CORES}`,
-		`RAM     ${totalMemGB} GB DDR5`,
-		`Swap    ${swapTotalGB} GB`,
-	].join("\n"),
-	fg: pal.fgDim,
-});
-sysInfo.setWidth("100%");
-sysInfo.setHeight(5);
+memBox.append(memTitle);
+memBox.append(memContent);
 
-// Load averages
-const loadText = new Text({ content: "", fg: pal.cyan });
-loadText.setWidth("100%");
-loadText.setHeight(1);
-
-memPanel.append(memTitle);
-memPanel.append(memContent);
-memPanel.append(sysInfo);
-memPanel.append(loadText);
-
-topRow.append(cpuPanel);
-topRow.append(memPanel);
-
-// Bottom row: Process table summary + event log
-const bottomRow = new Box({
+// -- Top processes (Table) --
+const procBox = new Box({
 	width: "100%",
-	flexDirection: "row",
-	gap: 0,
-});
-bottomRow.setHeight("50%");
-
-// Process summary (Top 8 by CPU)
-const procSummaryPanel = new Box({
-	width: "55%",
+	flexDirection: "column",
 	border: "single",
-	padding: [0, 1, 0, 1],
 	fg: pal.border,
 	bg: pal.panelBg,
-	flexDirection: "column",
+	padding: [0, 1, 0, 1],
 });
-procSummaryPanel.setHeight("100%");
+procBox.setHeight(14);
 
-const procSummaryTitle = new Text({ content: " Top Processes (CPU) ", bold: true, fg: pal.accent });
-procSummaryTitle.setWidth("100%");
-procSummaryTitle.setHeight(1);
+const procTitle = new Text({ content: " proc ", bold: true, fg: pal.accent });
+procTitle.setWidth("100%");
+procTitle.setHeight(1);
 
 const procTable = new Table({
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
 });
-procTable.setHeight("100%");
+procTable.setHeight(11);
 procTable.setColumnCount(5);
-procTable.setColumn(0, "PID", 7, 0);
-procTable.setColumn(1, "Name", 15, 0);
-procTable.setColumn(2, "CPU%", 8, 0);
-procTable.setColumn(3, "MEM", 10, 0);
-procTable.setColumn(4, "Status", 8, 0);
+procTable.setColumn(0, "PID", 8, 0);
+procTable.setColumn(1, "Name", 20, 0);
+procTable.setColumn(2, "State", 6, 0);
+procTable.setColumn(3, "Threads", 8, 0);
+procTable.setColumn(4, "RSS", 12, 0);
 procTable.setFocusable(true);
-procTable.setRole(AccessibilityRole.List);
-procTable.setLabel("Top processes by CPU usage");
 
-procSummaryPanel.append(procSummaryTitle);
-procSummaryPanel.append(procTable);
+procBox.append(procTitle);
+procBox.append(procTable);
 
-// Event log with ScrollBox
-const logPanel = new Box({
-	width: "45%",
-	border: "single",
-	padding: [0, 1, 0, 1],
-	fg: pal.border,
-	bg: pal.panelBg,
-	flexDirection: "column",
-});
-logPanel.setHeight("100%");
-
-const logTitle = new Text({ content: " Event Log ", bold: true, fg: pal.accent });
-logTitle.setWidth("100%");
-logTitle.setHeight(1);
-
-const logScroll = new ScrollBox({
+// -- System info --
+const sysBox = new Box({
 	width: "100%",
+	flexDirection: "column",
+	border: "single",
 	fg: pal.border,
 	bg: pal.panelBg,
+	padding: [0, 1, 0, 1],
 });
-logScroll.setHeight("100%");
-logScroll.setRole(AccessibilityRole.List);
-logScroll.setLabel("Event log");
+sysBox.setHeight(5);
 
-const logContent = new Text({ content: "", fg: pal.fgDim });
-logContent.setWidth("100%");
-logContent.setHeight(200);
+const sysTitle = new Text({ content: " sys ", bold: true, fg: pal.accent });
+sysTitle.setWidth("100%");
+sysTitle.setHeight(1);
 
-logScroll.append(logContent);
+const sysContent = new Text({
+	content: `Kernel  ${readKernelVersion()}    Cores  ${numCores}    Terminal  ${termSize.width}x${termSize.height}`,
+	fg: pal.fgDim,
+});
+sysContent.setWidth("100%");
+sysContent.setHeight(1);
 
-logPanel.append(logTitle);
-logPanel.append(logScroll);
+sysBox.append(sysTitle);
+sysBox.append(sysContent);
 
-bottomRow.append(procSummaryPanel);
-bottomRow.append(logPanel);
+overviewPanel.append(cpuBox);
+overviewPanel.append(memBox);
+overviewPanel.append(procBox);
+overviewPanel.append(sysBox);
 
-overviewPanel.append(topRow);
-overviewPanel.append(bottomRow);
-
-// ==== PROCESSES TAB ====
+// ── PROCESSES TAB ─────────────────────────────────────────────────────
 
 const processPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
-	gap: 0,
 });
 
-// Filter row
 const filterRow = new Box({
 	width: "100%",
 	flexDirection: "row",
@@ -578,22 +572,19 @@ const filterInput = new Input({
 filterInput.setFocusable(true);
 filterInput.setRole(AccessibilityRole.Input);
 filterInput.setLabel("Process filter");
-filterInput.setDescription("Type to filter processes by name");
 
 const sortSelect = new Select({
-	options: ["CPU %", "Memory", "PID", "Name"],
-	width: 15,
+	options: ["RSS (mem)", "PID", "Name", "Threads"],
+	width: 16,
 	height: 5,
 	border: "rounded",
 	fg: pal.fg,
 	bg: pal.bg,
 });
 sortSelect.setFocusable(true);
-sortSelect.setRole(AccessibilityRole.List);
-sortSelect.setLabel("Sort by");
 
 const processCountText = new Text({ content: "", fg: pal.fgDim });
-processCountText.setWidth(25);
+processCountText.setWidth(20);
 processCountText.setHeight(3);
 
 filterRow.append(filterLabel);
@@ -601,7 +592,6 @@ filterRow.append(filterInput);
 filterRow.append(sortSelect);
 filterRow.append(processCountText);
 
-// Full process table
 const fullProcTable = new Table({
 	width: "100%",
 	fg: pal.fg,
@@ -609,27 +599,23 @@ const fullProcTable = new Table({
 	border: "single",
 });
 fullProcTable.setHeight("100%");
-fullProcTable.setColumnCount(6);
+fullProcTable.setColumnCount(5);
 fullProcTable.setColumn(0, "PID", 8, 0);
-fullProcTable.setColumn(1, "Name", 16, 0);
-fullProcTable.setColumn(2, "CPU %", 8, 0);
-fullProcTable.setColumn(3, "Memory", 12, 0);
-fullProcTable.setColumn(4, "Threads", 8, 0);
-fullProcTable.setColumn(5, "Status", 8, 0);
+fullProcTable.setColumn(1, "Name", 20, 0);
+fullProcTable.setColumn(2, "State", 6, 0);
+fullProcTable.setColumn(3, "Threads", 8, 0);
+fullProcTable.setColumn(4, "RSS", 14, 0);
 fullProcTable.setFocusable(true);
-fullProcTable.setRole(AccessibilityRole.List);
-fullProcTable.setLabel("Full process list");
 
 processPanel.append(filterRow);
 processPanel.append(fullProcTable);
 
-// ==== NETWORK TAB ====
+// ── NETWORK TAB ───────────────────────────────────────────────────────
 
 const networkPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
-	gap: 0,
 });
 
 const netTable = new Table({
@@ -638,165 +624,161 @@ const netTable = new Table({
 	bg: pal.panelBg,
 	border: "single",
 });
-netTable.setHeight(8);
+const netIfaceCount = Math.max(readNetStats().length, 2);
+netTable.setHeight(netIfaceCount + 3);
 netTable.setColumnCount(5);
-netTable.setColumn(0, "Interface", 12, 0);
-netTable.setColumn(1, "RX Rate", 14, 0);
-netTable.setColumn(2, "TX Rate", 14, 0);
+netTable.setColumn(0, "Interface", 14, 0);
+netTable.setColumn(1, "RX/s", 14, 0);
+netTable.setColumn(2, "TX/s", 14, 0);
 netTable.setColumn(3, "RX Total", 14, 0);
 netTable.setColumn(4, "TX Total", 14, 0);
-netTable.setRole(AccessibilityRole.List);
-netTable.setLabel("Network interfaces");
-
-// Network traffic graph (simulated with text bars)
-const netGraphPanel = new Box({
-	width: "100%",
-	border: "single",
-	padding: [0, 1, 0, 1],
-	fg: pal.border,
-	bg: pal.panelBg,
-	flexDirection: "column",
-});
-netGraphPanel.setHeight("100%");
-
-const netGraphTitle = new Text({ content: " Network Traffic (eth0) ", bold: true, fg: pal.accent });
-netGraphTitle.setWidth("100%");
-netGraphTitle.setHeight(1);
-
-const netGraphContent = new Text({ content: "", fg: pal.green });
-netGraphContent.setWidth("100%");
-netGraphContent.setHeight(20);
-
-netGraphPanel.append(netGraphTitle);
-netGraphPanel.append(netGraphContent);
 
 // Connection list
-const connListPanel = new Box({
+const connBox = new Box({
 	width: "100%",
 	border: "single",
-	padding: [0, 1, 0, 1],
 	fg: pal.border,
 	bg: pal.panelBg,
+	padding: [0, 1, 0, 1],
 	flexDirection: "column",
 });
-connListPanel.setHeight(10);
+connBox.setHeight("100%");
 
-const connTitle = new Text({ content: " Active Connections ", bold: true, fg: pal.accent });
+const connTitle = new Text({ content: " connections ", bold: true, fg: pal.accent });
 connTitle.setWidth("100%");
 connTitle.setHeight(1);
 
+// Read actual connections from /proc/net/tcp
+function readConnections(): string[] {
+	const lines: string[] = [];
+	try {
+		const tcp = readFile("/proc/net/tcp");
+		for (const line of tcp.split("\n").slice(1, 16)) {
+			const parts = line.trim().split(/\s+/);
+			if (!parts[1] || !parts[2] || !parts[3]) continue;
+			const [localHex, localPortHex] = parts[1].split(":");
+			const [remoteHex, remotePortHex] = parts[2].split(":");
+			const stateNum = parseInt(parts[3]!, 16);
+			const states: Record<number, string> = {
+				1: "ESTABLISHED", 2: "SYN_SENT", 3: "SYN_RECV", 4: "FIN_WAIT1",
+				5: "FIN_WAIT2", 6: "TIME_WAIT", 7: "CLOSE", 8: "CLOSE_WAIT",
+				9: "LAST_ACK", 10: "LISTEN", 11: "CLOSING",
+			};
+			const localPort = parseInt(localPortHex || "0", 16);
+			const remotePort = parseInt(remotePortHex || "0", 16);
+			const state = states[stateNum] || "UNKNOWN";
+			lines.push(`tcp  :${localPort.toString().padEnd(6)} -> :${remotePort.toString().padEnd(6)} ${state}`);
+		}
+	} catch {
+		lines.push("(unable to read /proc/net/tcp)");
+	}
+	return lines;
+}
+
 const connList = new List({
-	items: [
-		"tcp  0.0.0.0:443     LISTEN       nginx",
-		"tcp  0.0.0.0:5432    LISTEN       postgres",
-		"tcp  0.0.0.0:6379    LISTEN       redis",
-		"tcp  127.0.0.1:3000  ESTABLISHED  node",
-		"tcp  10.0.0.5:22     ESTABLISHED  sshd",
-		"tcp  10.0.0.5:8080   TIME_WAIT    bun",
-		"udp  0.0.0.0:5353    -            avahi",
-	],
+	items: readConnections(),
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
 });
-connList.setHeight(7);
+connList.setHeight("100%");
 connList.setFocusable(true);
-connList.setRole(AccessibilityRole.List);
-connList.setLabel("Active network connections");
 
-connListPanel.append(connTitle);
-connListPanel.append(connList);
+connBox.append(connTitle);
+connBox.append(connList);
 
 networkPanel.append(netTable);
-networkPanel.append(netGraphPanel);
-networkPanel.append(connListPanel);
+networkPanel.append(connBox);
 
-// ==== DISKS TAB ====
+// ── DISKS TAB ─────────────────────────────────────────────────────────
 
 const diskPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
-	gap: 0,
 });
 
+// Mount info from /proc/mounts
 const diskTable = new Table({
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
 	border: "single",
 });
-diskTable.setHeight(8);
-diskTable.setColumnCount(5);
-diskTable.setColumn(0, "Mount", 16, 0);
-diskTable.setColumn(1, "Device", 20, 0);
-diskTable.setColumn(2, "Size", 10, 0);
-diskTable.setColumn(3, "Used", 10, 0);
-diskTable.setColumn(4, "FS", 8, 0);
-diskTable.setRole(AccessibilityRole.List);
-diskTable.setLabel("Disk partitions");
+diskTable.setHeight(10);
+diskTable.setColumnCount(3);
+diskTable.setColumn(0, "Device", 30, 0);
+diskTable.setColumn(1, "Mount", 20, 0);
+diskTable.setColumn(2, "Type", 10, 0);
 
-// Disk usage bars
-const diskBarPanel = new Box({
-	width: "100%",
-	border: "single",
-	padding: [0, 1, 0, 1],
-	fg: pal.border,
-	bg: pal.panelBg,
-	flexDirection: "column",
-});
-diskBarPanel.setHeight("100%");
-
-const diskBarTitle = new Text({ content: " Disk Usage ", bold: true, fg: pal.accent });
-diskBarTitle.setWidth("100%");
-diskBarTitle.setHeight(1);
-
-const diskBarContent = new Text({ content: "", fg: pal.fg });
-diskBarContent.setWidth("100%");
-diskBarContent.setHeight(12);
-
-// Code snippet for reading disk I/O (shows syntax highlighting)
-const diskCodePanel = new Box({
+// Code example (shows syntax highlighting)
+const codeBox = new Box({
 	width: "100%",
 	border: "single",
 	fg: pal.border,
 	bg: pal.panelBg,
 	flexDirection: "column",
 });
-diskCodePanel.setHeight(10);
+codeBox.setHeight(12);
 
-const diskCodeTitle = new Text({ content: " I/O Stats (Code Example) ", bold: true, fg: pal.accent });
-diskCodeTitle.setWidth("100%");
-diskCodeTitle.setHeight(1);
+const codeTitle = new Text({ content: " /proc/diskstats reader ", bold: true, fg: pal.accent });
+codeTitle.setWidth("100%");
+codeTitle.setHeight(1);
 
-const diskCode = new Text({
+const codeText = new Text({
 	content: [
 		"use std::fs;",
 		"",
-		"fn read_disk_stats() -> Vec<DiskStat> {",
-		'    let content = fs::read_to_string("/proc/diskstats")',
-		'        .expect("Failed to read /proc/diskstats");',
+		'fn read_disk_stats() -> Result<Vec<DiskStat>, Box<dyn Error>> {',
+		'    let content = fs::read_to_string("/proc/diskstats")?;',
 		"    content.lines()",
-		"        .filter_map(|line| parse_diskstat(line))",
-		"        .collect()",
+		"        .filter_map(|line| {",
+		"            let parts: Vec<&str> = line.split_whitespace().collect();",
+		'            Some(DiskStat { name: parts.get(2)?.to_string() })',
+		"        })",
+		"        .collect::<Vec<_>>().pipe(Ok)",
 		"}",
 	].join("\n"),
 	format: "code",
 	language: "rust",
 	fg: pal.fg,
 });
-diskCode.setWidth("100%");
-diskCode.setHeight(9);
+codeText.setWidth("100%");
+codeText.setHeight(11);
 
-diskCodePanel.append(diskCodeTitle);
-diskCodePanel.append(diskCode);
+codeBox.append(codeTitle);
+codeBox.append(codeText);
 
-diskBarPanel.append(diskBarTitle);
-diskBarPanel.append(diskBarContent);
+// TextArea for notes
+const notesBox = new Box({
+	width: "100%",
+	border: "single",
+	fg: pal.border,
+	bg: pal.panelBg,
+	flexDirection: "column",
+});
+notesBox.setHeight("100%");
+
+const notesTitle = new Text({ content: " notes ", bold: true, fg: pal.accent });
+notesTitle.setWidth("100%");
+notesTitle.setHeight(1);
+
+const notesArea = new TextArea({
+	width: "100%",
+	wrap: true,
+	fg: pal.fg,
+	bg: pal.panelBg,
+});
+notesArea.setHeight("100%");
+notesArea.setFocusable(true);
+notesArea.setValue("Disk notes: this TextArea supports multi-line editing, selection, undo/redo, and find.\nTry typing here — press Tab to focus.");
+
+notesBox.append(notesTitle);
+notesBox.append(notesArea);
 
 diskPanel.append(diskTable);
-diskPanel.append(diskBarPanel);
-diskPanel.append(diskCodePanel);
+diskPanel.append(codeBox);
+diskPanel.append(notesBox);
 
 // ── Status Bar ────────────────────────────────────────────────────────
 
@@ -806,15 +788,13 @@ const statusBar = new Box({
 	bg: pal.headerBg,
 });
 statusBar.setHeight(1);
-statusBar.setRole(AccessibilityRole.Status);
-statusBar.setLabel("Status bar");
 
 const statusLeft = new Text({ content: "", fg: pal.green });
-statusLeft.setWidth("50%");
+statusLeft.setWidth("60%");
 statusLeft.setHeight(1);
 
 const statusRight = new Text({ content: "", fg: pal.fgDim });
-statusRight.setWidth("50%");
+statusRight.setWidth("40%");
 statusRight.setHeight(1);
 
 statusBar.append(statusLeft);
@@ -824,7 +804,7 @@ statusBar.append(statusRight);
 
 const helpOverlay = new Overlay({
 	width: 50,
-	height: 20,
+	height: 18,
 	border: "rounded",
 	fg: pal.accent,
 	bg: pal.panelBg,
@@ -832,8 +812,6 @@ const helpOverlay = new Overlay({
 	clearUnder: true,
 });
 helpOverlay.setDismissOnEscape(true);
-helpOverlay.setRole(AccessibilityRole.Region);
-helpOverlay.setLabel("Help dialog");
 
 const helpContent = new Text({
 	content: [
@@ -849,16 +827,14 @@ const helpContent = new Text({
 		"| `h` | Toggle help |",
 		"| `/` | Focus filter |",
 		"| `Esc` | Close / Quit |",
-		"| `q` | Quit |",
 		"",
 		"*Built with Kraken TUI*",
-		"*Rust FFI + TypeScript/Bun*",
 	].join("\n"),
 	format: "markdown",
 	fg: pal.fg,
 });
 helpContent.setWidth("100%");
-helpContent.setHeight(18);
+helpContent.setHeight(16);
 
 helpOverlay.append(helpContent);
 
@@ -869,8 +845,6 @@ const contentArea = new Box({
 	height: "100%",
 	flexDirection: "column",
 });
-
-// Start with overview visible
 contentArea.append(overviewPanel);
 
 root.append(headerBar);
@@ -881,378 +855,256 @@ root.append(helpOverlay);
 
 app.setRoot(root);
 
-// ── Log Buffer ────────────────────────────────────────────────────────
-
-const logLines: string[] = [];
-const MAX_LOG_LINES = 150;
-
-function pushLog(msg: string): void {
-	const stamp = new Date().toISOString().slice(11, 19);
-	logLines.push(`[${stamp}] ${msg}`);
-	if (logLines.length > MAX_LOG_LINES) {
-		logLines.splice(0, logLines.length - MAX_LOG_LINES);
-	}
-	logContent.setContent(logLines.join("\n"));
-}
-
-// Network history for graph
-const netHistory: number[] = new Array(60).fill(0);
-
-// ── Data Update Function ──────────────────────────────────────────────
-
-function updateDisplay(): void {
-	updateSimulation();
-
-	// Header
-	uptimeText.setContent(`up ${formatUptime(uptimeSeconds)}`);
-
-	// CPU
-	cpuContent.setContent(cpuBars());
-	const avgCpu = cpuCores.reduce((s, c) => s + c.usage, 0) / cpuCores.length;
-	cpuAvgText.setContent(
-		`AVG: ${avgCpu.toFixed(1)}%  MAX: ${Math.max(...cpuCores.map((c) => c.usage)).toFixed(0)}%  Temp: ${Math.max(...cpuCores.map((c) => c.temp)).toFixed(0)}C`,
-	);
-
-	// Memory
-	memContent.setContent(memoryBar());
-
-	// Load
-	const load1 = randBetween(0.5, cpuCores.length * 0.8);
-	const load5 = randBetween(0.3, cpuCores.length * 0.6);
-	const load15 = randBetween(0.2, cpuCores.length * 0.5);
-	loadText.setContent(`Load: ${load1.toFixed(2)} ${load5.toFixed(2)} ${load15.toFixed(2)}`);
-
-	// Process summary table (top 8 by CPU)
-	const sorted = [...processPool].sort((a, b) => b.cpu - a.cpu);
-	const top8 = sorted.slice(0, 8);
-	procTable.clearRows();
-	for (let i = 0; i < top8.length; i++) {
-		const p = top8[i]!;
-		procTable.insertRow(i);
-		procTable.setCell(i, 0, String(p.pid));
-		procTable.setCell(i, 1, p.name);
-		procTable.setCell(i, 2, p.cpu.toFixed(1));
-		procTable.setCell(i, 3, `${p.mem.toFixed(0)} MB`);
-		procTable.setCell(i, 4, p.status);
-	}
-
-	// Full process table
-	const filterVal = filterInput.getValue().toLowerCase();
-	const sortIdx = sortSelect.getSelected();
-	let filtered = filterVal
-		? processPool.filter((p) => p.name.toLowerCase().includes(filterVal))
-		: [...processPool];
-
-	if (sortIdx === 0) filtered.sort((a, b) => b.cpu - a.cpu);
-	else if (sortIdx === 1) filtered.sort((a, b) => b.mem - a.mem);
-	else if (sortIdx === 2) filtered.sort((a, b) => a.pid - b.pid);
-	else if (sortIdx === 3) filtered.sort((a, b) => a.name.localeCompare(b.name));
-
-	processCountText.setContent(`${filtered.length}/${processPool.length} procs`);
-
-	fullProcTable.clearRows();
-	for (let i = 0; i < filtered.length; i++) {
-		const p = filtered[i]!;
-		fullProcTable.insertRow(i);
-		fullProcTable.setCell(i, 0, String(p.pid));
-		fullProcTable.setCell(i, 1, p.name);
-		fullProcTable.setCell(i, 2, p.cpu.toFixed(1));
-		fullProcTable.setCell(i, 3, `${p.mem.toFixed(0)} MB`);
-		fullProcTable.setCell(i, 4, String(p.threads));
-		fullProcTable.setCell(i, 5, p.status);
-	}
-
-	// Network table
-	netTable.clearRows();
-	for (let i = 0; i < netInterfaces.length; i++) {
-		const iface = netInterfaces[i]!;
-		netTable.insertRow(i);
-		netTable.setCell(i, 0, iface.name);
-		netTable.setCell(i, 1, `${formatBytes(iface.rxRate)}/s`);
-		netTable.setCell(i, 2, `${formatBytes(iface.txRate)}/s`);
-		netTable.setCell(i, 3, formatBytes(iface.rxTotal));
-		netTable.setCell(i, 4, formatBytes(iface.txTotal));
-	}
-
-	// Network graph (sparkline-style)
-	netHistory.push(netInterfaces[0]!.rxRate);
-	if (netHistory.length > 60) netHistory.shift();
-	const maxRate = Math.max(...netHistory, 1);
-	const graphHeight = 10;
-	const graphLines: string[] = [];
-	for (let row = graphHeight - 1; row >= 0; row--) {
-		const threshold = (row / graphHeight) * maxRate;
-		let line = "";
-		for (const val of netHistory) {
-			if (val >= threshold) line += "|";
-			else line += " ";
-		}
-		const label = formatBytes(threshold).padStart(10);
-		graphLines.push(`${label} ${line}`);
-	}
-	graphLines.push(`           ${"_".repeat(60)}`);
-	graphLines.push(`           RX: ${formatBytes(netInterfaces[0]!.rxRate)}/s  TX: ${formatBytes(netInterfaces[0]!.txRate)}/s`);
-	netGraphContent.setContent(graphLines.join("\n"));
-
-	// Disk table
-	diskTable.clearRows();
-	for (let i = 0; i < disks.length; i++) {
-		const d = disks[i]!;
-		diskTable.insertRow(i);
-		diskTable.setCell(i, 0, d.mount);
-		diskTable.setCell(i, 1, d.device);
-		diskTable.setCell(i, 2, `${d.total} GB`);
-		diskTable.setCell(i, 3, `${d.used.toFixed(1)} GB`);
-		diskTable.setCell(i, 4, d.fs);
-	}
-
-	// Disk bars
-	const diskLines = disks.map((d) => {
-		const pct = (d.used / d.total) * 100;
-		const barWidth = 30;
-		const color = pct > 90 ? "!" : pct > 70 ? "*" : " ";
-		return `${d.mount.padEnd(16)} ${barGraph(d.used, d.total, barWidth)} ${pct.toFixed(1)}%${color}`;
-	});
-	diskBarContent.setContent(diskLines.join("\n"));
-
-	// Status bar
-	const totalCpu = cpuCores.reduce((s, c) => s + c.usage, 0) / cpuCores.length;
-	statusLeft.setContent(
-		` CPU: ${totalCpu.toFixed(0)}%  MEM: ${((usedMemGB / totalMemGB) * 100).toFixed(0)}%  Procs: ${processPool.length}  Net: ${formatBytes(netInterfaces[0]!.rxRate)}/s`,
-	);
-	statusRight.setContent(
-		`Nodes: ${app.getNodeCount()}  Theme: ${pal.name}  Tab: ${["Overview", "Processes", "Network", "Disks"][activeTab]}  `,
-	);
-}
-
 // ── Tab Switching ─────────────────────────────────────────────────────
 
 const tabPanels = [overviewPanel, processPanel, networkPanel, diskPanel];
 let currentTabPanel = overviewPanel;
 
 function switchTab(index: number): void {
-	if (index === activeTab) return;
-	if (index < 0 || index >= tabPanels.length) return;
-
+	if (index === activeTab || index < 0 || index >= tabPanels.length) return;
 	contentArea.removeChild(currentTabPanel);
 	activeTab = index;
 	tabs.setActive(index);
 	currentTabPanel = tabPanels[index]!;
 	contentArea.append(currentTabPanel);
-	pushLog(`Switched to tab: ${["Overview", "Processes", "Network", "Disks"][index]}`);
 }
 
 // ── Theme Switching ───────────────────────────────────────────────────
 
 function applyPalette(p: Palette): void {
 	pal = p;
-
 	root.setBackground(p.bg);
 	headerBar.setBackground(p.headerBg);
 	titleText.setForeground(p.accent);
 	hostText.setForeground(p.fg);
 	uptimeText.setForeground(p.fgDim);
+	loadText.setForeground(p.cyan);
 	themeText.setForeground(p.accent);
-	themeText.setContent(`[t] ${p.name}`);
+	themeText.setContent(` [t] ${p.name}`);
 	helpHint.setForeground(p.fgDim);
-
 	tabs.setForeground(p.fg);
 	tabs.setBackground(p.panelBg);
-
-	// CPU panel
-	cpuPanel.setForeground(p.border);
-	cpuPanel.setBackground(p.panelBg);
+	cpuBox.setForeground(p.border); cpuBox.setBackground(p.panelBg);
 	cpuTitle.setForeground(p.accent);
 	cpuContent.setForeground(p.fg);
-	cpuAvgText.setForeground(p.yellow);
-
-	// Memory panel
-	memPanel.setForeground(p.border);
-	memPanel.setBackground(p.panelBg);
+	cpuAvgLine.setForeground(p.yellow);
+	memBox.setForeground(p.border); memBox.setBackground(p.panelBg);
 	memTitle.setForeground(p.accent);
 	memContent.setForeground(p.fg);
-	sysInfo.setForeground(p.fgDim);
-	loadText.setForeground(p.cyan);
-
-	// Process panels
-	procSummaryPanel.setForeground(p.border);
-	procSummaryPanel.setBackground(p.panelBg);
-	procSummaryTitle.setForeground(p.accent);
-	procTable.setForeground(p.fg);
-	procTable.setBackground(p.panelBg);
-
-	// Log panel
-	logPanel.setForeground(p.border);
-	logPanel.setBackground(p.panelBg);
-	logTitle.setForeground(p.accent);
-	logScroll.setForeground(p.border);
-	logScroll.setBackground(p.panelBg);
-	logContent.setForeground(p.fgDim);
-
-	// Process tab
+	procBox.setForeground(p.border); procBox.setBackground(p.panelBg);
+	procTitle.setForeground(p.accent);
+	procTable.setForeground(p.fg); procTable.setBackground(p.panelBg);
+	sysBox.setForeground(p.border); sysBox.setBackground(p.panelBg);
+	sysTitle.setForeground(p.accent);
+	sysContent.setForeground(p.fgDim);
 	filterRow.setBackground(p.panelBg);
 	filterLabel.setForeground(p.accent);
-	filterInput.setForeground(p.fg);
-	filterInput.setBackground(p.bg);
-	sortSelect.setForeground(p.fg);
-	sortSelect.setBackground(p.bg);
+	filterInput.setForeground(p.fg); filterInput.setBackground(p.bg);
+	sortSelect.setForeground(p.fg); sortSelect.setBackground(p.bg);
 	processCountText.setForeground(p.fgDim);
-	fullProcTable.setForeground(p.fg);
-	fullProcTable.setBackground(p.panelBg);
-
-	// Network tab
-	netTable.setForeground(p.fg);
-	netTable.setBackground(p.panelBg);
-	netGraphPanel.setForeground(p.border);
-	netGraphPanel.setBackground(p.panelBg);
-	netGraphTitle.setForeground(p.accent);
-	netGraphContent.setForeground(p.green);
-	connListPanel.setForeground(p.border);
-	connListPanel.setBackground(p.panelBg);
+	fullProcTable.setForeground(p.fg); fullProcTable.setBackground(p.panelBg);
+	netTable.setForeground(p.fg); netTable.setBackground(p.panelBg);
+	connBox.setForeground(p.border); connBox.setBackground(p.panelBg);
 	connTitle.setForeground(p.accent);
-	connList.setForeground(p.fg);
-	connList.setBackground(p.panelBg);
-
-	// Disk tab
-	diskTable.setForeground(p.fg);
-	diskTable.setBackground(p.panelBg);
-	diskBarPanel.setForeground(p.border);
-	diskBarPanel.setBackground(p.panelBg);
-	diskBarTitle.setForeground(p.accent);
-	diskBarContent.setForeground(p.fg);
-	diskCodePanel.setForeground(p.border);
-	diskCodePanel.setBackground(p.panelBg);
-	diskCodeTitle.setForeground(p.accent);
-	diskCode.setForeground(p.fg);
-
-	// Status bar
+	connList.setForeground(p.fg); connList.setBackground(p.panelBg);
+	diskTable.setForeground(p.fg); diskTable.setBackground(p.panelBg);
+	codeBox.setForeground(p.border); codeBox.setBackground(p.panelBg);
+	codeTitle.setForeground(p.accent);
+	codeText.setForeground(p.fg);
+	notesBox.setForeground(p.border); notesBox.setBackground(p.panelBg);
+	notesTitle.setForeground(p.accent);
+	notesArea.setForeground(p.fg); notesArea.setBackground(p.panelBg);
 	statusBar.setBackground(p.headerBg);
 	statusLeft.setForeground(p.green);
 	statusRight.setForeground(p.fgDim);
-
-	// Help overlay
-	helpOverlay.setForeground(p.accent);
-	helpOverlay.setBackground(p.panelBg);
+	helpOverlay.setForeground(p.accent); helpOverlay.setBackground(p.panelBg);
 	helpContent.setForeground(p.fg);
 }
 
 function cycleTheme(): void {
 	paletteIndex = (paletteIndex + 1) % palettes.length;
 	applyPalette(palettes[paletteIndex]!);
-	pushLog(`Theme switched to ${pal.name}`);
 }
 
-// ── Animation: pulsing title ──────────────────────────────────────────
+// ── Animation ─────────────────────────────────────────────────────────
 
 titleText.pulse({ duration: 2000, easing: "easeInOut" });
 
-// ── Initial State ─────────────────────────────────────────────────────
+// ── Data Update ───────────────────────────────────────────────────────
 
-pushLog("System monitor started");
-pushLog(`${NUM_CORES} CPU cores detected`);
-pushLog(`${totalMemGB} GB RAM, ${swapTotalGB} GB swap`);
-pushLog(`${disks.length} disk partitions mounted`);
-pushLog(`${netInterfaces.length} network interfaces`);
-pushLog("Press [h] for help");
+function updateData(): void {
+	// CPU deltas
+	const currentCpu = readCpuTimes();
+	const barWidth = Math.max(20, Math.min(50, termSize.width - 30));
+
+	const coreLines: string[] = [];
+	for (let i = 0; i < currentCpu.length && i < prevCpuTimes.length; i++) {
+		const prev = prevCpuTimes[i]!;
+		const curr = currentCpu[i]!;
+		const dTotal = curr.total - prev.total;
+		const dBusy = curr.busy - prev.busy;
+		const usage = dTotal > 0 ? (dBusy / dTotal) * 100 : 0;
+		cpuUsages[i] = usage;
+		const pctStr = `${usage.toFixed(0)}%`.padStart(4);
+		coreLines.push(`C${i.toString().padEnd(2)} ${colorBar(usage / 100, barWidth)} ${pctStr}`);
+	}
+	prevCpuTimes = currentCpu;
+	cpuContent.setContent(coreLines.join("\n"));
+
+	const avgCpu = cpuUsages.reduce((a, b) => a + b, 0) / (cpuUsages.length || 1);
+	const maxCpu = Math.max(...cpuUsages);
+	cpuAvgLine.setContent(` avg ${avgCpu.toFixed(0)}%  max ${maxCpu.toFixed(0)}%  load ${readLoadAvg()}`);
+
+	// Memory
+	const mem = readMeminfo();
+	const memRatio = mem.memTotal > 0 ? mem.memUsed / mem.memTotal : 0;
+	const swapRatio = mem.swapTotal > 0 ? mem.swapUsed / mem.swapTotal : 0;
+	memContent.setContent([
+		`RAM ${colorBar(memRatio, barWidth)} ${formatKb(mem.memUsed)} / ${formatKb(mem.memTotal)} (${(memRatio * 100).toFixed(0)}%)`,
+		`SWP ${colorBar(swapRatio, barWidth)} ${formatKb(mem.swapUsed)} / ${formatKb(mem.swapTotal)}`,
+		`Buffers ${formatKb(mem.buffers)}  Cached ${formatKb(mem.cached)}  Available ${formatKb(mem.memAvail)}`,
+	].join("\n"));
+
+	// Header
+	uptimeText.setContent(` up ${formatUptime(readUptime())}`);
+	loadText.setContent(` Load: ${readLoadAvg()}`);
+
+	// Process table
+	const procs = readProcesses().sort((a, b) => b.rssKb - a.rssKb);
+	const top10 = procs.slice(0, 10);
+	procTable.clearRows();
+	for (let i = 0; i < top10.length; i++) {
+		const p = top10[i]!;
+		procTable.insertRow(i);
+		procTable.setCell(i, 0, String(p.pid));
+		procTable.setCell(i, 1, p.name);
+		procTable.setCell(i, 2, p.state);
+		procTable.setCell(i, 3, String(p.threads));
+		procTable.setCell(i, 4, formatKb(p.rssKb));
+	}
+
+	// Full process table (processes tab)
+	const filterVal = filterInput.getValue().toLowerCase();
+	const sortIdx = sortSelect.getSelected();
+	let filtered = filterVal
+		? procs.filter((p) => p.name.toLowerCase().includes(filterVal))
+		: procs;
+	if (sortIdx === 1) filtered = [...filtered].sort((a, b) => a.pid - b.pid);
+	else if (sortIdx === 2) filtered = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+	else if (sortIdx === 3) filtered = [...filtered].sort((a, b) => b.threads - a.threads);
+
+	processCountText.setContent(` ${filtered.length} procs`);
+
+	fullProcTable.clearRows();
+	const maxProcs = Math.min(filtered.length, 50);
+	for (let i = 0; i < maxProcs; i++) {
+		const p = filtered[i]!;
+		fullProcTable.insertRow(i);
+		fullProcTable.setCell(i, 0, String(p.pid));
+		fullProcTable.setCell(i, 1, p.name);
+		fullProcTable.setCell(i, 2, p.state);
+		fullProcTable.setCell(i, 3, String(p.threads));
+		fullProcTable.setCell(i, 4, formatKb(p.rssKb));
+	}
+
+	// Network
+	const currentNet = readNetStats();
+	netRates = currentNet.map((curr) => {
+		const prev = prevNetStats.find((p) => p.name === curr.name);
+		return {
+			name: curr.name,
+			rx: prev ? Math.max(0, curr.rxBytes - prev.rxBytes) : 0,
+			tx: prev ? Math.max(0, curr.txBytes - prev.txBytes) : 0,
+			rxTotal: curr.rxBytes,
+			txTotal: curr.txBytes,
+		};
+	});
+	prevNetStats = currentNet;
+
+	netTable.clearRows();
+	for (let i = 0; i < netRates.length; i++) {
+		const n = netRates[i]!;
+		netTable.insertRow(i);
+		netTable.setCell(i, 0, n.name);
+		netTable.setCell(i, 1, `${formatBytes(n.rx)}/s`);
+		netTable.setCell(i, 2, `${formatBytes(n.tx)}/s`);
+		netTable.setCell(i, 3, formatBytes(n.rxTotal));
+		netTable.setCell(i, 4, formatBytes(n.txTotal));
+	}
+
+	// Disk mounts
+	const mounts = readFile("/proc/mounts").split("\n")
+		.map((l) => l.split(/\s+/))
+		.filter((p) => p[0] && p[1] && ["ext4", "ext3", "xfs", "btrfs", "vfat", "tmpfs", "zfs", "overlay"].includes(p[2] || ""));
+
+	diskTable.clearRows();
+	for (let i = 0; i < Math.min(mounts.length, 8); i++) {
+		const p = mounts[i]!;
+		diskTable.insertRow(i);
+		diskTable.setCell(i, 0, p[0] || "");
+		diskTable.setCell(i, 1, p[1] || "");
+		diskTable.setCell(i, 2, p[2] || "");
+	}
+
+	// Status bar
+	statusLeft.setContent(
+		` CPU ${avgCpu.toFixed(0)}%  MEM ${(memRatio * 100).toFixed(0)}%  Procs ${procs.length}  Up ${formatUptime(readUptime())}`,
+	);
+	statusRight.setContent(
+		`Nodes ${app.getNodeCount()}  Theme ${pal.name}  ${["Overview", "Processes", "Network", "Disks"][activeTab]} `,
+	);
+}
+
+// ── Event Loop ────────────────────────────────────────────────────────
 
 let helpVisible = false;
 let tickCounter = 0;
 
-// ── Event Loop ────────────────────────────────────────────────────────
-
 const loop = createLoop({
 	app,
-	mode: "continuous",
-	fps: 30,
+	fps: 10,
 
 	onEvent(event: KrakenEvent) {
 		if (event.type === "key") {
-			// Close help overlay on Escape
 			if (event.keyCode === KeyCode.Escape) {
 				if (helpVisible) {
 					helpOverlay.setOpen(false);
 					helpVisible = false;
-					pushLog("Help closed");
 					return;
 				}
 				loop.stop();
 				return;
 			}
-
 			const cp = event.codepoint ?? 0;
 			if (cp === 0) return;
 			const key = String.fromCodePoint(cp).toLowerCase();
-
-			if (key === "q") {
-				loop.stop();
-				return;
-			}
-
-			// Tab switching with number keys
-			if (key >= "1" && key <= "4") {
-				switchTab(parseInt(key) - 1);
-				return;
-			}
-
-			// Theme cycling
-			if (key === "t") {
-				cycleTheme();
-				return;
-			}
-
-			// Help overlay
+			if (key === "q") { loop.stop(); return; }
+			if (key >= "1" && key <= "4") { switchTab(parseInt(key) - 1); return; }
+			if (key === "t") { cycleTheme(); return; }
 			if (key === "h") {
 				helpVisible = !helpVisible;
 				helpOverlay.setOpen(helpVisible);
-				pushLog(helpVisible ? "Help opened" : "Help closed");
 				return;
 			}
-
-			// Focus filter
 			if (key === "/") {
 				if (activeTab !== 1) switchTab(1);
 				filterInput.focus();
-				pushLog("Filter focused");
 				return;
-			}
-		}
-
-		if (event.type === "focus") {
-			pushLog(`Focus changed to handle ${event.toHandle ?? 0}`);
-		}
-
-		if (event.type === "change") {
-			if (event.target === sortSelect.handle) {
-				const idx = sortSelect.getSelected();
-				const names = ["CPU %", "Memory", "PID", "Name"];
-				pushLog(`Sort changed to: ${names[idx] ?? "?"}`);
 			}
 		}
 	},
 
 	onTick() {
 		tickCounter++;
-		// Update simulation data every ~1 second (30 ticks at 30fps)
-		if (tickCounter % 30 === 0) {
-			updateDisplay();
-
-			// Periodic log entries
-			if (tickCounter % 150 === 0) {
-				const avgCpu = cpuCores.reduce((s, c) => s + c.usage, 0) / cpuCores.length;
-				if (avgCpu > 60) {
-					pushLog(`WARN: High CPU usage: ${avgCpu.toFixed(0)}%`);
-				}
-				const memPct = (usedMemGB / totalMemGB) * 100;
-				if (memPct > 80) {
-					pushLog(`WARN: Memory usage at ${memPct.toFixed(0)}%`);
-				}
-			}
+		// Update every ~1 second (10 ticks at 10fps)
+		if (tickCounter % 10 === 0) {
+			updateData();
 		}
 	},
 });
 
-// Initial display
-updateDisplay();
+// Initial data
+updateData();
 
 try {
 	await loop.start();
