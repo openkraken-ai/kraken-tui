@@ -233,7 +233,13 @@ fn render_node(
     let bg = resolved.bg_color;
     let opacity = resolved.opacity;
     let fg = blend_opacity(raw_fg, bg, opacity);
-    let border_fg = blend_opacity(resolved.border_color, bg, opacity);
+    let raw_border = resolved.border_color;
+    // Fall back to fg_color when border_color is unset (0 = default)
+    let border_fg = if raw_border != 0 {
+        blend_opacity(raw_border, bg, opacity)
+    } else {
+        fg
+    };
     let attrs = resolved.attrs;
     let border_style = resolved.border_style;
     let content = node.content.clone();

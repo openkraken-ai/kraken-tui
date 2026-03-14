@@ -505,7 +505,12 @@ fn render_snapshot_node(
 
     // Render border (simplified)
     if border_style > 0 && w >= 2 && h >= 2 {
-        let border_fg = blend_snapshot_opacity(node.border_color, bg, node.opacity);
+        // Fall back to fg_color when border_color is unset (0 = default)
+        let border_fg = if node.border_color != 0 {
+            blend_snapshot_opacity(node.border_color, bg, node.opacity)
+        } else {
+            fg
+        };
         let (tl, tr, bl, br, horiz, vert) = border_chars(border_style);
 
         clip_set_snapshot(
