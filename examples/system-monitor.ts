@@ -1062,7 +1062,7 @@ let tickCounter = 0;
 
 const loop = createLoop({
 	app,
-	fps: 10,
+	fps: 60,
 
 	onEvent(event: KrakenEvent) {
 		if (event.type === "key") {
@@ -1097,7 +1097,7 @@ const loop = createLoop({
 	onTick() {
 		tickCounter++;
 		// Update every ~1 second (10 ticks at 10fps)
-		if (tickCounter % 10 === 0) {
+		if (tickCounter % 60 === 0) {
 			updateData();
 		}
 	},
