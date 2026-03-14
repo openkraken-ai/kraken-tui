@@ -368,7 +368,10 @@ fn render_thread_main(
                 writer_state.reset();
 
                 let metrics = {
-                    let mut be = backend.lock().unwrap();
+                    let mut be = match backend.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     match be.emit_runs(&mut writer_state, &runs) {
                         Ok(m) => m,
                         Err(_) => WriterMetrics {
@@ -480,21 +483,23 @@ fn render_snapshot_node(
     let attrs = node.attrs;
     let border_style = node.border_style;
 
-    // Fill background
-    for dy in 0..h {
-        for dx in 0..w {
-            clip_set_snapshot(
-                buffer,
-                abs_x + dx,
-                abs_y + dy,
-                Cell {
-                    ch: ' ',
-                    fg,
-                    bg,
-                    attrs: CellAttrs::empty(),
-                },
-                clip,
-            );
+    // Fill background (only when bg is set, matching production render::render_node)
+    if bg != 0 {
+        for dy in 0..h {
+            for dx in 0..w {
+                clip_set_snapshot(
+                    buffer,
+                    abs_x + dx,
+                    abs_y + dy,
+                    Cell {
+                        ch: ' ',
+                        fg,
+                        bg,
+                        attrs: CellAttrs::empty(),
+                    },
+                    clip,
+                );
+            }
         }
     }
 
@@ -1116,18 +1121,18 @@ fn diff_snapshot_buffers(front: &Buffer, back: &Buffer) -> Vec<CellUpdate> {
 
     for y in 0..h {
         for x in 0..w {
-            let f = front.get(x, y).unwrap();
-            let b = back.get(x, y);
-            let changed = match b {
-                Some(b) => f != b,
-                None => true,
-            };
-            if changed {
-                updates.push(CellUpdate {
-                    x,
-                    y,
-                    cell: f.clone(),
-                });
+            if let Some(f) = front.get(x, y) {
+                let changed = match back.get(x, y) {
+                    Some(b) => f != b,
+                    None => true,
+                };
+                if changed {
+                    updates.push(CellUpdate {
+                        x,
+                        y,
+                        cell: f.clone(),
+                    });
+                }
             }
         }
     }
