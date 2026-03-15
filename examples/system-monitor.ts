@@ -432,15 +432,12 @@ const overviewPanel = new Box({
 const cpuBox = new Box({
 	width: "100%",
 	flexDirection: "column",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	padding: [0, 1, 0, 1],
 });
-// Height = cores + 2 (title + avg line) + 2 (border)
-cpuBox.setHeight(numCores + 4);
+cpuBox.setHeight(numCores + 3);
 
-const cpuTitle = new Text({ content: " cpu ", bold: true, fg: pal.accent });
+const cpuTitle = new Text({ content: "─ cpu ─────────────────────────────────────", bold: true, fg: pal.accent });
 cpuTitle.setWidth("100%");
 cpuTitle.setHeight(1);
 
@@ -460,14 +457,12 @@ cpuBox.append(cpuAvgLine);
 const memBox = new Box({
 	width: "100%",
 	flexDirection: "column",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	padding: [0, 1, 0, 1],
 });
-memBox.setHeight(6);
+memBox.setHeight(5);
 
-const memTitle = new Text({ content: " mem ", bold: true, fg: pal.accent });
+const memTitle = new Text({ content: "─ mem ─────────────────────────────────────", bold: true, fg: pal.accent });
 memTitle.setWidth("100%");
 memTitle.setHeight(1);
 
@@ -482,14 +477,12 @@ memBox.append(memContent);
 const procBox = new Box({
 	width: "100%",
 	flexDirection: "column",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	padding: [0, 1, 0, 1],
 });
-procBox.setHeight(14);
+procBox.setHeight(13);
 
-const procTitle = new Text({ content: " proc ", bold: true, fg: pal.accent });
+const procTitle = new Text({ content: "─ proc ────────────────────────────────────", bold: true, fg: pal.accent });
 procTitle.setWidth("100%");
 procTitle.setHeight(1);
 
@@ -514,14 +507,12 @@ procBox.append(procTable);
 const sysBox = new Box({
 	width: "100%",
 	flexDirection: "column",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	padding: [0, 1, 0, 1],
 });
-sysBox.setHeight(5);
+sysBox.setHeight(3);
 
-const sysTitle = new Text({ content: " sys ", bold: true, fg: pal.accent });
+const sysTitle = new Text({ content: "─ sys ─────────────────────────────────────", bold: true, fg: pal.accent });
 sysTitle.setWidth("100%");
 sysTitle.setHeight(1);
 
@@ -596,7 +587,6 @@ const fullProcTable = new Table({
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
-	border: "single",
 });
 fullProcTable.setHeight("100%");
 fullProcTable.setColumnCount(5);
@@ -622,7 +612,6 @@ const netTable = new Table({
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
-	border: "single",
 });
 const netIfaceCount = Math.max(readNetStats().length, 2);
 netTable.setHeight(netIfaceCount + 3);
@@ -636,15 +625,13 @@ netTable.setColumn(4, "TX Total", 14, 0);
 // Connection list
 const connBox = new Box({
 	width: "100%",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	padding: [0, 1, 0, 1],
 	flexDirection: "column",
 });
 connBox.setHeight("100%");
 
-const connTitle = new Text({ content: " connections ", bold: true, fg: pal.accent });
+const connTitle = new Text({ content: "─ connections ─────────────────────────────", bold: true, fg: pal.accent });
 connTitle.setWidth("100%");
 connTitle.setHeight(1);
 
@@ -703,7 +690,6 @@ const diskTable = new Table({
 	width: "100%",
 	fg: pal.fg,
 	bg: pal.panelBg,
-	border: "single",
 });
 diskTable.setHeight(10);
 diskTable.setColumnCount(3);
@@ -714,14 +700,13 @@ diskTable.setColumn(2, "Type", 10, 0);
 // Code example (shows syntax highlighting)
 const codeBox = new Box({
 	width: "100%",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	flexDirection: "column",
+	padding: [0, 1, 0, 1],
 });
 codeBox.setHeight(12);
 
-const codeTitle = new Text({ content: " /proc/diskstats reader ", bold: true, fg: pal.accent });
+const codeTitle = new Text({ content: "─ /proc/diskstats reader ──────────────────", bold: true, fg: pal.accent });
 codeTitle.setWidth("100%");
 codeTitle.setHeight(1);
 
@@ -752,14 +737,13 @@ codeBox.append(codeText);
 // TextArea for notes
 const notesBox = new Box({
 	width: "100%",
-	border: "single",
-	fg: pal.border,
 	bg: pal.panelBg,
 	flexDirection: "column",
+	padding: [0, 1, 0, 1],
 });
 notesBox.setHeight("100%");
 
-const notesTitle = new Text({ content: " notes ", bold: true, fg: pal.accent });
+const notesTitle = new Text({ content: "─ notes ───────────────────────────────────", bold: true, fg: pal.accent });
 notesTitle.setWidth("100%");
 notesTitle.setHeight(1);
 
@@ -884,17 +868,17 @@ function applyPalette(p: Palette): void {
 	helpHint.setForeground(p.fgDim);
 	tabs.setForeground(p.fg);
 	tabs.setBackground(p.panelBg);
-	cpuBox.setForeground(p.border); cpuBox.setBackground(p.panelBg);
+	cpuBox.setBackground(p.panelBg);
 	cpuTitle.setForeground(p.accent);
 	cpuContent.setForeground(p.fg);
 	cpuAvgLine.setForeground(p.yellow);
-	memBox.setForeground(p.border); memBox.setBackground(p.panelBg);
+	memBox.setBackground(p.panelBg);
 	memTitle.setForeground(p.accent);
 	memContent.setForeground(p.fg);
-	procBox.setForeground(p.border); procBox.setBackground(p.panelBg);
+	procBox.setBackground(p.panelBg);
 	procTitle.setForeground(p.accent);
 	procTable.setForeground(p.fg); procTable.setBackground(p.panelBg);
-	sysBox.setForeground(p.border); sysBox.setBackground(p.panelBg);
+	sysBox.setBackground(p.panelBg);
 	sysTitle.setForeground(p.accent);
 	sysContent.setForeground(p.fgDim);
 	filterRow.setBackground(p.panelBg);
@@ -904,14 +888,14 @@ function applyPalette(p: Palette): void {
 	processCountText.setForeground(p.fgDim);
 	fullProcTable.setForeground(p.fg); fullProcTable.setBackground(p.panelBg);
 	netTable.setForeground(p.fg); netTable.setBackground(p.panelBg);
-	connBox.setForeground(p.border); connBox.setBackground(p.panelBg);
+	connBox.setBackground(p.panelBg);
 	connTitle.setForeground(p.accent);
 	connList.setForeground(p.fg); connList.setBackground(p.panelBg);
 	diskTable.setForeground(p.fg); diskTable.setBackground(p.panelBg);
-	codeBox.setForeground(p.border); codeBox.setBackground(p.panelBg);
+	codeBox.setBackground(p.panelBg);
 	codeTitle.setForeground(p.accent);
 	codeText.setForeground(p.fg);
-	notesBox.setForeground(p.border); notesBox.setBackground(p.panelBg);
+	notesBox.setBackground(p.panelBg);
 	notesTitle.setForeground(p.accent);
 	notesArea.setForeground(p.fg); notesArea.setBackground(p.panelBg);
 	statusBar.setBackground(p.headerBg);
