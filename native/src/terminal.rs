@@ -239,14 +239,24 @@ impl TerminalBackend for CrosstermBackend {
         runs: &[WriteRun],
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
-        // Buffer all escape sequences into a Vec first, then write the entire
-        // frame to stdout in a single write() call.  This prevents partial
-        // mid-frame flushes — stdout is line-buffered (~8 KB) and a full frame
-        // of RGB escape sequences can exceed 30 KB, causing the terminal to
-        // render partial updates that produce horizontal line artifacts.
+        // Buffer the entire frame into a Vec, wrapped in synchronized-output
+        // markers.  This prevents partial rendering artifacts:
+        //
+        // 1. Synchronized output (DEC private mode 2026) tells the terminal
+        //    to hold all rendering until the end marker arrives.  Supported
+        //    by kitty, WezTerm, foot, VTE-based (GNOME Terminal, Tilix),
+        //    Alacritty, iTerm2.  Terminals that don't recognise it simply
+        //    ignore the escape — no harm done.
+        //
+        // 2. Buffering into Vec + single write_all() avoids mid-frame
+        //    auto-flushes from stdout's ~8 KB line buffer.
         let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
+        // Begin synchronized update
+        buf.extend_from_slice(b"\x1b[?2026h");
         let metrics = crate::writer::emit_frame(state, runs, &mut buf)
             .map_err(|e| format!("writer: {e}"))?;
+        // End synchronized update
+        buf.extend_from_slice(b"\x1b[?2026l");
         let mut stdout = std::io::stdout();
         stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
         stdout.flush().map_err(|e| format!("flush: {e}"))?;
