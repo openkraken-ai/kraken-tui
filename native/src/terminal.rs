@@ -38,6 +38,12 @@ pub trait TerminalBackend {
 pub struct CrosstermBackend {
     width: u16,
     height: u16,
+    /// Last bg color set via OSC 11 (terminal default background).
+    /// GPU-accelerated terminals (kitty, Alacritty) render each cell as a
+    /// separate quad; sub-pixel gaps between quads show the terminal's default
+    /// background, not the application's RGB bg.  By syncing OSC 11 to the
+    /// application's root bg, any gaps become invisible.
+    osc11_bg: u32,
 }
 
 impl CrosstermBackend {
@@ -46,6 +52,7 @@ impl CrosstermBackend {
         Self {
             width: w,
             height: h,
+            osc11_bg: 0,
         }
     }
 }
@@ -90,8 +97,15 @@ impl TerminalBackend for CrosstermBackend {
             terminal::{disable_raw_mode, LeaveAlternateScreen},
             ExecutableCommand,
         };
+        use std::io::Write;
 
         let mut stdout = std::io::stdout();
+        // Reset terminal default background if we changed it via OSC 11.
+        if self.osc11_bg != 0 {
+            stdout
+                .write_all(b"\x1b]111\x1b\\")
+                .map_err(|e| format!("osc111: {e}"))?;
+        }
         // Restore the OS cursor before leaving so the shell prompt renders
         // correctly after the TUI exits.
         stdout
@@ -239,24 +253,33 @@ impl TerminalBackend for CrosstermBackend {
         runs: &[WriteRun],
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
-        // Buffer the entire frame into a Vec, wrapped in synchronized-output
-        // markers.  This prevents partial rendering artifacts:
-        //
-        // 1. Synchronized output (DEC private mode 2026) tells the terminal
-        //    to hold all rendering until the end marker arrives.  Supported
-        //    by kitty, WezTerm, foot, VTE-based (GNOME Terminal, Tilix),
-        //    Alacritty, iTerm2.  Terminals that don't recognise it simply
-        //    ignore the escape — no harm done.
-        //
-        // 2. Buffering into Vec + single write_all() avoids mid-frame
-        //    auto-flushes from stdout's ~8 KB line buffer.
         let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
-        // Begin synchronized update
+
+        // Sync the terminal's default background (OSC 11) to the first run's
+        // bg color.  GPU-accelerated terminals (kitty, Alacritty, WezTerm)
+        // render each cell as a separate quad; sub-pixel gaps between quads
+        // show the terminal's default background.  By setting OSC 11 to match
+        // the application's bg, any gaps become invisible.
+        if let Some(first) = runs.first() {
+            let bg = first.bg;
+            if bg != self.osc11_bg && (bg >> 24) == 0x01 {
+                let r = (bg >> 16) & 0xFF;
+                let g = (bg >> 8) & 0xFF;
+                let b = bg & 0xFF;
+                // OSC 11 ; rgb:RR/GG/BB ST — set default background
+                buf.extend_from_slice(
+                    format!("\x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}\x1b\\").as_bytes(),
+                );
+                self.osc11_bg = bg;
+            }
+        }
+
+        // Synchronized output (mode 2026) + buffered write
         buf.extend_from_slice(b"\x1b[?2026h");
-        let metrics = crate::writer::emit_frame(state, runs, &mut buf)
-            .map_err(|e| format!("writer: {e}"))?;
-        // End synchronized update
+        let metrics =
+            crate::writer::emit_frame(state, runs, &mut buf).map_err(|e| format!("writer: {e}"))?;
         buf.extend_from_slice(b"\x1b[?2026l");
+
         let mut stdout = std::io::stdout();
         stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
         stdout.flush().map_err(|e| format!("flush: {e}"))?;
