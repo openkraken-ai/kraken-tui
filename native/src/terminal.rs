@@ -239,9 +239,16 @@ impl TerminalBackend for CrosstermBackend {
         runs: &[WriteRun],
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
-        let mut stdout = std::io::stdout();
-        let metrics = crate::writer::emit_frame(state, runs, &mut stdout)
+        // Buffer all escape sequences into a Vec first, then write the entire
+        // frame to stdout in a single write() call.  This prevents partial
+        // mid-frame flushes — stdout is line-buffered (~8 KB) and a full frame
+        // of RGB escape sequences can exceed 30 KB, causing the terminal to
+        // render partial updates that produce horizontal line artifacts.
+        let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
+        let metrics = crate::writer::emit_frame(state, runs, &mut buf)
             .map_err(|e| format!("writer: {e}"))?;
+        let mut stdout = std::io::stdout();
+        stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
         stdout.flush().map_err(|e| format!("flush: {e}"))?;
         Ok(metrics)
     }
