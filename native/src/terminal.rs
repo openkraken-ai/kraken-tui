@@ -24,6 +24,7 @@ pub trait TerminalBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        root_bg: u32,
     ) -> Result<WriterMetrics, String>;
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
@@ -251,27 +252,22 @@ impl TerminalBackend for CrosstermBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
         let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
 
-        // Sync the terminal's default background (OSC 11) to the first run's
+        // Sync the terminal's default background (OSC 11) to the root node's
         // bg color.  GPU-accelerated terminals (kitty, Alacritty, WezTerm)
         // render each cell as a separate quad; sub-pixel gaps between quads
         // show the terminal's default background.  By setting OSC 11 to match
-        // the application's bg, any gaps become invisible.
-        if let Some(first) = runs.first() {
-            let bg = first.bg;
-            if bg != self.osc11_bg && (bg >> 24) == 0x01 {
-                let r = (bg >> 16) & 0xFF;
-                let g = (bg >> 8) & 0xFF;
-                let b = bg & 0xFF;
-                // OSC 11 ; rgb:RR/GG/BB ST — set default background
-                buf.extend_from_slice(
-                    format!("\x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}\x1b\\").as_bytes(),
-                );
-                self.osc11_bg = bg;
-            }
+        // the application's root bg, any gaps become invisible.
+        if root_bg != self.osc11_bg && (root_bg >> 24) == 0x01 {
+            let r = (root_bg >> 16) & 0xFF;
+            let g = (root_bg >> 8) & 0xFF;
+            let b = root_bg & 0xFF;
+            buf.extend_from_slice(format!("\x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}\x1b\\").as_bytes());
+            self.osc11_bg = root_bg;
         }
 
         // Synchronized output (mode 2026) + buffered write
@@ -328,6 +324,7 @@ impl TerminalBackend for HeadlessBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        _root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
@@ -383,6 +380,7 @@ impl TerminalBackend for MockBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        _root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
