@@ -414,9 +414,14 @@ fn emit_attr_delta<W: std::io::Write>(
 
     // Unset removed attributes
     if removed.contains(CellAttrs::BOLD) {
-        out.queue(SetAttribute(Attribute::NoBold))
+        // Crossterm's Attribute::NoBold emits SGR 21, which per ECMA-48 means
+        // "doubly underlined" — NOT bold-off.  Kitty (and other standards-
+        // compliant terminals) interpret SGR 21 literally, activating double
+        // underline instead of deactivating bold.  SGR 22 ("normal intensity")
+        // is the correct code for bold-off.  Emit it directly.
+        out.write_all(b"\x1b[22m")
             .map_err(|e| format!("no bold: {e}"))?;
-        bytes += 4;
+        bytes += 5;
     }
     if removed.contains(CellAttrs::ITALIC) {
         out.queue(SetAttribute(Attribute::NoItalic))
