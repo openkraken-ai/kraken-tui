@@ -790,15 +790,24 @@ statusBar.append(statusRight);
 
 // ── Help Overlay ──────────────────────────────────────────────────────
 
+const helpWidth = 40;
+const helpHeight = 16;
 const helpOverlay = new Overlay({
-	width: 50,
-	height: 18,
+	width: helpWidth,
+	height: helpHeight,
 	border: "rounded",
 	fg: pal.accent,
 	bg: pal.panelBg,
 	modal: true,
 	clearUnder: true,
 });
+helpOverlay.setPositionType("absolute");
+helpOverlay.setMargin(
+	Math.floor((termSize.height - helpHeight) / 2),
+	0,
+	0,
+	Math.floor((termSize.width - helpWidth) / 2),
+);
 helpOverlay.setDismissOnEscape(true);
 
 const helpContent = new Text({
@@ -807,14 +816,12 @@ const helpContent = new Text({
 		"",
 		"**Keyboard Shortcuts:**",
 		"",
-		"| Key | Action |",
-		"|-----|--------|",
-		"| `Tab` | Cycle focus |",
-		"| `1-4` | Switch tabs |",
-		"| `t` | Cycle theme |",
-		"| `h` | Toggle help |",
-		"| `/` | Focus filter |",
-		"| `Esc` | Close / Quit |",
+		"  `Tab`     Cycle focus",
+		"  `1-4`     Switch tabs",
+		"  `t`       Cycle theme",
+		"  `h`       Toggle help",
+		"  `/`       Focus filter",
+		"  `Esc`     Close / Quit",
 		"",
 		"*Built with Kraken TUI*",
 	].join("\n"),
@@ -822,7 +829,7 @@ const helpContent = new Text({
 	fg: pal.fg,
 });
 helpContent.setWidth("100%");
-helpContent.setHeight(16);
+helpContent.setHeight(14);
 
 helpOverlay.append(helpContent);
 
