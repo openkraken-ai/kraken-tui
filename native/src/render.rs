@@ -257,6 +257,10 @@ fn render_node(
 
     // Render background fill
     if bg != 0 {
+        // Use the resolved fg color (not 0/default) so the writer never emits
+        // SetForegroundColor(Reset) for background-only cells — some terminals
+        // render thin lines when reset escapes interleave with RGB bg fills.
+        let fill_fg = if fg != 0 { fg } else { bg };
         for row in 0..h {
             for col in 0..w {
                 clip_set(
@@ -265,7 +269,7 @@ fn render_node(
                     abs_y + row,
                     Cell {
                         ch: ' ',
-                        fg: 0,
+                        fg: fill_fg,
                         bg,
                         attrs: CellAttrs::empty(),
                     },

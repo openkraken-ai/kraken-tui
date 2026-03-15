@@ -426,6 +426,7 @@ const overviewPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
+	bg: pal.bg,
 });
 
 // -- CPU section --
@@ -537,6 +538,7 @@ const processPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
+	bg: pal.bg,
 });
 
 const filterRow = new Box({
@@ -606,6 +608,7 @@ const networkPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
+	bg: pal.bg,
 });
 
 const netTable = new Table({
@@ -683,6 +686,7 @@ const diskPanel = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
+	bg: pal.bg,
 });
 
 // Mount info from /proc/mounts
@@ -828,6 +832,7 @@ const contentArea = new Box({
 	width: "100%",
 	height: "100%",
 	flexDirection: "column",
+	bg: pal.bg,
 });
 contentArea.append(overviewPanel);
 
@@ -858,6 +863,11 @@ function switchTab(index: number): void {
 function applyPalette(p: Palette): void {
 	pal = p;
 	root.setBackground(p.bg);
+	contentArea.setBackground(p.bg);
+	overviewPanel.setBackground(p.bg);
+	processPanel.setBackground(p.bg);
+	networkPanel.setBackground(p.bg);
+	diskPanel.setBackground(p.bg);
 	headerBar.setBackground(p.headerBg);
 	titleText.setForeground(p.accent);
 	hostText.setForeground(p.fg);
