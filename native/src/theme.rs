@@ -55,7 +55,7 @@ pub(crate) fn create_builtin_themes(themes: &mut HashMap<u32, Theme>) {
             fg_color: 0x01E0E0E0,
             bg_color: 0x011E1E2E,
             border_color: 0x014A4A5A,
-            border_style: BorderStyle::Single,
+            border_style: BorderStyle::None,
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: VisualStyle::MASK_ALL,
@@ -70,7 +70,7 @@ pub(crate) fn create_builtin_themes(themes: &mut HashMap<u32, Theme>) {
             fg_color: 0x01222222,
             bg_color: 0x01F5F5F5,
             border_color: 0x01BBBBBB,
-            border_style: BorderStyle::Single,
+            border_style: BorderStyle::None,
             attrs: CellAttrs::empty(),
             opacity: 1.0,
             mask: VisualStyle::MASK_ALL,
@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(dark.fg_color, 0x01E0E0E0);
         assert_eq!(dark.bg_color, 0x011E1E2E);
         assert_eq!(dark.border_color, 0x014A4A5A);
-        assert_eq!(dark.border_style, BorderStyle::Single);
+        assert_eq!(dark.border_style, BorderStyle::None);
         assert_eq!(dark.attrs, CellAttrs::empty());
         assert_eq!(dark.opacity, 1.0);
     }
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(light.fg_color, 0x01222222);
         assert_eq!(light.bg_color, 0x01F5F5F5);
         assert_eq!(light.border_color, 0x01BBBBBB);
-        assert_eq!(light.border_style, BorderStyle::Single);
+        assert_eq!(light.border_style, BorderStyle::None);
     }
 
     #[test]

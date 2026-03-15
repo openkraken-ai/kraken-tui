@@ -168,8 +168,14 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
 
     // 5. Compact runs and emit via writer through backend (ADR-T24)
     let runs = crate::writer::compact_runs(&diff);
+    let root_bg = match ctx.root {
+        Some(h) if ctx.nodes.contains_key(&h) => crate::style::resolve_style(h, ctx).bg_color,
+        _ => 0,
+    };
     ctx.writer_state.reset();
-    let metrics = ctx.backend.emit_runs(&mut ctx.writer_state, &runs)?;
+    let metrics = ctx
+        .backend
+        .emit_runs(&mut ctx.writer_state, &runs, root_bg)?;
     ctx.perf_write_bytes_estimate = metrics.bytes_estimated;
     ctx.perf_write_runs = metrics.run_count;
     ctx.perf_style_deltas = metrics.style_delta_count;
@@ -257,6 +263,10 @@ fn render_node(
 
     // Render background fill
     if bg != 0 {
+        // Use the resolved fg color (not 0/default) so the writer never emits
+        // SetForegroundColor(Reset) for background-only cells — some terminals
+        // render thin lines when reset escapes interleave with RGB bg fills.
+        let fill_fg = if fg != 0 { fg } else { bg };
         for row in 0..h {
             for col in 0..w {
                 clip_set(
@@ -265,7 +275,7 @@ fn render_node(
                     abs_y + row,
                     Cell {
                         ch: ' ',
-                        fg: 0,
+                        fg: fill_fg,
                         bg,
                         attrs: CellAttrs::empty(),
                     },

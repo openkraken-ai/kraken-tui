@@ -10,7 +10,7 @@ Rust cdylib that owns all state, layout, rendering, events, and text parsing. Se
 cargo build --manifest-path native/Cargo.toml --release   # Shared library (required before TS)
 cargo build --manifest-path native/Cargo.toml              # Debug build
 cargo check --manifest-path native/Cargo.toml              # Type-check only
-cargo test  --manifest-path native/Cargo.toml              # Unit tests
+cargo test  --manifest-path native/Cargo.toml              # Unit tests (267 tests)
 cargo test  --manifest-path native/Cargo.toml <name> -- --exact   # Single test
 cargo fmt   --manifest-path native/Cargo.toml              # Format
 cargo clippy --manifest-path native/Cargo.toml             # Lint
@@ -22,20 +22,25 @@ cargo clippy --manifest-path native/Cargo.toml             # Lint
 
 | File | Responsibility |
 |------|----------------|
-| `lib.rs` | `extern "C"` FFI entry points **only**. Zero logic — delegates via `ffi_wrap()`/`ffi_wrap_handle()`. |
-| `context.rs` | `TuiContext` struct. `OnceLock<RwLock<TuiContext>>` for safe global state (ADR-T16). `context()`/`context_mut()` accessors return `Result`. Thread-affinity enforcement via `OWNER_THREAD`. |
-| `types.rs` | All shared enums (`NodeType`, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`), `TuiEvent` struct, key code constants. |
-| `tree.rs` | Handle allocation (`next_handle++`, never recycled), node CRUD, parent-child, dirty-flag propagation to ancestors. ScrollBox enforces single-child constraint in `append_child`. `destroy_subtree()` (ADR-T17) with cross-module cleanup. `insert_child()` (ADR-T18) with reparenting support. |
-| `layout.rs` | Taffy integration: `tui_set_layout_*` → read-modify-write on Taffy `Style` (ADR-T04). Hit-testing via computed rectangles (back-to-front). |
-| `style.rs` | `VisualStyle` per node. Color encoding/decoding (u32 tagged: 0x00=default, 0x01=RGB, 0x02=indexed). Style mask bits (ADR-T12). `resolve_style()` merges node + theme type defaults + theme global defaults (ADR-T21 precedence). |
-| `render.rs` | Double-buffered cell grid. v1 pipeline: animation advancement → theme resolution → layout → buffer write → dirty diff → terminal I/O. |
-| `event.rs` | `read_input()` → `backend.read_events()` → classify `TerminalInputEvent` → `TuiEvent`. Focus state machine (Tab/BackTab, depth-first order). Mouse hit-testing. |
-| `scroll.rs` | Per-ScrollBox `(scroll_x, scroll_y)`. Clamped to content bounds. Render module offsets child positions and clips overflow. |
-| `text.rs` | Markdown: `pulldown_cmark::Parser` → `Vec<StyledSpan>`. Code: `syntect` highlighter → `Vec<StyledSpan>`. |
-| `text_utils.rs` | TextArea line-buffer helpers: line splitting, cursor position mapping, line join/insert operations for multi-line editing. |
+| `lib.rs` | `extern "C"` FFI entry points **only** (142 functions). Zero logic — delegates via `ffi_wrap()`/`ffi_wrap_handle()`. |
+| `context.rs` | `TuiContext` struct. `OnceLock<RwLock<TuiContext>>` for safe global state (ADR-T16). Thread-affinity enforcement via `OWNER_THREAD`. |
+| `types.rs` | All shared enums (`NodeType` with 10 variants, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`, `AccessibilityRole`), `TuiEvent` struct, key code constants. |
+| `tree.rs` | Handle allocation (`next_handle++`, never recycled), node CRUD, parent-child, dirty-flag propagation. `destroy_subtree()` (ADR-T17), `insert_child()` (ADR-T18). |
+| `layout.rs` | Taffy integration: `tui_set_layout_*` → read-modify-write on Taffy `Style` (ADR-T04). Hit-testing via computed rectangles. |
+| `style.rs` | `VisualStyle` per node. Color encoding (u32 tagged: 0x00=default, 0x01=RGB, 0x02=indexed). Style mask bits (ADR-T12). `resolve_style()` with 4-level precedence (ADR-T21). |
+| `render.rs` | Double-buffered cell grid. Pipeline: animation advancement → theme resolution → layout → buffer write → dirty diff → terminal I/O. |
+| `writer.rs` | Run compaction, `WriterState` cursor/style tracking, efficient terminal emission (ADR-T24). |
+| `event.rs` | `read_input()` → classify → `TuiEvent`. Focus state machine (Tab/BackTab, depth-first). Mouse hit-testing. Widget-specific key handlers (Input, TextArea, Select, Table, List, Tabs). Overlay modal behavior. |
+| `scroll.rs` | Per-ScrollBox `(scroll_x, scroll_y)`. Clamped to content bounds. |
+| `text.rs` | Markdown: `pulldown_cmark` → `Vec<StyledSpan>`. Code: `syntect` highlighter. |
+| `text_utils.rs` | TextArea line-buffer helpers: cursor mapping, line operations for multi-line editing. |
+| `textarea.rs` | TextArea widget: selection, undo/redo, find-next (ADR-T28). |
+| `text_cache.rs` | Bounded LRU cache (8 MiB), keyed by content/format/width/style fingerprint (ADR-T25). |
 | `terminal.rs` | `TerminalBackend` trait + `CrosstermBackend` (production) + `HeadlessBackend` (testing). |
-| `theme.rs` | `Theme` storage (HashMap), built-in dark=1/light=2, theme-to-subtree bindings, nearest-ancestor resolution. Per-NodeType defaults (`type_defaults`, ADR-T21). |
-| `animation.rs` | Animation registry (Vec), delta-time advancement per `tui_render()`, property interpolation (f32 lerp / per-channel RGB lerp), easing functions (including CubicIn, CubicOut, Elastic, Bounce), built-in primitives (spinner, progress, pulse), animation chaining. Position animation via `render_offset` (ADR-T22). |
+| `theme.rs` | Theme storage, built-in dark/light, per-NodeType defaults (ADR-T21), subtree bindings. |
+| `animation.rs` | Animation registry, delta-time advancement, interpolation, 8 easing functions, chaining, choreography groups, position animation (ADR-T22). |
+| `golden.rs` | Golden file testing utility for deterministic snapshot tests (ADR-T30). |
+| `threaded_render.rs` | Experimental background render thread behind `--features threaded-render` (ADR-T31, deferred). |
 
 ---
 
@@ -54,10 +59,10 @@ pub extern "C" fn tui_something(handle: u32) -> i32 {
 ```
 
 ### Style Patching (ADR-T04)
-**Never** create `Style::DEFAULT` and overwrite. Always: read existing Taffy Style → modify one property → write back. Same pattern for `VisualStyle` setters.
+**Never** create `Style::DEFAULT` and overwrite. Always: read existing Taffy Style → modify one property → write back.
 
 ### Style Mask (ADR-T12)
-Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on the node. Theme setters must set the theme's `mask` bit. Resolution: explicit wins → theme default → stored default.
+Every `tui_set_style_*` call must also set the corresponding `style_mask` bit. Resolution: explicit wins → theme type default → theme global default → stored default.
 
 ### Error Handling
 - Return `Result<i32, String>` from module functions. `ffi_wrap` converts: `Ok(code)` → code, `Err(msg)` → sets last_error + returns -1, panic → -2.
@@ -67,7 +72,6 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on
 ### Visibility
 - `pub(crate)` for module-internal functions. Only `lib.rs` exports are `pub`.
 - Handle validation at FFI boundary (in `lib.rs`), not repeated in modules.
-- Module functions accept `&mut TuiContext` — no global state access inside modules.
 
 ---
 
@@ -78,31 +82,18 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit on
 | taffy | 0.9 | Flexbox layout (pure Rust) |
 | crossterm | 0.29 | Terminal I/O |
 | pulldown-cmark | 0.13 | Markdown parsing |
-| syntect | 5.3 | Syntax highlighting (`default-syntaxes`, `default-themes`, `regex-fancy`) |
+| syntect | 5.3 | Syntax highlighting |
 | bitflags | 2 | Cell attribute flags |
-| unicode-width | 0.2 | Display cell width (CJK, emoji, combining chars) |
+| unicode-width | 0.2 | Display cell width |
+| unicode-segmentation | 1.12 | Grapheme cluster iteration |
+| regex | 1 | Pattern matching |
 
 ---
 
 ## Current State
 
-- 97 total FFI exports (including `tui_init_headless` test-only).
+- 142 FFI exports. 267 unit tests passing. Zero clippy warnings.
+- 10 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay.
 - Handles: monotonic u32, never recycled. Handle 0 = invalid sentinel.
-- `tui_free_string`: currently a no-op stub
-- Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` (ADR-T16) — no `static mut` in codebase
-- Zero TODO/FIXME markers in codebase
-
-## v2 Progress
-
-**Completed (Epics I, J, K):**
-- ADR-T16: `OnceLock<RwLock>` context with thread-affinity enforcement
-- ADR-T17: `destroy_subtree()` with cross-module cleanup (animations, themes, Taffy, focus)
-- ADR-T18: `insert_child()` with reparenting and Taffy child order sync
-- ADR-T19: `NodeType::TextArea = 5`, `cursor_row/cursor_col/wrap_mode`, multi-line editing semantics
-- ADR-T21: `Theme.type_defaults: HashMap<NodeType, VisualStyle>`, 4-level precedence resolution
-- ADR-T22: `render_offset: (f32, f32)`, `AnimProp::PositionX = 4, PositionY = 5`
-- New easing variants: CubicIn, CubicOut, Elastic, Bounce
-
-**Completed (Epics L, M):**
-- ADR-T20 (reconciler) — JSX factory, signal-driven prop updates, keyed reconciliation
-- ADR-T23 (accessibility) — roles, labels, descriptions, accessibility events on focus change
+- Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` (ADR-T16) — no `static mut`.
+- Zero TODO/FIXME markers in codebase.

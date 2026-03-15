@@ -24,6 +24,7 @@ pub trait TerminalBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        root_bg: u32,
     ) -> Result<WriterMetrics, String>;
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
@@ -38,6 +39,12 @@ pub trait TerminalBackend {
 pub struct CrosstermBackend {
     width: u16,
     height: u16,
+    /// Last bg color set via OSC 11 (terminal default background).
+    /// GPU-accelerated terminals (kitty, Alacritty) render each cell as a
+    /// separate quad; sub-pixel gaps between quads show the terminal's default
+    /// background, not the application's RGB bg.  By syncing OSC 11 to the
+    /// application's root bg, any gaps become invisible.
+    osc11_bg: u32,
 }
 
 impl CrosstermBackend {
@@ -46,6 +53,7 @@ impl CrosstermBackend {
         Self {
             width: w,
             height: h,
+            osc11_bg: 0,
         }
     }
 }
@@ -90,8 +98,15 @@ impl TerminalBackend for CrosstermBackend {
             terminal::{disable_raw_mode, LeaveAlternateScreen},
             ExecutableCommand,
         };
+        use std::io::Write;
 
         let mut stdout = std::io::stdout();
+        // Reset terminal default background if we changed it via OSC 11.
+        if self.osc11_bg != 0 {
+            stdout
+                .write_all(b"\x1b]111\x1b\\")
+                .map_err(|e| format!("osc111: {e}"))?;
+        }
         // Restore the OS cursor before leaving so the shell prompt renders
         // correctly after the TUI exits.
         stdout
@@ -237,11 +252,32 @@ impl TerminalBackend for CrosstermBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
+        let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
+
+        // Sync the terminal's default background (OSC 11) to the root node's
+        // bg color.  GPU-accelerated terminals (kitty, Alacritty, WezTerm)
+        // render each cell as a separate quad; sub-pixel gaps between quads
+        // show the terminal's default background.  By setting OSC 11 to match
+        // the application's root bg, any gaps become invisible.
+        if root_bg != self.osc11_bg && (root_bg >> 24) == 0x01 {
+            let r = (root_bg >> 16) & 0xFF;
+            let g = (root_bg >> 8) & 0xFF;
+            let b = root_bg & 0xFF;
+            buf.extend_from_slice(format!("\x1b]11;rgb:{r:02x}/{g:02x}/{b:02x}\x1b\\").as_bytes());
+            self.osc11_bg = root_bg;
+        }
+
+        // Synchronized output (mode 2026) + buffered write
+        buf.extend_from_slice(b"\x1b[?2026h");
+        let metrics =
+            crate::writer::emit_frame(state, runs, &mut buf).map_err(|e| format!("writer: {e}"))?;
+        buf.extend_from_slice(b"\x1b[?2026l");
+
         let mut stdout = std::io::stdout();
-        let metrics = crate::writer::emit_frame(state, runs, &mut stdout)
-            .map_err(|e| format!("writer: {e}"))?;
+        stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
         stdout.flush().map_err(|e| format!("flush: {e}"))?;
         Ok(metrics)
     }
@@ -288,6 +324,7 @@ impl TerminalBackend for HeadlessBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        _root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
@@ -343,6 +380,7 @@ impl TerminalBackend for MockBackend {
         &mut self,
         state: &mut WriterState,
         runs: &[WriteRun],
+        _root_bg: u32,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))

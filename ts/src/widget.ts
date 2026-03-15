@@ -90,6 +90,12 @@ export abstract class Widget {
 		);
 	}
 
+	setPositionType(type: "relative" | "absolute"): void {
+		checkResult(
+			ffi.tui_set_layout_flex(this.handle, 6, type === "absolute" ? 1 : 0),
+		);
+	}
+
 	setGap(rowGap: number, columnGap: number): void {
 		checkResult(ffi.tui_set_layout_gap(this.handle, rowGap, columnGap));
 	}
