@@ -358,6 +358,7 @@ let cpuUsages: number[] = new Array(numCores).fill(0);
 // Network delta tracking
 let prevNetStats = readNetStats();
 let netRates: { name: string; rx: number; tx: number; rxTotal: number; txTotal: number }[] = [];
+let lastUpdateTime = 0;
 
 // ── Root Container ────────────────────────────────────────────────────
 
@@ -1008,14 +1009,19 @@ function updateData(): void {
 		fullProcTable.setCell(i, 4, formatKb(p.rssKb));
 	}
 
-	// Network
+	// Network — normalize deltas to per-second rates
+	const now = Date.now();
+	const elapsedSec = lastUpdateTime > 0 ? (now - lastUpdateTime) / 1000 : 1;
+	lastUpdateTime = now;
 	const currentNet = readNetStats();
 	netRates = currentNet.map((curr) => {
 		const prev = prevNetStats.find((p) => p.name === curr.name);
+		const rxDelta = prev ? Math.max(0, curr.rxBytes - prev.rxBytes) : 0;
+		const txDelta = prev ? Math.max(0, curr.txBytes - prev.txBytes) : 0;
 		return {
 			name: curr.name,
-			rx: prev ? Math.max(0, curr.rxBytes - prev.rxBytes) : 0,
-			tx: prev ? Math.max(0, curr.txBytes - prev.txBytes) : 0,
+			rx: Math.round(rxDelta / elapsedSec),
+			tx: Math.round(txDelta / elapsedSec),
 			rxTotal: curr.rxBytes,
 			txTotal: curr.txBytes,
 		};
@@ -1097,7 +1103,7 @@ const loop = createLoop({
 
 	onTick() {
 		tickCounter++;
-		// Update every ~1 second (10 ticks at 10fps)
+		// Refresh system data every 2 frames (~33ms at 60fps)
 		if (tickCounter % 2 === 0) {
 			updateData();
 		}
