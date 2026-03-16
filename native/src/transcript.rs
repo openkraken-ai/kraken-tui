@@ -66,11 +66,11 @@ fn estimate_rendered_rows(content: &str, viewport_width: u32) -> u32 {
     };
     let mut rows = 0u32;
     for line in content.split('\n') {
-        let line_len = line.len() as u32;
-        if line_len == 0 {
+        let line_width = unicode_width::UnicodeWidthStr::width(line) as u32;
+        if line_width == 0 {
             rows += 1;
         } else {
-            rows += line_len.div_ceil(width);
+            rows += line_width.div_ceil(width);
         }
     }
     rows.max(1)
@@ -256,7 +256,7 @@ pub(crate) fn append_block(
         return Err(format!("Duplicate block_id: {block_id}"));
     }
 
-    let rendered_rows = estimate_rendered_rows(content, state.viewport_rows);
+    let rendered_rows = estimate_rendered_rows(content, state.viewport_width);
     let unread = !state.tail_attached;
 
     let block = TranscriptBlock {
@@ -315,7 +315,7 @@ pub(crate) fn patch_block(
         .get(&block_id)
         .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
 
-    let viewport_rows = state.viewport_rows;
+    let viewport_width = state.viewport_width;
     let block = &mut state.blocks[idx];
 
     match patch_mode {
@@ -331,7 +331,7 @@ pub(crate) fn patch_block(
     }
 
     block.version += 1;
-    block.rendered_rows = estimate_rendered_rows(&block.content, viewport_rows);
+    block.rendered_rows = estimate_rendered_rows(&block.content, viewport_width);
 
     recompute_anchor_after_insert(state);
 
@@ -346,7 +346,10 @@ pub(crate) fn finish_block(ctx: &mut TuiContext, handle: u32, block_id: u64) -> 
         .get(&block_id)
         .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
     state.blocks[idx].streaming = false;
-    ctx.nodes.get_mut(&handle).unwrap().dirty = true;
+    ctx.nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?
+        .dirty = true;
     Ok(())
 }
 
@@ -693,8 +696,14 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> Result
         }
         key::HOME => {
             // Jump to first block
-            let node = ctx.nodes.get_mut(&handle).unwrap();
-            let state = node.transcript_state.as_mut().unwrap();
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+            let state = node
+                .transcript_state
+                .as_mut()
+                .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
             if let Some(first) = state.blocks.first() {
                 let first_id = first.id;
                 state.anchor_kind = ViewportAnchorKind::BlockStart {
@@ -708,8 +717,14 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> Result
         }
         key::END => {
             // Jump to tail (reattach)
-            let node = ctx.nodes.get_mut(&handle).unwrap();
-            let state = node.transcript_state.as_mut().unwrap();
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+            let state = node
+                .transcript_state
+                .as_mut()
+                .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
             state.anchor_kind = ViewportAnchorKind::Tail;
             state.tail_attached = true;
             node.dirty = true;
@@ -2279,7 +2294,7 @@ mod tests {
 
         {
             let state = validate_transcript_mut(&mut ctx, handle).unwrap();
-            state.viewport_rows = 80; // width used for wrapping
+            state.viewport_width = 80;
         }
 
         append_block(
@@ -2293,6 +2308,34 @@ mod tests {
         .unwrap();
 
         let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[0].rendered_rows, 3);
+    }
+
+    #[test]
+    fn test_unicode_width_in_rendered_rows() {
+        // CJK characters are 2 display columns each.
+        // 10 CJK chars = 20 display columns. With viewport_width=10, that's 2 rows.
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_width = 10;
+        }
+
+        // 10 CJK chars: each is 2 columns wide → 20 columns → ceil(20/10) = 2 rows
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "你好世界测试文本内容啊",
+        )
+        .unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        // 11 CJK chars × 2 cols = 22 cols, ceil(22/10) = 3 rows
         assert_eq!(state.blocks[0].rendered_rows, 3);
     }
 

@@ -1798,8 +1798,9 @@ fn render_transcript(
         None => return,
     };
 
-    // Update viewport_rows from actual content height
+    // Update viewport dimensions from actual content area
     state.viewport_rows = content_h.max(0) as u32;
+    state.viewport_width = content_w.max(0) as u32;
 
     // Clone state for rendering (avoid borrow conflict)
     let state_snapshot = state.clone();

@@ -788,6 +788,8 @@ pub struct TranscriptState {
     pub sticky_threshold_rows: u32,
     pub tail_attached: bool,
     pub viewport_rows: u32,
+    /// Width of the viewport in columns, used for line-wrapping estimates.
+    pub viewport_width: u32,
 }
 
 impl Default for TranscriptState {
@@ -802,6 +804,7 @@ impl Default for TranscriptState {
             sticky_threshold_rows: 2,
             tail_attached: true,
             viewport_rows: 0,
+            viewport_width: 80,
         }
     }
 }

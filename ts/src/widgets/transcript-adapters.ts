@@ -31,7 +31,7 @@ export type TranscriptReplayEvent =
 	| { type: "SESSION_FINISHED"; sessionId: string }
 	| { type: "SESSION_ERROR"; sessionId: string; message: string };
 
-let nextDividerId = 1;
+let nextAutoId = 1;
 
 /**
  * Apply a single replay event to a TranscriptView. This is the standard
@@ -121,18 +121,20 @@ export function applyReplayEvent(
 			transcript.finishBlock(`${event.messageId}-reasoning`);
 			break;
 
-		case "ACTIVITY":
+		case "ACTIVITY": {
+			const actId = `${event.messageId}-activity-${nextAutoId++}`;
 			transcript.appendBlock({
-				id: `${event.messageId}-activity`,
+				id: actId,
 				kind: "activity",
 				role: "assistant",
 				content: event.content,
 			});
-			transcript.finishBlock(`${event.messageId}-activity`);
+			transcript.finishBlock(actId);
 			break;
+		}
 
 		case "DIVIDER": {
-			const id = `divider-${nextDividerId++}`;
+			const id = `divider-${nextAutoId++}`;
 			transcript.appendBlock({
 				id,
 				kind: "divider",
@@ -147,14 +149,16 @@ export function applyReplayEvent(
 			// No-op: session boundary marker
 			break;
 
-		case "SESSION_ERROR":
+		case "SESSION_ERROR": {
+			const errId = `error-${event.sessionId}-${nextAutoId++}`;
 			transcript.appendBlock({
-				id: `error-${event.sessionId}`,
+				id: errId,
 				kind: "message",
 				role: "system",
 				content: `Error: ${event.message}`,
 			});
-			transcript.finishBlock(`error-${event.sessionId}`);
+			transcript.finishBlock(errId);
 			break;
+		}
 	}
 }
