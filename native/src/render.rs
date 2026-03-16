@@ -1802,22 +1802,42 @@ fn render_transcript(
     state.viewport_rows = content_h.max(0) as u32;
     state.viewport_width = content_w.max(0) as u32;
 
-    // Clone state for rendering (avoid borrow conflict)
-    let state_snapshot = state.clone();
+    // Extract only visible blocks for rendering to avoid cloning the full state.
+    // We compute the visible range and collect just the blocks we need, then
+    // release the borrow on ctx so we can call clip_set.
+    let (start_idx, end_idx) = crate::transcript::compute_visible_range(state);
 
-    let (start_idx, end_idx) = crate::transcript::compute_visible_range(&state_snapshot);
+    struct RenderBlock {
+        id: u64,
+        kind: crate::types::TranscriptBlockKind,
+        content: String,
+        collapsed: bool,
+        hidden: bool,
+    }
+
+    let visible_blocks: Vec<RenderBlock> = (start_idx..end_idx)
+        .map(|i| {
+            let block = &state.blocks[i];
+            RenderBlock {
+                id: block.id,
+                kind: block.kind,
+                content: block.content.clone(),
+                collapsed: block.collapsed,
+                hidden: crate::transcript::is_block_hidden(state, block),
+            }
+        })
+        .collect();
 
     let mut y = content_y;
     let max_y = content_y + content_h;
 
-    for i in start_idx..end_idx {
+    for block in &visible_blocks {
         if y >= max_y {
             break;
         }
-        let block = &state_snapshot.blocks[i];
 
         // Skip hidden blocks (collapsed ancestors)
-        if crate::transcript::is_block_hidden(&state_snapshot, block) {
+        if block.hidden {
             continue;
         }
 
