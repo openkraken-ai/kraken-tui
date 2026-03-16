@@ -55,6 +55,8 @@ fn validate_transcript(ctx: &TuiContext, handle: u32) -> Result<&TranscriptState
 }
 
 /// Estimate rendered row count for a block's content.
+/// Lines wider than viewport_width wrap to the next row — this must match
+/// the wrapping behavior in render.rs `render_transcript`.
 fn estimate_rendered_rows(content: &str, viewport_width: u32) -> u32 {
     if content.is_empty() {
         return 1; // Empty blocks still occupy at least 1 row
@@ -368,34 +370,43 @@ pub(crate) fn set_parent(
     block_id: u64,
     parent_id: u64,
 ) -> Result<(), String> {
-    let state = validate_transcript_mut(ctx, handle)?;
-    if !state.block_index.contains_key(&parent_id) {
-        return Err(format!("Unknown parent block_id: {parent_id}"));
-    }
-    if block_id == parent_id {
-        return Err(format!("Block {block_id} cannot be its own parent"));
-    }
-    let &idx = state
-        .block_index
-        .get(&block_id)
-        .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
-
-    // Detect cycles: walk from parent_id up the chain; if we reach block_id, it's circular
-    let mut current = Some(parent_id);
-    while let Some(pid) = current {
-        if pid == block_id {
-            return Err(format!(
-                "Circular parent reference: {block_id} -> {parent_id} creates a cycle"
-            ));
+    // Validate and mutate transcript state in a scoped borrow, then mark dirty.
+    {
+        let state = validate_transcript_mut(ctx, handle)?;
+        if !state.block_index.contains_key(&parent_id) {
+            return Err(format!("Unknown parent block_id: {parent_id}"));
         }
-        if let Some(&pidx) = state.block_index.get(&pid) {
-            current = state.blocks[pidx].parent_id;
-        } else {
-            break;
+        if block_id == parent_id {
+            return Err(format!("Block {block_id} cannot be its own parent"));
         }
-    }
+        let &idx = state
+            .block_index
+            .get(&block_id)
+            .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
 
-    state.blocks[idx].parent_id = Some(parent_id);
+        // Detect cycles: walk from parent_id up the chain; if we reach block_id, it's circular
+        let mut current = Some(parent_id);
+        while let Some(pid) = current {
+            if pid == block_id {
+                return Err(format!(
+                    "Circular parent reference: {block_id} -> {parent_id} creates a cycle"
+                ));
+            }
+            if let Some(&pidx) = state.block_index.get(&pid) {
+                current = state.blocks[pidx].parent_id;
+            } else {
+                break;
+            }
+        }
+
+        state.blocks[idx].parent_id = Some(parent_id);
+    }
+    // Mark node dirty after the transcript state borrow is released.
+    // This ensures the render pipeline picks up parent-child changes.
+    // Safe: validate_transcript_mut already confirmed this handle exists.
+    if let Some(node) = ctx.nodes.get_mut(&handle) {
+        node.dirty = true;
+    }
     Ok(())
 }
 

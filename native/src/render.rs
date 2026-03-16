@@ -1884,33 +1884,64 @@ fn render_transcript(
             }
             y += 1;
         } else {
-            // Render block content line by line.
-            // For the first visible block, skip lines that are above the viewport
-            // (when the anchor has a row_offset within a multi-line block).
-            let lines_to_skip = if is_first_block { skip_rows } else { 0 };
-            for (line_idx, line) in block.content.split('\n').enumerate() {
-                if line_idx < lines_to_skip {
-                    continue;
-                }
+            // Render block content with line wrapping.
+            // Long lines wrap to the next row when they exceed content_w,
+            // matching the row estimation in estimate_rendered_rows().
+            // For the first visible block, skip rendered rows that are above
+            // the viewport (when the anchor has a row_offset within a block).
+            let rows_to_skip = if is_first_block { skip_rows } else { 0 };
+            let mut rendered_row = 0usize;
+            for line in block.content.split('\n') {
                 if y >= max_y {
                     break;
                 }
+                let line_width = unicode_width::UnicodeWidthStr::width(line) as i32;
+                // Number of rendered rows for this line (wrapping at content_w)
+                let row_count = if content_w <= 0 || line_width == 0 {
+                    1
+                } else {
+                    ((line_width + content_w - 1) / content_w) as usize
+                };
+                // If this entire logical line is within the skip zone, skip it
+                if rendered_row + row_count <= rows_to_skip {
+                    rendered_row += row_count;
+                    continue;
+                }
+                // Render the line with wrapping
                 let mut x = content_x;
+                let skip_sub_rows = rows_to_skip.saturating_sub(rendered_row);
+                let mut sub_row = 0usize;
                 for ch in line.chars() {
-                    if x >= content_x + content_w {
-                        break;
-                    }
                     let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
-                    if w > 0 {
+                    if w == 0 {
+                        continue;
+                    }
+                    // Wrap to next row when exceeding viewport width
+                    if x >= content_x + content_w {
+                        sub_row += 1;
+                        if sub_row < skip_sub_rows {
+                            x = content_x;
+                            continue;
+                        }
+                        y += 1;
+                        x = content_x;
+                        if y >= max_y {
+                            break;
+                        }
+                    }
+                    if sub_row >= skip_sub_rows {
                         let cell = Cell { ch, fg, bg, attrs };
                         clip_set(&mut ctx.front_buffer, x, y, cell, clip);
-                        x += w;
                     }
+                    x += w;
                 }
-                y += 1;
+                if sub_row >= skip_sub_rows && y < max_y {
+                    y += 1;
+                }
+                rendered_row += row_count;
             }
-            // Empty content: split('\n') yields one empty string, so the loop
-            // already increments y by 1. No extra increment needed.
+            // Empty content: split('\n') yields one empty string with row_count=1,
+            // so the loop already increments y by 1. No extra increment needed.
         }
         is_first_block = false;
     }
