@@ -2,239 +2,264 @@
 
 ## Kraken TUI
 
-**Version**: 5.0
-**Status**: Draft (v3)
-**Date**: March 2026
-**Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
+**Version**: 6.0  
+**Status**: Draft (v4 focus reset)  
+**Date**: March 2026  
+**Source of Truth**: [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
 
-**Scope note**: This document is intentionally v3-focused. The full v0-v2 narrative is compressed to reduce noise. v2 behavior remains the compatibility baseline unless explicitly changed here.
+**Scope note**: v3 is the implemented baseline. This document replaces the old forward-looking v3 plan and defines the next phase only.
 
 **Changelog (succinct)**:
 
-- v5.0 (v3 planning): Added ADR-T24..T31, v3 FFI additions, runner contract, throughput/cache gates, and distribution matrix.
-- v4.1 (v2 complete): Accessibility and choreography finalized; stable baseline = 96 FFI symbols.
-- v4.0 and earlier: See git history for full historical narrative.
+- v6.0 (v4 focus reset): Reoriented next-phase work around transcript-first UX, dev mode, minimal app-shaped primitives, and flagship examples for agent/developer workflows.
+- v5.0 and earlier: preserved in git history as the completed v3 plan.
 
 ---
 
 ## 1. STACK SPECIFICATION (BILL OF MATERIALS)
 
-### Native Core
+### 1.1 Product Constraint Summary
 
-| Component          | Choice               | Version       | Rationale                                                     |
-| ------------------ | -------------------- | ------------- | ------------------------------------------------------------- |
-| Language           | Rust                 | Stable 1.93.x | Performance engine and state owner per architecture invariant |
-| Edition            | Rust 2021            | 2021          | Matches current crate and toolchain                           |
-| Build Target       | cdylib               | -             | Shared library for Bun FFI consumption                        |
-| Layout Engine      | taffy                | 0.9.x         | Flexbox layout in Rust                                        |
-| Terminal Backend   | crossterm            | 0.29.x        | Cross-platform terminal I/O                                   |
-| Markdown Parser    | pulldown-cmark       | 0.13.x        | Native markdown parsing                                       |
-| Syntax Highlighter | syntect              | 5.3.x         | Native code highlighting                                      |
-| Text Width         | unicode-width        | 0.2.x         | Correct display-cell width                                    |
-| Grapheme Handling  | unicode-segmentation | 1.12.x        | Cursor/edit semantics for Unicode graphemes                   |
-| Attribute Flags    | bitflags             | 2.x           | Compact cell style flags                                      |
+- Kraken already has the foundation: 142 public C ABI functions, 10 shipped widget types, writer compaction, text cache, `app.run()`, JSX/signals, headless golden tests, and a completed threaded-render no-go report.
+- The next phase is not another generic widget or packaging pass. It is a product-shaping pass for long-lived agent consoles, developer inspectors, streaming logs, and dense pane-based workflows.
+- New dependencies are blocked unless they directly improve transcript behavior, devtools, or flagship examples.
 
-### Host Language Bindings
+### 1.2 Native Core
 
-| Component     | Choice               | Version            | Rationale                               |
-| ------------- | -------------------- | ------------------ | --------------------------------------- |
-| Runtime       | Bun                  | >= 1.0 (dev 1.3.x) | Native FFI and TS execution             |
-| Language      | TypeScript           | 5.x                | Type-safe host API                      |
-| FFI Mechanism | bun:ffi              | built-in           | Thin host surface, no external bridge   |
-| Reactivity    | @preact/signals-core | ^1.8.0             | Lightweight reactive reconciler support |
+| Component | Choice | Version | Decision |
+| --------- | ------ | ------- | -------- |
+| Language | Rust | verified local: 1.93.1 | Keep Rust as sole owner of mutable UI state and heavy compute. |
+| Edition | Rust 2021 | 2021 | Matches current crate and avoids churn. |
+| Layout Engine | taffy | 0.9.x | Keep; transcript and pane work must reuse the current layout engine. |
+| Terminal Backend | crossterm | 0.29.x | Keep; no backend swap is justified by the current priorities. |
+| Rich Text | pulldown-cmark | 0.13.x | Keep; transcript blocks and code panes reuse the current markdown path. |
+| Syntax Highlighting | syntect | 5.3.x | Keep; code and diff surfaces reuse the current native highlighter. |
+| Unicode Width | unicode-width | 0.2.x | Keep; required for viewport and cursor correctness under dense streaming text. |
+| Grapheme Handling | unicode-segmentation | 1.12.x | Keep; required for cursor stability and selection correctness. |
+| Debug Snapshot Serialization | serde + serde_json | 1.0.x, debug-only addition | Allowed because snapshot/trace copy-out is core dev-mode work; no other new Rust dependency is accepted in v4 without direct product leverage. |
 
-### Build Artifacts
+### 1.3 Host Language Bindings
 
-| Artifact     | Format                       | Output                 |
-| ------------ | ---------------------------- | ---------------------- |
-| Native Core  | libkraken_tui.{so,dylib,dll} | native/target/release/ |
-| Host Package | TypeScript source            | ts/src/                |
+| Component | Choice | Version | Decision |
+| --------- | ------ | ------- | -------- |
+| Runtime | Bun | verified local: 1.3.8 | Keep; use Bun watch mode for restart loops and `bun:ffi` for the host boundary. |
+| Language | TypeScript | 5.x | Keep strict typed host wrappers and example apps in TS. |
+| FFI Mechanism | bun:ffi | built-in | Keep; no alternate bridge is justified by the current focus. |
+| Reactivity | @preact/signals-core | ^1.8.0 | Keep for fine-grained example apps and signal tracing in dev mode. |
+| Additional Runtime Dependencies | none | n/a | v4 does not add runtime deps beyond the current binding surface. |
 
-### CI and Tooling
+### 1.4 Build Artifacts
 
-| Tool           | Location             | Purpose                         |
-| -------------- | -------------------- | ------------------------------- |
-| rustfmt        | Rust toolchain       | formatting                      |
-| clippy         | Rust toolchain       | linting                         |
-| bun test       | ts/                  | FFI and TS tests                |
-| cargo bench    | native/              | throughput and cache benchmarks |
-| GitHub Actions | .github/workflows/\* | matrix CI, gates, packaging     |
+| Artifact | Format | Output |
+| -------- | ------ | ------ |
+| Native Core | `libkraken_tui.{so,dylib,dll}` | `native/target/release/` |
+| Host Package | TypeScript source | `ts/src/` |
+| Flagship Examples | Bun entrypoints | `examples/agent-console.tsx`, `examples/ops-log-console.tsx`, `examples/repo-inspector.tsx` |
+
+### 1.5 CI and Tooling
+
+| Tool | Location | Purpose |
+| ---- | -------- | ------- |
+| `cargo test` | `native/` | Native correctness, transcript fixtures, devtools behavior |
+| `cargo bench` | `native/` | Transcript replay and writer/debug overhead benchmarks |
+| `bun test` | `ts/` | FFI wrappers, dev session helpers, example replay integration |
+| `bun --watch` | repo root / `examples/` | Fast restart loop during development |
+| Headless replay harness | `native/` + `ts/` | Long-thread and log-console determinism |
 
 ---
 
 ## 2. ARCHITECTURE DECISION RECORDS
 
-### 2.1 Inherited Baseline (Concise)
+### 2.1 Inherited Baseline (Active Contract)
 
-The following ADRs are retained from v2 and remain active contract baseline.
+| ADR | Retained Decision | Why it stays |
+| --- | ----------------- | ------------ |
+| T16 | `OnceLock<RwLock<TuiContext>>` global state | Safe state ownership remains correct for the synchronous core. |
+| T24 | Writer compaction after diffing | Transcript-heavy workloads need this even more than widget demos do. |
+| T25 | Native text cache | Transcript and code panes reuse the existing parse/wrap cache path. |
+| T26 | Host-owned runner API | Dev mode and replay loops stay host-orchestrated; no hidden native loop. |
+| T30 | Headless goldens and benchmark gates | v4 proof relies on replayable transcript/log fixtures. |
+| T31 | Background render stays opt-in and deferred | The no-go report stands; product work beats renderer cleverness. |
 
-| ADR             | Retained Decision                                              | Why it remains                                    |
-| --------------- | -------------------------------------------------------------- | ------------------------------------------------- |
-| T01             | Buffer-poll event drain (`tui_read_input` + `tui_next_event`)  | Keeps FFI boundary simple and deterministic       |
-| T02             | Layout and style APIs are separated                            | Preserves module boundaries and SRP               |
-| T03             | `catch_unwind` and error-code contract on every FFI entrypoint | Prevents panic crossing C ABI                     |
-| T04             | Read-modify-write style/layout mutations                       | Prevents accidental property clobbering           |
-| T05             | `TerminalBackend` trait abstraction                            | Enables MockBackend tests and backend swap path   |
-| T06             | Custom struct packing in TS                                    | Keeps critical FFI path dependency-light          |
-| T07             | Unicode width measurement in native                            | Correct layout and cursor semantics               |
-| T12 + T21       | Theme mask resolution + per-node-type defaults                 | Explicit styles win, theme fills gaps             |
-| T13 + T14 + T22 | Host-driven animation with render offsets                      | Keeps timing explicit and layout decoupled        |
-| T16             | `OnceLock<RwLock<TuiContext>>` global state                    | Soundness and future-safe synchronization         |
-| T17 + T18       | `destroy_subtree` and `insert_child`                           | Reconciler-grade tree mutation primitives         |
-| T19             | TextArea baseline                                              | Multi-line editor foundation                      |
-| T20             | JSX factory + signals reconciler                               | Lightweight declarative mode over imperative core |
-| T23             | Accessibility foundation                                       | Roles/labels/descriptions + accessibility event   |
+### 2.2 v4 Decisions
 
-### 2.2 v3 Decisions
+### ADR-T32: TranscriptView Is a First-Class Native Workload
 
-### ADR-T24: Terminal Writer Throughput
+**Context:** `ScrollBox` + `Text` is enough for simple overflow, but it has no stable logical block identity, no streaming patch path, no unread anchor, and no collapse model. For agent consoles and ops/log viewers, that forces the host layer into tree churn and index math exactly where Kraken should be strongest.
 
-**Context:** Current per-cell emission spends too many bytes/ops on cursor/style commands under heavy diffs.
+**Workflow improved:** Streaming assistant output, tool-call traces, reasoning summaries, and log rows while the operator scrolls older content or keeps the tail pinned.
 
-**Decision:** Add run compaction and a stateful writer stage (`WriterState`) after cell diffing and before terminal emission.
+**Decision:**
 
-**Emission rules:**
+1. Add `NodeType::Transcript` and implement `native/src/transcript.rs`.
+2. Store transcript content as ordered `TranscriptBlock` records keyed by host-owned `u64 block_id`.
+3. TypeScript bindings map protocol/message IDs to numeric `block_id` values; Rust never parses AG-UI or provider-specific IDs.
+4. A block can be `Message`, `ToolCall`, `ToolResult`, `Reasoning`, `Activity`, or `Divider`.
+5. Blocks support append-in-place and replace-in-place updates so streaming text does not require node re-creation.
+6. Nested groups are modeled by `parent_id`; collapsing a parent hides descendants without deleting them.
+7. Rendering is row-based and viewport-clipped from logical blocks. Kraken must not represent each transcript line as a standalone child node.
 
-1. Deterministic row-major ordering.
-2. Cursor move only when position is non-contiguous (first run of each frame always emits MoveTo via `force_move`).
-3. Style commands only on style delta.
-4. Frame-end attribute reset, not per-cell reset.
-5. Emit contiguous same-style cells as one run payload.
+**Reuses existing primitives:** writer compaction, text cache, theme resolution, scroll clipping, dirty propagation, headless backend, and current render pipeline.
 
-**Consequences:**
+**Failure modes and edge cases:**
 
-- (+) Lower write bytes and control-sequence count.
-- (+) No C ABI expansion required.
-- (-) Writer complexity increases.
+- Streaming into a collapsed group must not auto-expand it.
+- Updates above the viewport must preserve the logical anchor.
+- Tool-result or reasoning blocks may arrive before their parent block is finished; patching an unfinished block is allowed.
+- v4 transcript storage is append-oriented; arbitrary middle deletion is out of scope.
 
-### ADR-T25: Rich Text and Wrap Cache
+**Observability/debuggability requirements:**
 
-**Context:** Markdown/highlight parse and wrap work is repeated for stable content and width.
+- Counters for transcript block count, visible rows, unread count, and tail-attached state.
+- Debug snapshot includes anchor kind, anchor block, unread anchor, visible top/bottom block IDs, and collapse state.
 
-**Decision:** Add bounded native LRU cache keyed by `(content_hash, format, language_hash, wrap_width, style_fingerprint)`.
+**Acceptance criteria:**
 
-**Defaults:**
+- A transcript with 10,000 logical blocks renders from a single `Transcript` node without host-side tree explosion.
+- Streaming append/replace updates mutate existing blocks without sibling node churn.
+- Group collapse/expand survives repeated renders and preserves descendant order.
 
-- Global text cache cap: 8 MiB.
-- Eviction: LRU by access tick.
-- Capacity is hard bounded and accounted toward PRD memory budget.
+**Flagship example benefit:** This is the core surface for `agent-console` and `ops-log-console`.
 
-**Consequences:**
+### ADR-T33: Anchor-Based Viewport Semantics Override Raw Scroll Position
 
-- (+) Significant parse/wrap reduction for unchanged content.
-- (+) Native ownership of CPU-intensive text pipeline preserved.
-- (-) Invalidation and memory accounting complexity.
+**Context:** Raw row offsets drift under continuous inserts, group collapse/expand, and pane resize. Long-lived transcripts need deterministic sticky-bottom behavior, jump-to-unread, nested scrolling, and focus stability while content keeps changing.
 
-### ADR-T26: Runner API (TypeScript, no native thread)
+**Workflow improved:** A developer reviews older content in a live transcript without the viewport snapping, then jumps back to the first unread region in one command.
 
-**Context:** Manual event-loop wiring repeats lifecycle and cleanup glue.
+**Decision:**
 
-**Decision:** Add host-level `app.run(options)` and `app.stop()` on `Kraken` instances. Keep native render model synchronous.
+1. Viewport state is tracked by logical anchor, not raw row position.
+2. Anchor kinds are:
+   - `Tail`
+   - `BlockStart(block_id, row_offset)`
+   - `FocusedBlock(block_id, row_offset)` while keyboard focus is inside transcript descendants
+3. Follow modes are:
+   - `Manual`
+   - `TailLocked`
+   - `TailWhileNearBottom`
+4. Default sticky-bottom threshold is 2 rows. Detached viewers do not snap back unless follow mode or explicit jump requests it.
+5. The first update received while detached creates an `unread_anchor` at the earliest unseen block. Later unseen updates increment unread count but do not move the anchor.
+6. Nested scroll routing is "innermost until edge, then bubble to parent" for wheel, PageUp/PageDown, and transcript jump commands.
+7. Focus and cursor stability are resolved before terminal emission by recomputing anchors after inserts, collapse toggles, and pane resize.
 
-**Modes:**
+**Failure modes and edge cases:**
 
-- `onChange` (default): render when work exists.
-- `continuous`: fixed-fps loop for animation-heavy workloads.
+- Resize while detached must preserve the anchor rather than the previous raw row.
+- If collapse hides the focused descendant, focus moves to the collapsed parent and records a debug trace entry.
+- Multiple patches in one frame must produce the same viewport result as the same patches across multiple frames.
 
-**Consequences:**
+**Observability/debuggability requirements:**
 
-- (+) Better time-to-hello-world.
-- (+) No hidden native async model.
-- (-) Host-side policy code must stay deterministic across Bun versions.
+- Debug snapshot records anchor kind, anchor block ID, anchor row offset, unread anchor, and tail-attached boolean.
+- Replay fixtures must assert visible top/bottom block IDs across streaming updates.
 
-### ADR-T27: Dashboard Staple Widgets in Native Core
+**Acceptance criteria:**
 
-**Context:** Missing table/list/tabs/overlay forces users to hand-roll common dashboard UX.
+- Tail-attached transcripts stay pinned across repeated streaming updates.
+- Detached transcripts preserve the visible anchor while unread count increases.
+- `jump_to_unread` lands on the earliest unread block, not the newest block.
+- Nested scroll tests prove inner-first, edge-bubble behavior.
 
-**Decision:** Add node types and native rendering/state for `Table`, `List`, `Tabs`, and `Overlay`.
+**Flagship example benefit:** This is the differentiator for long-running agent and log consoles.
 
-**Consequences:**
+### ADR-T34: Dev Mode Is Core Product Work
 
-- (+) Closes major adoption gap for dashboard workloads.
-- (+) Keeps high-frequency rendering in Rust.
-- (-) FFI surface increases.
+**Context:** Kraken exposes perf counters and raw debug logging, but it does not yet provide a cohesive way to inspect layout, focus, dirty regions, event flow, or signal-driven updates. Internal debugging friction is currently a larger product risk than packaging polish.
 
-### ADR-T28: Editor-Grade TextArea Extensions
+**Workflow improved:** A developer runs an example under load, sees bounds/focus/dirty overlays, inspects the widget tree and transcript anchors, restarts quickly, and traces why a repaint happened.
 
-**Context:** v2 TextArea lacks selection, search, and history controls.
+**Decision:**
 
-**Decision:** Extend TextArea with selection, selected-text extraction, find-next, and bounded undo/redo.
+1. Add structured debug snapshot and trace APIs in the native core.
+2. Add bounded ring buffers for recent input events, focus changes, dirty propagation, and transcript viewport state.
+3. Add native overlay toggles for layout bounds, focused widget, dirty regions, and transcript anchors. Overlays render above the app frame and must not mutate application layout.
+4. Add TypeScript dev surfaces on top of the snapshot APIs: widget tree inspector, perf HUD, event log, signal trace panel, and leak/invalid-handle warnings.
+5. Fast restart is host-owned and based on Bun watch mode plus deterministic teardown/re-init. v4 does not implement in-process code hot swapping.
 
-**Defaults:**
+**Reuses existing primitives:** `tui_set_debug`, perf counters, headless backend, runner API, existing widget toolkit for inspector panels.
 
-- Undo/redo limit: 256 operations per TextArea.
+**Failure modes and edge cases:**
 
-**Consequences:**
+- Debug mode must not perturb input/focus ordering.
+- Trace buffers must stay bounded.
+- Overlay rendering must not influence layout or dirty propagation decisions.
 
-- (+) Practical editor workflows become first-class.
-- (+) Clipboard integration stays host-owned (no OS coupling in native).
-- (-) TextArea state model grows.
+**Observability/debuggability requirements:**
 
-### ADR-T29: Distribution UX with Prebuilt Artifacts
+- When debug mode is off, overhead on the transcript benchmark must stay below 3 percent.
+- Snapshot and trace export must use caller-owned buffers; no interior pointers cross FFI.
 
-**Context:** Build-from-source install path is fragile on fresh machines.
+**Acceptance criteria:**
 
-**Decision:** Publish prebuilt native artifacts for primary runtime triples, with source-build fallback.
+- Bounds/focus/dirty overlays can be toggled independently.
+- Widget tree, focus target, perf counters, and recent events are queryable in one dev session.
+- Leak and invalid-handle warnings surface in examples under watch/restart workflows.
 
-**Minimum target matrix:**
+**Flagship example benefit:** Makes all flagship examples inspectable instead of merely impressive.
 
-- linux-x64-gnu
-- linux-arm64-gnu
-- darwin-arm64
-- darwin-x64
-- win32-x64-msvc
+### ADR-T35: Minimal Native Expansion, Not Generic Widget Inflation
 
-**Consequences:**
+**Context:** Dense agent/dev apps need panes. They do not need a large new generic widget collection. Most new surfaces can begin as host composites if transcript and pane semantics are strong.
 
-- (+) Lower install friction and faster onboarding.
-- (-) Release pipeline complexity (artifact integrity and matrix validation).
+**Workflow improved:** A developer can build multi-pane consoles and inspectors quickly, while Kraken keeps the performance-critical transcript and resizing semantics in Rust.
 
-### ADR-T30: Deterministic Golden Tests and Benchmark Gates
+**Decision:**
 
-**Context:** Existing tests are strong but do not enforce writer/cache performance regressions.
+1. Add `NodeType::SplitPane` as the only new native layout primitive in v4.
+2. `SplitPane` owns axis, ratio, min sizes, and keyboard/mouse resize behavior, but still uses ordinary tree children.
+3. `CommandPalette` stays a host composite over `Overlay + Input + List`.
+4. `TracePanel` and `StructuredLogView` stay host composites over `TranscriptView` plus filter state.
+5. `CodeView` and `DiffView` start as host composites over `Text`, `ScrollBox`, theme, and syntax highlighting.
+6. No new native widget enters v4 without a named flagship example that needs it.
 
-**Decision:** Add deterministic golden snapshots (MockBackend text fixtures) and `cargo bench`-based CI gates.
+**Failure modes and edge cases:**
 
-**Consequences:**
+- `SplitPane` must reject anything other than exactly two direct children.
+- Divider resize must preserve min sizes and stay deterministic under terminal resize.
+- Code/diff surfaces are not allowed to promote themselves to native during v4 without measured example pain.
 
-- (+) Regressions are measurable and enforceable.
-- (-) Golden fixture updates require explicit workflow discipline.
+**Acceptance criteria:**
 
-### ADR-T31: Background Render Thread is Conditional Only
+- Nested split panes resize correctly with keyboard and mouse.
+- Command palette and trace/log panels are usable in flagship examples without additional native widgets.
 
-**Context:** Architecture Risk 7 descoped background rendering; synchronous pipeline is canonical.
+**Flagship example benefit:** Powers the side-pane layouts in `agent-console`, `ops-log-console`, and later `repo-inspector`.
 
-**Decision:** Keep synchronous rendering as default contract. Background render thread is experiment-only and opt-in.
+### ADR-T36: Flagship Examples Are Blocking Release Gates
 
-**Promotion criteria:**
+**Context:** Current examples prove breadth, but not the target product identity. v4 needs proof under real transcript, pane, and debugging pressure.
 
-1. Benchmark win on canonical workloads.
-2. No event-order or state-visibility semantic drift.
-3. Shutdown and terminal restore parity with synchronous mode.
+**Workflow improved:** The same example apps used for design pressure also become replayable regression harnesses.
 
-**Consequences:**
+**Decision:**
 
-- (+) Protects maintainability and mental model.
-- (-) Requires strict gate discipline if experiment is pursued.
+1. `agent-console` and `ops-log-console` are v4 MVP gates.
+2. `repo-inspector` is planned in the same phase family but after transcript/devtools MVP stabilizes.
+3. Every feature in v4 must feed at least one flagship example.
+4. Replay fixtures, goldens, and perf checks are tied to example behaviors, not just unit-level APIs.
+
+**Acceptance criteria:**
+
+- Flagship examples run under replay fixtures and pass behavior/perf gates.
+- A feature is not "done" until at least one flagship example uses it under load.
+
+**Flagship example benefit:** Prevents framework vanity and keeps the roadmap product-shaped.
 
 ---
 
-## 3. DATA MODEL (CURRENT v3)
+## 3. DATA MODEL (v4 Additions)
 
 ### 3.1 In-Memory ERD
 
 ```mermaid
 erDiagram
     TuiContext ||--o{ TuiNode : nodes
-    TuiContext ||--o{ TuiEvent : event_buffer
-    TuiContext ||--|| Buffer : front_buffer
-    TuiContext ||--|| Buffer : back_buffer
-    TuiContext ||--o{ Theme : themes
-    TuiContext ||--o{ Animation : animations
-    TuiContext ||--o{ TextCacheEntry : text_cache
-    TuiNode ||--|| VisualStyle : visual_style
-    TuiNode }o--o| TuiNode : parent_children
-    Buffer ||--o{ Cell : cells
+    TuiNode ||--o| TranscriptState : transcript
+    TuiNode ||--o| SplitPaneState : split_pane
+    TranscriptState ||--o{ TranscriptBlock : blocks
+    TuiContext ||--o{ DebugTraceEntry : debug_trace
+    TuiContext ||--o{ DebugFrameSnapshot : debug_frames
 ```
 
 ### 3.2 Enums
@@ -254,240 +279,147 @@ pub enum NodeType {
     List = 7,
     Tabs = 8,
     Overlay = 9,
+    Transcript = 10,
+    SplitPane = 11,
 }
 ```
 
-#### ContentFormat
+#### TranscriptBlockKind
 
 ```rust
 #[repr(u8)]
-pub enum ContentFormat {
-    Plain = 0,
-    Markdown = 1,
-    Code = 2,
+pub enum TranscriptBlockKind {
+    Message = 0,
+    ToolCall = 1,
+    ToolResult = 2,
+    Reasoning = 3,
+    Activity = 4,
+    Divider = 5,
 }
 ```
 
-#### TuiEventType
-
-```rust
-#[repr(u32)]
-pub enum TuiEventType {
-    None = 0,
-    Key = 1,
-    Mouse = 2,
-    Resize = 3,
-    FocusChange = 4,
-    Change = 5,
-    Submit = 6,
-    Accessibility = 7,
-}
-```
-
-#### WrapMode
+#### FollowMode
 
 ```rust
 #[repr(u8)]
-pub enum WrapMode {
-    Off = 0,
-    Soft = 1,
-    Hard = 2,
+pub enum FollowMode {
+    Manual = 0,
+    TailLocked = 1,
+    TailWhileNearBottom = 2,
 }
 ```
 
-#### Easing
+#### ViewportAnchorKind
 
 ```rust
 #[repr(u8)]
-pub enum Easing {
-    Linear = 0,
-    EaseIn = 1,
-    EaseOut = 2,
-    EaseInOut = 3,
-    CubicIn = 4,
-    CubicOut = 5,
-    Elastic = 6,
-    Bounce = 7,
+pub enum ViewportAnchorKind {
+    Tail = 0,
+    BlockStart = 1,
+    FocusedBlock = 2,
+}
+```
+
+#### SplitAxis
+
+```rust
+#[repr(u8)]
+pub enum SplitAxis {
+    Horizontal = 0,
+    Vertical = 1,
 }
 ```
 
 ### 3.3 Structs
 
-#### VisualStyle
+#### TranscriptBlock
 
 ```rust
-pub struct VisualStyle {
-    pub fg_color: u32,
-    pub bg_color: u32,
-    pub border_style: BorderStyle,
-    pub border_color: u32,
-    pub attrs: CellAttrs,
-    pub opacity: f32,
-    pub style_mask: u8,
-}
-```
-
-#### TuiNode
-
-```rust
-pub struct TuiNode {
-    pub node_type: NodeType,
-    pub taffy_node: taffy::NodeId,
+pub struct TranscriptBlock {
+    pub id: u64,
+    pub kind: TranscriptBlockKind,
+    pub parent_id: Option<u64>,
+    pub role: u8, // 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning
     pub content: String,
     pub content_format: ContentFormat,
     pub code_language: Option<String>,
-
-    pub children: Vec<u32>,
-    pub parent: Option<u32>,
-
-    pub visual_style: VisualStyle,
-    pub dirty: bool,
-    pub focusable: bool,
-    pub visible: bool,
-
-    pub scroll_x: i32,
-    pub scroll_y: i32,
-    pub render_offset: (f32, f32),
-    pub z_index: i32,
-
-    // TextArea baseline and v3 extensions
-    pub cursor_row: u32,
-    pub cursor_col: u32,
-    pub wrap_mode: u8,
-    pub selection_anchor: Option<(u32, u32)>,
-    pub selection_focus: Option<(u32, u32)>,
-    pub history_limit: u32,
-
-    // Optional v3 widget state
-    pub table_state: Option<TableState>,
-    pub list_state: Option<ListState>,
-    pub tabs_state: Option<TabsState>,
-    pub overlay_state: Option<OverlayState>,
-
-    // Accessibility
-    pub role: Option<AccessibilityRole>,
-    pub label: Option<String>,
-    pub description: Option<String>,
+    pub streaming: bool,
+    pub collapsed: bool,
+    pub unread: bool,
+    pub rendered_rows: u32,
+    pub version: u64,
 }
 ```
 
-#### v3 Widget and Cache State
+#### TranscriptState
 
 ```rust
-pub struct TableState {
-    pub columns: Vec<TableColumn>,
-    pub rows: Vec<Vec<String>>,
-    pub selected_row: Option<u32>,
-    pub header_visible: bool,
-}
-
-pub struct TableColumn {
-    pub label: String,
-    pub width_value: u16,
-    pub width_unit: u8, // 0=fixed, 1=percent, 2=flex
-}
-
-pub struct ListState {
-    pub items: Vec<String>,
-    pub selected: Option<u32>,
-    pub viewport_offset: u32,
-    pub virtualized: bool,
-}
-
-pub struct TabsState {
-    pub labels: Vec<String>,
-    pub active_index: u32,
-}
-
-pub struct OverlayState {
-    pub open: bool,
-    pub modal: bool,
-    pub clear_under: bool,
-    pub dismiss_on_escape: bool,
-}
-
-/// Tracks emitted cursor position and style within a single frame.
-/// reset() is called at each frame start — all delta tracking is intra-frame only.
-pub struct WriterState {
-    pub cursor_x: u16,
-    pub cursor_y: u16,
-    pub fg: u32,
-    pub bg: u32,
-    pub attrs: CellAttrs,
-    pub has_cursor: bool,
-    /// When true, the first run of the frame unconditionally emits MoveTo
-    /// because the terminal cursor position is unknown after reset().
-    pub force_move: bool,
-}
-
-pub struct TextCacheKey {
-    pub content_hash: u64,
-    pub format: ContentFormat,
-    pub language_hash: u64,
-    pub wrap_width: u16,
-    pub style_fingerprint: u64,
-}
-
-pub struct TextCacheEntry {
-    pub spans: Vec<StyledSpan>,
-    pub wrapped_lines: Vec<String>,
-    pub byte_size: u32,
-    pub last_access_tick: u64,
-}
-
-pub struct TextCache {
-    pub entries: HashMap<TextCacheKey, TextCacheEntry>,
-    pub lru_order: VecDeque<TextCacheKey>,
-    pub max_bytes: u32,
-    pub used_bytes: u32,
+pub struct TranscriptState {
+    pub blocks: Vec<TranscriptBlock>,
+    pub block_index: HashMap<u64, usize>,
+    pub follow_mode: FollowMode,
+    pub anchor_kind: ViewportAnchorKind,
+    pub anchor_block_id: Option<u64>,
+    pub anchor_row_offset: u32,
+    pub unread_anchor: Option<u64>,
+    pub unread_count: u32,
+    pub sticky_threshold_rows: u16,
+    pub tail_attached: bool,
 }
 ```
 
-#### TuiContext
+#### SplitPaneState
 
 ```rust
+pub struct SplitPaneState {
+    pub axis: SplitAxis,
+    pub primary_ratio_permille: u16,
+    pub min_primary: u16,
+    pub min_secondary: u16,
+    pub resize_step: u16,
+    pub resizable: bool,
+}
+```
+
+#### DebugTraceEntry and DebugFrameSnapshot
+
+```rust
+pub struct DebugTraceEntry {
+    pub seq: u64,
+    pub kind: u8, // event, focus, dirty, viewport
+    pub target: u32,
+    pub detail: String,
+}
+
+pub struct DebugFrameSnapshot {
+    pub frame_id: u64,
+    pub focused: u32,
+    pub dirty_nodes: u32,
+    pub diff_cells: u32,
+    pub write_runs: u32,
+    pub transcript_blocks: u32,
+    pub transcript_unread: u32,
+    pub tail_attached: bool,
+}
+```
+
+#### TuiNode and TuiContext Additions
+
+```rust
+pub struct TuiNode {
+    // existing fields unchanged
+    pub transcript_state: Option<TranscriptState>,
+    pub split_pane_state: Option<SplitPaneState>,
+}
+
 pub struct TuiContext {
-    pub tree: TaffyTree<()>,
-    pub nodes: HashMap<u32, TuiNode>,
-    pub next_handle: u32,
-    pub root: Option<u32>,
-
-    pub event_buffer: Vec<TuiEvent>,
-    pub focused: Option<u32>,
-
-    pub front_buffer: Buffer,
-    pub back_buffer: Buffer,
-    pub backend: Box<dyn TerminalBackend>,
-
-    pub syntax_set: syntect::parsing::SyntaxSet,
-    pub theme_set: syntect::highlighting::ThemeSet,
-    pub text_cache: TextCache,
-    pub writer_state: WriterState,
-
-    pub themes: HashMap<u32, Theme>,
-    pub theme_bindings: HashMap<u32, u32>,
-    pub next_theme_handle: u32,
-
-    pub animations: Vec<Animation>,
-    pub next_anim_handle: u32,
-    pub last_render_time: Option<Instant>,
-    pub choreo_groups: HashMap<u32, ChoreoGroup>,
-    pub next_choreo_handle: u32,
-
-    pub last_error: String,
-    pub debug_mode: bool,
-
-    // perf counters
-    pub perf_layout_us: u64,
-    pub perf_render_us: u64,
-    pub perf_diff_cells: u32,
-    pub perf_write_bytes_estimate: u64,
-    pub perf_write_runs: u32,
-    pub perf_style_deltas: u32,
-    pub perf_text_parse_us: u64,
-    pub perf_text_wrap_us: u64,
-    pub perf_text_cache_hits: u32,
-    pub perf_text_cache_misses: u32,
+    // existing fields unchanged
+    pub debug_overlay_flags: u32,
+    pub debug_trace_flags: u32,
+    pub debug_trace: VecDeque<DebugTraceEntry>,
+    pub debug_frames: VecDeque<DebugFrameSnapshot>,
+    pub next_debug_seq: u64,
+    pub frame_seq: u64,
 }
 ```
 
@@ -498,8 +430,9 @@ pub struct TuiContext {
 ### 4.1 Conventions
 
 - Prefix: `tui_`
-- ABI: `extern "C"` + `#[no_mangle]`
+- ABI: `extern "C"` + `#[unsafe(no_mangle)]`
 - Handles: `u32`, with `0` invalid sentinel
+- Transcript block IDs: `u64`, scoped by transcript instance and owned by host bindings
 - String-in: `(*const u8 ptr, u32 len)`; Rust copies
 - String-out: caller-provided `(*mut u8 buffer, u32 len)`
 - Return codes: `0` success, `-1` error, `-2` panic
@@ -508,147 +441,142 @@ pub struct TuiContext {
 
 ### 4.2 Baseline Inheritance Policy
 
-All v2.1 + Epic M symbols remain valid and unchanged unless explicitly superseded below. This includes lifecycle, tree, layout, style, focus, animation, theme, and accessibility foundations.
+All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and debug/devtools symbols without breaking the existing runner, widget, theme, or diagnostics contracts.
 
-### 4.3 v3 Additions (New Symbols)
+### 4.3 v4 Additions (New Symbols)
 
-### 4.3.1 Scroll Enhancements (+3)
+#### 4.3.1 Transcript Surface (+11)
 
-| Function                         | Signature                         | Returns | Description                                  |
-| -------------------------------- | --------------------------------- | ------- | -------------------------------------------- |
-| `tui_scroll_set_show_scrollbar`  | `(u32 handle, u8 enabled) -> i32` | 0 / -1  | Enable or disable native scrollbar rendering |
-| `tui_scroll_set_scrollbar_side`  | `(u32 handle, u8 side) -> i32`    | 0 / -1  | 0=right, 1=left                              |
-| `tui_scroll_set_scrollbar_width` | `(u32 handle, u8 width) -> i32`   | 0 / -1  | Width in cells, valid `1..=3`                |
+| Function | Signature | Returns | Description |
+| -------- | --------- | ------- | ----------- |
+| `tui_transcript_append_block` | `(u32 handle, u64 block_id, u8 kind, u8 role, *const u8 ptr, u32 len) -> i32` | 0 / -1 | Append a new logical block |
+| `tui_transcript_patch_block` | `(u32 handle, u64 block_id, u8 patch_mode, *const u8 ptr, u32 len) -> i32` | 0 / -1 | `patch_mode`: 0=append text, 1=replace text |
+| `tui_transcript_finish_block` | `(u32 handle, u64 block_id) -> i32` | 0 / -1 | Mark a streaming block as complete |
+| `tui_transcript_set_parent` | `(u32 handle, u64 block_id, u64 parent_id) -> i32` | 0 / -1 | Assign a group parent |
+| `tui_transcript_set_collapsed` | `(u32 handle, u64 block_id, u8 collapsed) -> i32` | 0 / -1 | Collapse or expand a block group |
+| `tui_transcript_jump_to_block` | `(u32 handle, u64 block_id, u8 align) -> i32` | 0 / -1 | Jump viewport to block; `align`: 0=start, 1=center, 2=end |
+| `tui_transcript_jump_to_unread` | `(u32 handle) -> i32` | 0 / -1 | Jump to the earliest unread anchor |
+| `tui_transcript_set_follow_mode` | `(u32 handle, u8 mode) -> i32` | 0 / -1 | Set `FollowMode` |
+| `tui_transcript_get_follow_mode` | `(u32 handle) -> i32` | mode / -1 | Read current `FollowMode` |
+| `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Clear unread state at the current viewport |
+| `tui_transcript_get_unread_count` | `(u32 handle) -> i32` | count / -1 | Read unread block count |
 
-### 4.3.2 TextArea Editor Extensions (+8)
+#### 4.3.2 SplitPane (+6)
 
-| Function                             | Signature                                                                  | Returns    | Description                         |
-| ------------------------------------ | -------------------------------------------------------------------------- | ---------- | ----------------------------------- |
-| `tui_textarea_set_selection`         | `(u32 handle, u32 s_row, u32 s_col, u32 e_row, u32 e_col) -> i32`          | 0 / -1     | Set active selection range          |
-| `tui_textarea_clear_selection`       | `(u32 handle) -> i32`                                                      | 0 / -1     | Clear active selection              |
-| `tui_textarea_get_selected_text_len` | `(u32 handle) -> i32`                                                      | len / -1   | Selected text byte length           |
-| `tui_textarea_get_selected_text`     | `(u32 handle, *mut u8 buffer, u32 buffer_len) -> i32`                      | bytes / -1 | Copy selected text to caller buffer |
-| `tui_textarea_find_next`             | `(u32 handle, *const u8 ptr, u32 len, u8 case_sensitive, u8 regex) -> i32` | 1/0/-1     | Find next match from cursor         |
-| `tui_textarea_undo`                  | `(u32 handle) -> i32`                                                      | 0 / -1     | Undo last edit                      |
-| `tui_textarea_redo`                  | `(u32 handle) -> i32`                                                      | 0 / -1     | Redo reverted edit                  |
-| `tui_textarea_set_history_limit`     | `(u32 handle, u32 limit) -> i32`                                           | 0 / -1     | Set undo/redo history bound         |
+| Function | Signature | Returns | Description |
+| -------- | --------- | ------- | ----------- |
+| `tui_splitpane_set_axis` | `(u32 handle, u8 axis) -> i32` | 0 / -1 | `0=horizontal`, `1=vertical` |
+| `tui_splitpane_set_ratio` | `(u32 handle, u16 primary_ratio_permille) -> i32` | 0 / -1 | Set split ratio in thousandths |
+| `tui_splitpane_get_ratio` | `(u32 handle) -> i32` | ratio / -1 | Read split ratio in thousandths |
+| `tui_splitpane_set_min_sizes` | `(u32 handle, u16 min_primary, u16 min_secondary) -> i32` | 0 / -1 | Set child minimum sizes in cells |
+| `tui_splitpane_set_resize_step` | `(u32 handle, u16 step_cells) -> i32` | 0 / -1 | Set keyboard resize step |
+| `tui_splitpane_set_resizable` | `(u32 handle, u8 enabled) -> i32` | 0 / -1 | Enable or disable user resize |
 
-### 4.3.3 Table Widget (+10)
+#### 4.3.3 Debug and Devtools (+7)
 
-| Function                       | Signature                                                                                            | Returns    | Description                           |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------- |
-| `tui_table_set_column_count`   | `(u32 handle, u32 count) -> i32`                                                                     | 0 / -1     | Resize column schema                  |
-| `tui_table_set_column`         | `(u32 handle, u32 index, *const u8 label_ptr, u32 label_len, u16 width_value, u8 width_unit) -> i32` | 0 / -1     | Set column metadata                   |
-| `tui_table_insert_row`         | `(u32 handle, u32 index) -> i32`                                                                     | 0 / -1     | Insert row (append on overflow index) |
-| `tui_table_remove_row`         | `(u32 handle, u32 index) -> i32`                                                                     | 0 / -1     | Remove row                            |
-| `tui_table_clear_rows`         | `(u32 handle) -> i32`                                                                                | 0 / -1     | Clear all rows                        |
-| `tui_table_set_cell`           | `(u32 handle, u32 row, u32 col, *const u8 ptr, u32 len) -> i32`                                      | 0 / -1     | Set one cell content                  |
-| `tui_table_get_cell`           | `(u32 handle, u32 row, u32 col, *mut u8 buffer, u32 buffer_len) -> i32`                              | bytes / -1 | Copy one cell content                 |
-| `tui_table_set_selected_row`   | `(u32 handle, i32 row) -> i32`                                                                       | 0 / -1     | `-1` clears selection                 |
-| `tui_table_get_selected_row`   | `(u32 handle) -> i32`                                                                                | row / -1   | Read selected row                     |
-| `tui_table_set_header_visible` | `(u32 handle, u8 visible) -> i32`                                                                    | 0 / -1     | Show or hide header                   |
+| Function | Signature | Returns | Description |
+| -------- | --------- | ------- | ----------- |
+| `tui_debug_set_overlay` | `(u32 flags) -> i32` | 0 / -1 | Toggle overlay flags for bounds, focus, dirty, anchors |
+| `tui_debug_set_trace_flags` | `(u32 flags) -> i32` | 0 / -1 | Enable specific trace streams |
+| `tui_debug_get_snapshot_len` | `() -> i32` | len / -1 | Byte length for current debug snapshot JSON |
+| `tui_debug_get_snapshot` | `(*mut u8 buffer, u32 buffer_len) -> i32` | bytes / -1 | Copy current debug snapshot JSON |
+| `tui_debug_get_trace_len` | `(u8 kind) -> i32` | len / -1 | Byte length for a trace stream JSON payload |
+| `tui_debug_get_trace` | `(u8 kind, *mut u8 buffer, u32 buffer_len) -> i32` | bytes / -1 | Copy a trace stream JSON payload |
+| `tui_debug_clear_traces` | `() -> i32` | 0 / -1 | Clear all buffered trace entries |
 
-### 4.3.4 List Widget (+7)
+### 4.4 Event Payload Additions
 
-| Function                | Signature                                                        | Returns    | Description           |
-| ----------------------- | ---------------------------------------------------------------- | ---------- | --------------------- |
-| `tui_list_add_item`     | `(u32 handle, *const u8 ptr, u32 len) -> i32`                    | 0 / -1     | Append item           |
-| `tui_list_remove_item`  | `(u32 handle, u32 index) -> i32`                                 | 0 / -1     | Remove item           |
-| `tui_list_clear_items`  | `(u32 handle) -> i32`                                            | 0 / -1     | Clear items           |
-| `tui_list_get_count`    | `(u32 handle) -> i32`                                            | count / -1 | Get item count        |
-| `tui_list_get_item`     | `(u32 handle, u32 index, *mut u8 buffer, u32 buffer_len) -> i32` | bytes / -1 | Copy item text        |
-| `tui_list_set_selected` | `(u32 handle, i32 index) -> i32`                                 | 0 / -1     | `-1` clears selection |
-| `tui_list_get_selected` | `(u32 handle) -> i32`                                            | index / -1 | Read selected index   |
-
-### 4.3.5 Tabs Widget (+6)
-
-| Function              | Signature                                     | Returns    | Description      |
-| --------------------- | --------------------------------------------- | ---------- | ---------------- |
-| `tui_tabs_add_tab`    | `(u32 handle, *const u8 ptr, u32 len) -> i32` | 0 / -1     | Append tab label |
-| `tui_tabs_remove_tab` | `(u32 handle, u32 index) -> i32`              | 0 / -1     | Remove tab       |
-| `tui_tabs_clear_tabs` | `(u32 handle) -> i32`                         | 0 / -1     | Clear tabs       |
-| `tui_tabs_get_count`  | `(u32 handle) -> i32`                         | count / -1 | Get tab count    |
-| `tui_tabs_set_active` | `(u32 handle, u32 index) -> i32`              | 0 / -1     | Set active tab   |
-| `tui_tabs_get_active` | `(u32 handle) -> i32`                         | index / -1 | Read active tab  |
-
-### 4.3.6 Overlay Widget (+8)
-
-| Function                          | Signature                             | Returns | Description                       |
-| --------------------------------- | ------------------------------------- | ------- | --------------------------------- |
-| `tui_overlay_set_open`            | `(u32 handle, u8 open) -> i32`        | 0 / -1  | Open or close overlay             |
-| `tui_overlay_get_open`            | `(u32 handle) -> i32`                 | 1/0/-1  | Read open state                   |
-| `tui_overlay_set_modal`           | `(u32 handle, u8 modal) -> i32`       | 0 / -1  | Enable or disable modal behavior  |
-| `tui_overlay_get_modal`           | `(u32 handle) -> i32`                 | 1/0/-1  | Read modal state                  |
-| `tui_overlay_set_clear_under`     | `(u32 handle, u8 clear_under) -> i32` | 0 / -1  | Clear underlay region before draw |
-| `tui_overlay_get_clear_under`     | `(u32 handle) -> i32`                 | 1/0/-1  | Read clear-under state            |
-| `tui_overlay_set_dismiss_on_escape` | `(u32 handle, u8 dismiss) -> i32`   | 0 / -1  | Enable ESC key dismissal          |
-| `tui_overlay_get_dismiss_on_escape` | `(u32 handle) -> i32`               | 1/0/-1  | Read dismiss-on-escape state      |
-
-### 4.4 Event Payload (v3 additions)
-
-| Event Type      | `target`       | `data[0]`        | `data[1]`    | Notes                                       |
-| --------------- | -------------- | ---------------- | ------------ | ------------------------------------------- |
-| Change on List  | list handle    | selected index   | 0            | Read item via `tui_list_get_item`           |
-| Change on Tabs  | tabs handle    | active tab index | 0            | Read with `tui_tabs_get_active`             |
-| Change on Table | table handle   | selected row     | selected col | Optional cell read via `tui_table_get_cell` |
-| Accessibility   | focused handle | role code        | 0            | unchanged baseline from Epic M              |
+| Event Type | `target` | `data[0]` | `data[1]` | Notes |
+| ---------- | -------- | --------- | --------- | ----- |
+| Change on SplitPane | split-pane handle | ratio permille | 0 | Emitted on keyboard or mouse resize |
+| Change on Transcript | not used in v4 MVP | - | - | Transcript remains command-driven; debug traces expose viewport changes |
 
 ### 4.5 Diagnostics Counters
 
-| ID  | Counter                         | Unit   |
-| --- | ------------------------------- | ------ |
-| 0   | last layout duration            | us     |
-| 1   | last render duration            | us     |
-| 2   | last diff cell count            | cells  |
-| 3   | current event buffer depth      | events |
-| 4   | total node count                | nodes  |
-| 5   | dirty node count                | nodes  |
-| 6   | active animation count          | anims  |
-| 7   | last terminal write bytes (estimated) | bytes  |
-| 8   | last terminal write run count   | runs   |
-| 9   | last terminal style delta count | ops    |
-| 10  | last text parse duration        | us     |
-| 11  | last text wrap duration         | us     |
-| 12  | text cache hits (frame)         | hits   |
-| 13  | text cache misses (frame)       | misses |
+Counters `0..13` remain unchanged from the v3 baseline. v4 adds:
+
+| ID | Counter | Unit |
+| -- | ------- | ---- |
+| 14 | transcript block count | blocks |
+| 15 | transcript visible row count | rows |
+| 16 | transcript unread count | blocks |
+| 17 | debug trace depth | entries |
+| 18 | transcript tail attached | bool (0/1) |
 
 ### 4.6 Symbol Count
 
-- Baseline at end of v2 + Epic M: **96**
-- v3 additions in this spec: **+42**
-- Projected total after v3: **138**
+- Current implemented baseline at end of v3: **142**
+- v4 additions in this spec: **+24**
+- Projected total after v4 MVP: **166**
 
-Breakdown of v3 additions:
+Breakdown of v4 additions:
 
-- Scroll: +3
-- TextArea editor extensions: +8
-- Table: +10
-- List: +7
-- Tabs: +6
-- Overlay: +8
+- Transcript: +11
+- SplitPane: +6
+- Debug/devtools: +7
 
-### 4.7 Host Runner Contract (TS-only, no new C ABI)
+### 4.7 Host Contracts (TS-only)
+
+#### TranscriptView Wrapper
 
 ```ts
-app.run({
-  mode: "onChange" | "continuous",
-  fps?: number,
-  idleTimeout?: number,
-  onEvent?: (event) => void,
-  onTick?: () => void,
-  debugOverlay?: boolean,
-}): Promise<void>
+class TranscriptView extends Widget {
+  appendBlock(input: {
+    id: bigint | number;
+    kind: "message" | "toolCall" | "toolResult" | "reasoning" | "activity" | "divider";
+    role: "system" | "user" | "assistant" | "tool" | "reasoning";
+    content?: string;
+  }): void;
 
-app.stop(): void
+  patchBlock(
+    id: bigint | number,
+    patch: { mode: "append" | "replace"; content: string },
+  ): void;
+
+  finishBlock(id: bigint | number): void;
+  setParent(id: bigint | number, parentId: bigint | number): void;
+  setCollapsed(id: bigint | number, collapsed: boolean): void;
+  setFollowMode(mode: "manual" | "tailLocked" | "tailWhileNearBottom"): void;
+  jumpToUnread(): void;
+}
 ```
 
-Implementation source: `ts/src/app.ts` and `ts/src/loop.ts`, composed from existing FFI lifecycle/input/render APIs.
+#### AG-UI Replay Adapter
+
+```ts
+type AgUiReplayEvent =
+  | { type: "RUN_STARTED"; threadId: string; runId: string }
+  | { type: "TEXT_MESSAGE_CHUNK"; messageId: string; role?: string; delta?: string }
+  | { type: "TOOL_CALL_CHUNK"; toolCallId: string; toolCallName?: string; delta?: string }
+  | { type: "TOOL_CALL_RESULT"; toolCallId: string; messageId: string; content: string }
+  | { type: "ACTIVITY_SNAPSHOT"; messageId: string; activityType: string; content: unknown }
+  | { type: "ACTIVITY_DELTA"; messageId: string; activityType: string; patch: unknown[] }
+  | { type: "RUN_FINISHED"; runId: string }
+  | { type: "RUN_ERROR"; runId: string; message: string };
+
+function applyAgUiReplayEvent(transcript: TranscriptView, event: AgUiReplayEvent): void;
+```
+
+#### Dev Session Contract
+
+```ts
+interface DevSessionOptions {
+  createApp: () => Promise<{ app: Kraken; root: Widget }>;
+  overlay?: Array<"bounds" | "focus" | "dirty" | "anchors" | "perf">;
+  traceSignals?: boolean;
+  watch?: string[];
+}
+
+function createDevSession(options: DevSessionOptions): Promise<void>;
+```
+
+Implementation note: the restart loop is launched under `bun --watch` and performs deterministic `shutdown()` + re-init. v4 explicitly rejects in-process code swapping.
 
 ---
 
 ## 5. IMPLEMENTATION GUIDELINES
 
-### 5.1 Project Structure (v3 target)
+### 5.1 Project Structure (v4 Target)
 
 ```text
 kraken-tui/
@@ -657,72 +585,65 @@ kraken-tui/
 |  `- src/
 |     |- lib.rs
 |     |- context.rs
-|     |- types.rs
 |     |- tree.rs
 |     |- layout.rs
-|     |- style.rs
 |     |- render.rs
-|     |- writer.rs          # v3
-|     |- terminal.rs
+|     |- writer.rs
 |     |- text.rs
-|     |- text_cache.rs      # v3
+|     |- text_cache.rs
 |     |- event.rs
 |     |- scroll.rs
 |     |- theme.rs
-|     `- animation.rs
+|     |- animation.rs
+|     |- textarea.rs
+|     |- transcript.rs      # v4
+|     |- splitpane.rs       # v4
+|     `- devtools.rs        # v4
 |- ts/
-|  |- package.json
-|  |- check-bundle.ts
-|  |- bench-render.ts       # v3
-|  |- test-ffi.test.ts
-|  |- test-jsx.test.ts
-|  `- src/
-|     |- app.ts
-|     |- loop.ts
-|     |- ffi.ts
-|     |- ffi/structs.ts
-|     |- widget.ts
-|     |- widgets/
-|     |  |- box.ts
-|     |  |- text.ts
-|     |  |- input.ts
-|     |  |- select.ts
-|     |  |- scrollbox.ts
-|     |  |- textarea.ts
-|     |  |- table.ts       # v3
-|     |  |- list.ts        # v3
-|     |  |- tabs.ts        # v3
-|     |  `- overlay.ts     # v3
-|     |- jsx/
-|     `- effect/
+|  |- src/
+|  |  |- app.ts
+|  |  |- dev.ts            # v4
+|  |  |- diagnostics.ts
+|  |  |- widget.ts
+|  |  |- widgets/
+|  |  |  |- transcript.ts  # v4
+|  |  |  `- splitpane.ts   # v4
+|  |  `- devtools/
+|  |     |- inspector.ts   # v4
+|  |     |- hud.ts         # v4
+|  |     `- traces.ts      # v4
+|- examples/
+|  |- agent-console.tsx    # v4
+|  |- ops-log-console.tsx  # v4
+|  `- repo-inspector.tsx   # v4
 `- docs/
 ```
 
-### 5.2 Module Responsibilities (v3 focus)
+### 5.2 Module Responsibilities (v4 Focus)
 
-| Module       | File(s)                            | Responsibility                                            |
-| ------------ | ---------------------------------- | --------------------------------------------------------- |
-| Render       | `render.rs`                        | Compute frame buffers and cell diff                       |
-| Writer       | `writer.rs`                        | Build runs, emit cursor/style deltas, track write metrics |
-| Text + Cache | `text.rs`, `text_cache.rs`         | Parse/highlight/wrap and bounded cache management         |
-| Widgets      | `tree.rs`, `event.rs`, `render.rs` | Behavior and rendering for baseline + v3 widgets          |
-| TS Runner    | `app.ts`, `loop.ts`                | lifecycle, loop policy, cleanup, event dispatch           |
+| Module | File(s) | Responsibility |
+| ------ | ------- | -------------- |
+| Transcript | `native/src/transcript.rs`, `ts/src/widgets/transcript.ts` | Logical block storage, streaming patch path, unread/follow behavior |
+| Split panes | `native/src/splitpane.rs`, `ts/src/widgets/splitpane.ts` | Dense pane layout and user resize behavior |
+| Devtools | `native/src/devtools.rs`, `ts/src/dev.ts`, `ts/src/devtools/*` | Snapshot export, trace buffers, overlays, inspector panels |
+| Replay adapters | `ts/src/widgets/transcript.ts`, example helpers | AG-UI and log replay into transcript surfaces |
+| Flagship examples | `examples/*` | Product proof, regression pressure, operator workflows |
 
 ### 5.3 Coding Standards
 
 **Rust**
 
-- `lib.rs` contains FFI entrypoints only; no business logic.
-- Every FFI function uses `catch_unwind` and returns error codes per contract.
-- No `unwrap()` in production path; use `Result` and explicit error propagation.
-- Preserve batched-synchronous render contract unless ADR-T31 criteria are met.
+- `lib.rs` remains FFI-only; all transcript, split-pane, and devtools logic lives in dedicated modules.
+- Transcript operations address blocks by stable `u64 block_id`, never by visible row or child index.
+- Debug snapshot and trace APIs are copy-out only; no interior pointers cross FFI.
+- When debug mode is off, devtools code paths must short-circuit before extra tree traversal.
+- `SplitPane` validates exactly two direct children before accepting resize behavior.
 
 **TypeScript**
 
-- Thin command wrapper only; no state ownership drift from Rust.
-- `strict: true` TypeScript.
-- Runtime deps are restricted to `bun:ffi` and `@preact/signals-core`.
-- Keep host bundle under PRD budget (< 50KB).
+- Host wrappers stay thin; Rust still owns transcript state, pane state, and viewport correctness.
+- `CommandPalette`, `TracePanel`, `StructuredLogView`, `CodeView`, and `DiffView` stay host composites until example pressure proves native promotion is necessary.
+- Watch/restart helpers must always call `shutdown()` before re-init.
 
 ### 5.4 Build and Verification Commands
 
@@ -730,98 +651,52 @@ kraken-tui/
 # Native build
 cargo build --release --manifest-path native/Cargo.toml
 
-# Native tests
+# Native tests and transcript replay fixtures
 cargo test --manifest-path native/Cargo.toml
 
-# Native benchmark gates
+# Native benchmarks
 cargo bench --manifest-path native/Cargo.toml
 
-# TS tests and bundle guard
-cd ts && bun test
-cd ts && bun run check-bundle.ts
+# TS tests
+bun test ts/test-ffi.test.ts
+bun test ts/test-runner.test.ts
+bun test ts/test-jsx.test.ts
 
-# TS benchmark harness
-cd ts && bun run bench-render.ts
+# Flagship examples (target commands)
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/agent-console.tsx
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/ops-log-console.tsx
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/repo-inspector.tsx
+
+# Dev restart loop
+bun --watch examples/agent-console.tsx
 ```
 
 ### 5.5 Performance and Quality Gates
 
-| Constraint            | Target                                             | Gate                               |
-| --------------------- | -------------------------------------------------- | ---------------------------------- |
-| Render budget         | < 16ms per pass                                    | benchmark median and p95           |
-| Input latency         | < 50ms                                             | synthetic key-to-render test       |
-| FFI overhead          | < 1ms per call                                     | microbench and perf counters       |
-| Memory budget         | < 20MB for 100 widgets                             | stress fixture and memory snapshot |
-| Host bundle           | < 50KB                                             | `check-bundle.ts`                  |
-| Writer throughput     | >= 35% fewer style/cursor ops vs per-cell baseline | counters 8 and 9                   |
-| Text cache efficiency | >= 80% hits on unchanged-content rerender          | counters 12 and 13                 |
+| Constraint | Target | Gate |
+| ---------- | ------ | ---- |
+| Transcript replay render time | p95 < 8ms on canonical 120x40 headless replay | `cargo bench` transcript fixture |
+| Tail-attached stability | 0 viewport drift across 1,000 streaming updates | headless replay assertion |
+| Detached reading stability | visible anchor unchanged while unread count increases | replay + golden tests |
+| Jump-to-unread correctness | lands on earliest unread block | transcript behavior tests |
+| Nested scroll handoff | inner-first, edge-bubble semantics | integration tests |
+| Debug-off overhead | < 3% render delta on transcript benchmark | paired benchmark with devtools disabled/enabled |
+| Flagship examples | `agent-console` and `ops-log-console` replay fixtures pass | example replay suite |
 
-### 5.6 Runtime Pattern
+### 5.6 Explicit v4 Non-Priorities
 
-**Preferred (v3):**
-
-```ts
-import { Kraken } from "kraken-tui";
-
-const app = Kraken.init();
-
-await app.run({
-	mode: "onChange",
-	idleTimeout: 100,
-	onEvent: (event) => {
-		if (event.type === "key" && event.keyCode === 0x010e) app.stop();
-	},
-});
-```
-
-**Manual fallback (fully supported):**
-
-```ts
-let running = true;
-while (running) {
-	app.readInput(16);
-	for (const event of app.drainEvents()) {
-		if (event.type === "key" && event.keyCode === 0x010e) running = false;
-	}
-	app.render();
-}
-app.shutdown();
-```
+- Distribution and packaging polish beyond what v3 already delivered
+- Further editor-grade `TextArea` work
+- Any promotion of the threaded render experiment
+- Generic widget parity work without transcript/devtools leverage
+- New native components that are not required by the flagship examples
 
 ---
 
-## Appendix A: Legacy Summary
+## Appendix A: v4 Exit Criteria
 
-| Version | Scope Summary                                                                                                                            |
-| ------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| v0      | core widgets, layout, style, input, scroll, terminal abstraction, rich text                                                              |
-| v1      | animation primitives/chaining and theme foundation                                                                                       |
-| v2      | safe state, tree ops for reconciler, TextArea, theme inheritance, position animation, choreography, reconciler, accessibility foundation |
-
-## Appendix B: v3 Execution Order
-
-1. V3-A terminal writer throughput (ADR-T24)
-2. V3-B rich text and wrap cache (ADR-T25)
-3. V3-C runner API (ADR-T26)
-4. V3-D dashboard staples (ADR-T27)
-5. V3-E editor-grade TextArea (ADR-T28)
-6. V3-F distribution UX (ADR-T29)
-7. V3-G golden tests and benchmark gates (ADR-T30)
-8. V3-H background render thread experiment (ADR-T31, conditional only)
-
-Exit criteria for v3 completion:
-
-- All v3 symbols implemented and covered by FFI tests.
-- Benchmark and golden gates pass in CI for all required targets.
-- Bundle and performance budgets remain within PRD constraints.
-
-## Appendix C: Resolved Spec–Implementation Gaps
-
-Previously tracked gaps, now resolved:
-
-1. **Scroll enhancements (§4.3.1)**: 3 scroll FFI symbols and TuiNode fields
-   (`show_scrollbar`, `scrollbar_side`, `scrollbar_width`) — implemented.
-
-2. **z_index field (§3.3)**: `z_index: i32` added to TuiNode with `tui_set_z_index`
-   FFI setter — implemented. Render-order sorting by z_index is not yet wired
-   into the render pipeline.
+- Long transcript replay stays stable under sustained streaming.
+- Sticky-bottom, jump-to-unread, and nested scroll behavior are deterministic.
+- Dev mode exposes bounds, focus, dirty regions, traces, and replayable diagnostics.
+- `agent-console` and `ops-log-console` feel like real tools, not broad feature demos.
+- Repo inspector is unblocked by proven pane and transcript primitives, not by another generic widget wave.

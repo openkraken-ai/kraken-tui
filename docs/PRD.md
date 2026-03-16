@@ -2,7 +2,7 @@
 
 ## Kraken TUI
 
-**Version**: 2.1
+**Version**: 2.2
 **Status**: Approved
 **Date**: March 2026
 
@@ -14,9 +14,11 @@
 
 **The Problem:** Developers building terminal dashboards and interactive CLI tools in the TypeScript ecosystem face a forced trade-off: ergonomic but resource-heavy solutions (full-framework reconciliation overhead, 50MB+ memory for simple apps) versus performant but ergonomically hostile ones (systems languages, C bindings, no TypeScript support). No solution exists that provides native performance, familiar layout semantics, and a composable widget model — all accessible from TypeScript without framework overhead.
 
+**Current Product Emphasis (March 2026):** Kraken's near-term differentiation is long-lived, information-dense terminal applications for developer and agent workflows. The product is especially valuable when interfaces must remain stable under streaming output, long transcripts, dense inspection surfaces, and pane-based navigation.
+
 **Jobs to be Done:**
 
-> _Primary:_ "When building interactive terminal applications in TypeScript, I want pre-built composable interface elements with native performance and familiar layout semantics, so I can **ship polished terminal UIs in hours, not days**, without the overhead of full-framework reconciliation or learning a systems language."
+> _Primary:_ "When building interactive terminal applications in TypeScript, I want pre-built composable interface elements with native performance and familiar layout semantics, so I can **ship polished terminal UIs in hours, not days**, especially for long-running developer and agent workflows, without the overhead of full-framework reconciliation or learning a systems language."
 
 > _Secondary:_ "When using Bun as my primary runtime, I want a TUI library designed for Bun's foreign-function model from day one, so I don't fight compatibility shims or WASM overhead."
 
@@ -63,6 +65,8 @@
 ---
 
 ## 4. FUNCTIONAL CAPABILITIES
+
+**Current capability emphasis:** Within the overall product scope, the highest-leverage workflow is the construction of long-lived developer and agent applications with streaming output, dense inspection surfaces, predictable viewport behavior, and fast internal debugging.
 
 ### Epic 1: Widget Composition (P0 — Critical Path, v0)
 
@@ -163,6 +167,9 @@
 - Incremental rendering (dirty-region tracking).
 - Cross-platform terminal abstraction.
 - Scrollable regions.
+- Long-lived transcript and log-style workflows where content updates continuously while the End User reads older content.
+- Dense multi-pane developer and agent interfaces that combine navigation, inspection, and live output in a single Surface.
+- Internal debugging and inspection workflows that help the Developer understand layout, focus, rendering, and event behavior while building such applications.
 
 **v1 — Delivered:**
 
@@ -192,7 +199,9 @@
 
 5. **Widget state persistence.** Serialization/deserialization of the Composition Tree is deferred to future versions.
 
-6. **Background render thread.** Shifting layout/rendering to a dedicated thread contradicts the batched-synchronous pipeline and host-driven animation model. Deferred to v3 pending profiling evidence that the synchronous model is a bottleneck for real workloads.
+6. **Background render thread.** Shifting layout/rendering to a dedicated thread contradicts the batched-synchronous pipeline and host-driven animation model. Deferred unless profiling shows that the synchronous model is insufficient for real workloads.
+
+7. **Broad packaging and distribution polish as a primary product objective.** External adoption ergonomics matter, but they are not the current differentiator. Dependability for complex, long-lived terminal workflows takes precedence.
 
 ---
 

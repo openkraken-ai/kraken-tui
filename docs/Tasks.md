@@ -2,59 +2,63 @@
 
 ## Kraken TUI
 
-**Version**: 5.0
-**Status**: v3 Complete (Epics A–G Done, H Done — Experiment Concluded, No-Go/Deferred)
-**Date**: March 2026
-**Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md)
+**Version**: 6.0  
+**Status**: Planned (v4 focus reset)  
+**Date**: March 2026  
+**Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
+
+**Planning note**: v3 is complete and remains the implementation baseline. This file tracks only the next execution phase and depends on the concrete contracts defined in `TechSpec.md`.
 
 ---
 
 ## 1. EXECUTIVE SUMMARY
 
-**v3 Total Estimation:** 132 Story Points (Fibonacci: 1, 2, 3, 5, 8)
+**Total Estimation:** 85 Story Points (Fibonacci: 1, 2, 3, 5, 8)
 
-**v3 MVP Estimation (A-G):** 112 Story Points
+**Phase 1 (MVP) Estimation:** 72 Story Points
 
-**v3 Completed:** 132 Story Points (all epics including conditional Epic H)
+**Phase 2 (Post-MVP) Estimation:** 13 Story Points
 
-**v3 Critical Path (MVP):**
+**Critical Path:**
 
-`TASK-A0 -> TASK-A1 -> TASK-A2 -> TASK-A3 -> TASK-B0 -> TASK-B1 -> TASK-B2 -> TASK-B3 -> TASK-C1 -> TASK-C2 -> TASK-C3 -> TASK-D1 -> TASK-D2 -> TASK-D3 -> TASK-D4 -> TASK-D5 -> TASK-D6 -> TASK-E1 -> TASK-E2 -> TASK-E3 -> TASK-E4 -> TASK-E5 -> TASK-F0 -> TASK-F1 -> TASK-F2 -> TASK-F3 -> TASK-G1 -> TASK-G2 -> TASK-G3 -> TASK-G4`
+`TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-I5 -> TASK-J0 -> TASK-J1 -> TASK-J2 -> TASK-J3 -> TASK-J4 -> TASK-L1 -> TASK-L3`
 
-**Critical Path Estimate (MVP):** 112 Story Points
-
-**Conditional Extension Path (Phase 2):**
-
-`TASK-H0 -> TASK-H1 -> TASK-H2` (10 Story Points)
+**Critical Path Estimate:** 56 Story Points
 
 **Planning Constraints:**
 
-1. All v2.1 + Epic M FFI symbols are compatibility baseline and must remain stable while v3 symbols are added.
-2. Performance budgets from PRD are hard constraints, not stretch goals: render <16ms, input <50ms, FFI overhead <1ms, memory <20MB/100 widgets, host bundle <50KB.
-3. ADR-T31 background render thread remains conditional and cannot be promoted without benchmark evidence and semantic parity.
+1. `Tasks.md` is downstream of `TechSpec.md`. No ticket may introduce APIs, state, or widgets that the TechSpec does not already define.
+2. Transcript/viewport correctness is the first bottleneck. Until that is stable, no example or component work is allowed to pull the roadmap toward generic widget expansion.
+3. Dev mode is product work. It is not optional polish and cannot be deferred behind packaging or public adoption work.
+4. `agent-console` and `ops-log-console` are blocking proof apps for this phase. `repo-inspector` starts only after the MVP stack is real and measurable.
 
 ---
 
 ## 2. PROJECT PHASING STRATEGY
 
-### Phase 1 (MVP for v3)
+### Phase 1 (MVP for v4)
 
 Functional outcomes:
 
-1. Ship terminal writer throughput improvements with run compaction, stateful style/cursor emission, and telemetry counters (ADR-T24).
-2. Ship rich text and wrapping cache with bounded LRU memory behavior and hit/miss observability (ADR-T25).
-3. Ship ergonomic TS Runner API (`app.run`, `app.stop`) without changing synchronous native render ownership (ADR-T26).
-4. Ship dashboard staples (Table, List, Tabs, Overlay) in Native Core with complete FFI and TS wrapper coverage (ADR-T27).
-5. Ship editor-grade TextArea extensions: selection, selected-text extraction, find-next, and bounded undo/redo (ADR-T28).
-6. Ship cross-platform distribution UX with prebuilt artifacts and deterministic fallback behavior (ADR-T29).
-7. Ship deterministic golden testing plus benchmark gates enforced in CI (ADR-T30).
+1. Ship a native `TranscriptView` with stable block IDs, streaming patch/update semantics, sticky-bottom, jump-to-unread, group collapse, and nested scroll correctness.
+2. Ship transcript replay fixtures, goldens, and benchmark gates that exercise long-lived streaming workloads rather than short dashboard demos.
+3. Ship a cohesive dev mode with native snapshot/trace export, bounds/focus/dirty overlays, widget tree inspection, perf HUD, and deterministic watch/restart behavior.
+4. Ship a native `SplitPane` plus host-side `CommandPalette`, `TracePanel`, and `StructuredLogView` composites.
+5. Ship `agent-console` and `ops-log-console` as real regression-driving examples.
 
-### Phase 2 (Post-Launch / Scope-Controlled) — COMPLETED
+### Phase 2 (Post-MVP / Scope-Controlled)
 
-Experiment executed and concluded:
+Functional outcomes:
 
-1. Experimental background render thread implemented behind `threaded-render` feature flag (ADR-T31).
-2. Parity and benchmark validation completed. Decision: **No-Go / Deferred** — synchronous path meets all performance budgets. See `docs/reports/TASK-H2-threaded-render-decision.md`.
+1. Ship host-side `CodeView` and `DiffView` composites and measure whether native promotion is actually needed.
+2. Ship `repo-inspector` on top of the proven transcript, pane, palette, and devtools foundation.
+
+Explicitly deferred:
+
+- Any native promotion of code/diff surfaces without measured example pressure
+- Packaging/public usability work beyond the v3 baseline
+- More `TextArea` depth
+- Any revisit of background rendering
 
 ---
 
@@ -62,615 +66,422 @@ Experiment executed and concluded:
 
 ```mermaid
 flowchart LR
-    subgraph INFRA[INFRA]
-        A0[TASK-A0 writer baseline spike]
-        B0[TASK-B0 cache key spike]
-        F0[TASK-F0 packaging spike]
-        H0[TASK-H0 threaded render spike]
+    subgraph INFRA[INFRA_AND_SPIKES]
+        I0[TASK-I0 transcript replay contract]
+        J0[TASK-J0 dev snapshot contract]
     end
 
-    subgraph DB[DB_STATE_MODEL]
-        D1[TASK-D1 NodeType and state model expansion]
+    subgraph STATE[STATE_MODEL]
+        I1[TASK-I1 transcript node and FFI]
+        K1[TASK-K1 split pane primitive]
     end
 
     subgraph BACKEND[BACKEND_NATIVE_CORE]
-        A1[TASK-A1 writer compaction core]
-        A2[TASK-A2 terminal integration]
-        A3[TASK-A3 writer counters and tests]
-        B1[TASK-B1 cache module]
-        B2[TASK-B2 parse and wrap integration]
-        B3[TASK-B3 cache bench and tests]
-        D2[TASK-D2 table native]
-        D3[TASK-D3 list native]
-        D4[TASK-D4 tabs and overlay native]
-        D6[TASK-D6 event payload integration]
-        E1[TASK-E1 selection APIs]
-        E2[TASK-E2 undo redo history]
-        E3[TASK-E3 find next search]
-        E4[TASK-E4 input behavior integration]
-        G1[TASK-G1 golden harness]
-        G2[TASK-G2 native benchmark gates]
-        H1[TASK-H1 threaded render implementation]
-        H2[TASK-H2 parity and decision report]
+        I2[TASK-I2 anchor and unread semantics]
+        I4[TASK-I4 nested scroll and focus stability]
+        I5[TASK-I5 replay goldens and benches]
+        J1[TASK-J1 debug snapshots and traces]
     end
 
     subgraph FRONTEND[FRONTEND_HOST_LAYER]
-        C1[TASK-C1 app.run and app.stop]
-        C2[TASK-C2 lifecycle and signal cleanup]
-        C3[TASK-C3 runner tests and compatibility]
-        D5[TASK-D5 TS widget wrappers]
-        E5[TASK-E5 TS textarea bindings]
-        F1[TASK-F1 artifact CI publish]
-        F2[TASK-F2 runtime artifact resolver]
-        F3[TASK-F3 install smoke and diagnostics]
-        G3[TASK-G3 host benchmark harness]
-        G4[TASK-G4 final policy and gates]
+        I3[TASK-I3 TS transcript wrapper and adapters]
+        J2[TASK-J2 inspector surfaces]
+        J3[TASK-J3 watch restart and warnings]
+        J4[TASK-J4 devtools gates]
+        K2[TASK-K2 command palette]
+        K3[TASK-K3 trace and log composites]
+        K4[TASK-K4 code and diff composites]
     end
 
-    A0 --> A1 --> A2 --> A3
-    A3 --> B0 --> B1 --> B2 --> B3
-    B3 --> C1 --> C2 --> C3 --> D1
-    D1 --> D2 --> D3 --> D4 --> D5 --> D6
-    D6 --> E1 --> E2 --> E3 --> E4 --> E5
-    E5 --> F0 --> F1 --> F2 --> F3
-    F3 --> G1 --> G2 --> G3 --> G4
+    subgraph EXAMPLES[EXAMPLES_AND_PROOF]
+        L1[TASK-L1 agent console]
+        L2[TASK-L2 ops log console]
+        L3[TASK-L3 MVP example replay gates]
+        L4[TASK-L4 repo inspector]
+    end
 
-    G2 --> H0 --> H1 --> H2
+    I0 --> I1 --> I2 --> I3 --> I4 --> I5
+    I5 --> J0 --> J1 --> J2 --> J3 --> J4
+    I4 --> K1 --> K2
+    I5 --> K3
+    J4 --> L1
+    K2 --> L1
+    K3 --> L1
+    J3 --> L2
+    K3 --> L2
+    L1 --> L3
+    L2 --> L3
+    K1 --> K4 --> L4
+    J3 --> L4
+    K2 --> L4
 ```
 
 ---
 
 ## 4. THE TICKET LIST
 
-### Epic A: Terminal Writer Throughput (ADR-T24)
+### Epic I: Transcript and Viewport Architecture
 
-**[TASK-A0] Spike Writer Baseline and Emission Contract**
+**[TASK-I0] Spike Transcript Replay Contract and Canonical Fixtures**
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
 - **Dependencies:** None
-- **Description:** Time-boxed baseline study for current per-cell terminal emission. Capture bytes, run counts, and style delta counts across canonical workloads and lock the deterministic emission contract before implementation.
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Time-box the transcript replay contract derived from the TechSpec. Define canonical AG-UI and log-stream fixtures, stable `block_id` rules, follow modes, unread anchor behavior, and the exact expected outcomes for resize, detach, and collapse cases.
+- **Out of Scope:** UI polish, command palette work, packaging, or generic virtualization research
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given the current per-cell write path
-When canonical writer workloads run at 10, 50, and 100 percent diff density
-Then baseline metrics for bytes, run count, and style deltas are recorded
-And a written emission contract exists for ordering, style transitions, and reset behavior
+Given representative AG-UI and streaming log event sequences
+When transcript invariants are exercised in headless replay form
+Then canonical fixtures exist for append, patch, collapse, unread, resize, and detach cases
+And each fixture encodes the expected visible anchor and unread outcome
 ```
 
-**[TASK-A1] Implement Native Run Compaction and WriterState**
+**[TASK-I1] Implement Native Transcript Node State and FFI Block APIs**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-A0]
-- **Description:** Implement `writer.rs` with contiguous run compaction and explicit `WriterState` tracking for cursor, fg, bg, and attrs.
+- **Dependencies:** [TASK-I0]
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Add `NodeType::Transcript`, `TranscriptState`, `TranscriptBlock`, and the transcript FFI surface defined in TechSpec section 4.3.1.
+- **Out of Scope:** Devtools overlays, example wiring, or code/diff surfaces
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given diff updates containing adjacent cells with identical style
-When run compaction executes
-Then adjacent cells are merged into a single run in row-major order
-And WriterState tracks cursor and style transitions without ambiguity
+Given a transcript node created through the standard node factory
+When blocks are appended, patched, finished, grouped, and collapsed through FFI
+Then native transcript state reflects the latest logical block model
+And invalid transcript handles or block identifiers return documented error semantics
 ```
 
-**[TASK-A2] Integrate Stateful Writer into Render and Terminal Modules**
+**[TASK-I2] Implement Anchor-Based Follow, Sticky-Bottom, and Unread Semantics**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-A1]
-- **Description:** Integrate writer emission into `terminal.rs` and render path so cursor/style commands are emitted only on deltas and attribute reset occurs once per frame.
+- **Dependencies:** [TASK-I1]
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Implement `FollowMode`, anchor tracking, sticky-bottom threshold logic, unread anchor creation, and `jump_to_unread`.
+- **Out of Scope:** Split panes, watch mode, or inspector UIs
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a frame with non-contiguous updates and style changes
-When tui_render() performs terminal output
-Then cursor movement commands are emitted only when position continuity breaks
-And style commands are emitted only when style state changes
-And a full attribute reset is emitted once at frame end
+Given a transcript that is tail attached
+When new streaming updates are appended
+Then the viewport remains attached to the tail
+
+Given a transcript that is detached from the tail
+When unseen updates arrive
+Then unread count increases without moving the current viewport
+And jump_to_unread lands on the earliest unread block
 ```
 
-**[TASK-A3] Add Writer Throughput Counters and Regression Tests**
+**[TASK-I3] Implement TypeScript TranscriptView Wrapper and Replay Adapters**
+
+- **Type:** Feature
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-I2]
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Add the `TranscriptView` host wrapper and replay adapters that translate AG-UI and log-stream identities into stable numeric `block_id` values.
+- **Out of Scope:** Devtools inspectors, split panes, or replay benchmarks
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given AG-UI and log replay events with stable message or tool identifiers
+When the TypeScript adapter applies them to TranscriptView
+Then repeated patches update the same logical block instead of creating duplicates
+And host-side string identifiers map deterministically to transcript block identifiers
+```
+
+**[TASK-I4] Integrate Nested Scroll Handoff and Focus Stability Under Streaming Updates**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-I3]
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Wire transcript anchors into existing scroll and focus paths so inner scrollables consume events first, then bubble at edges, while focus and cursor remain stable under streaming inserts and collapse toggles.
+- **Out of Scope:** Dev snapshot export, example-specific inspector sidebars, or command palette work
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given a transcript inside a parent scrollable layout
+When wheel or page-scroll input occurs
+Then the innermost scrollable consumes the input until its edge is reached
+And only then does the parent scrollable consume the remaining motion
+
+Given a focused transcript region
+When streaming updates land above the focus anchor
+Then the focused visual region remains stable after render
+```
+
+**[TASK-I5] Add Transcript Replay Goldens, Benchmarks, and Budget Gates**
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-A2]
-- **Description:** Wire counters 7, 8, and 9 to writer output and add unit/integration tests plus benchmark assertions for writer regression detection.
+- **Dependencies:** [TASK-I4]
+- **Priority Area:** Transcript / viewport architecture
+- **Description:** Add headless replay tests, golden snapshots, and transcript benchmark gates aligned to the TechSpec quality targets.
+- **Out of Scope:** Devtools UI surfaces or flagship example assembly
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given writer benchmarks and integration tests
-When a frame with changed cells is rendered
-Then counters for write bytes, run count, and style deltas are populated
-And tests fail when writer output regresses beyond configured thresholds
+Given canonical transcript replay fixtures
+When native tests and benchmarks run
+Then goldens assert visible anchor behavior deterministically
+And transcript benchmark output fails when render time or debug-off overhead exceeds the documented threshold
 ```
 
-### Epic B: Rich Text and Wrap Cache (ADR-T25)
+### Epic J: Dev Mode and Diagnostics
 
-**[TASK-B0] Spike Cache Key and Invalidation Strategy**
+**[TASK-J0] Spike Debug Snapshot and Overlay Contract**
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
-- **Dependencies:** [TASK-A3]
-- **Description:** Validate cache key composition and invalidation rules for content hash, format, language, wrap width, and style fingerprint, including memory accounting strategy.
+- **Dependencies:** [TASK-I5]
+- **Priority Area:** Dev mode / developer tooling
+- **Description:** Lock the JSON snapshot shape, trace stream categories, overlay flag set, and bounded buffer policy before implementation.
+- **Out of Scope:** Example assembly, split-pane behavior, or packaging workflows
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given representative plain, markdown, and code content workloads
-When cache key and invalidation rules are evaluated
-Then every invalidation trigger is explicitly mapped to a key dimension
-And memory accounting rules define insertion and eviction behavior under hard cap
+Given the TechSpec debug and devtools contract
+When the snapshot and trace payloads are reviewed against real transcript state
+Then a stable JSON shape exists for widget tree, focus, dirty, perf, and transcript anchor data
+And every trace stream has an explicit bounded retention policy
 ```
 
-**[TASK-B1] Implement Bounded Native Text Cache Module**
+**[TASK-J1] Implement Native Debug Snapshots, Trace Buffers, and Overlay Toggles**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-B0]
-- **Description:** Implement `text_cache.rs` with bounded LRU behavior, entry size accounting, and strict 8 MiB capacity handling.
+- **Dependencies:** [TASK-J0]
+- **Priority Area:** Dev mode / developer tooling
+- **Description:** Implement the native devtools surface defined in TechSpec section 4.3.3, including overlay toggles and bounded trace rings.
+- **Out of Scope:** Host inspector panels, Bun watch integration, or repo inspector example work
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given cache capacity set to 8 MiB
-When new parsed entries exceed remaining capacity
-Then least recently used entries are evicted until capacity is respected
-And used_bytes never exceeds max_bytes
+Given debug mode is enabled
+When snapshot and trace APIs are queried after render and input activity
+Then bounds, focus, dirty, transcript, and perf data are exported through the documented copy-out APIs
+And overlay flags render above the application frame without mutating layout
 ```
 
-**[TASK-B2] Integrate Cache with Text Parse and Wrap Pipeline**
+**[TASK-J2] Implement Inspector Surfaces for Widget Tree, Bounds, Focus, and Perf**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-B1]
-- **Description:** Integrate cache lookups/writes in `text.rs` and render flow, and wire counters for parse/wrap time plus hit/miss counts.
+- **Dependencies:** [TASK-J1]
+- **Priority Area:** Dev mode / developer tooling
+- **Description:** Build TypeScript inspector surfaces that consume the native snapshot APIs and expose widget tree, focused handle, bounds, transcript anchors, and perf HUD data.
+- **Out of Scope:** Watch/restart loop, leak warnings, or flagship example assembly
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given unchanged content, wrap width, format, and style fingerprint
-When repeated renders occur
-Then parse and wrap work is served from cache
-And counters report hit increments and stable parse and wrap durations
+Given a running Kraken app in dev mode
+When the inspector surfaces are opened
+Then the developer can inspect widget hierarchy, focused node, bounds, dirty count, and transcript anchor state
+And the displayed information matches the latest native snapshot payload
 ```
 
-**[TASK-B3] Add Cache Benchmarks and Correctness Tests**
+**[TASK-J3] Implement Watch/Restart Loop, Event Log, Signal Trace, and Handle Warnings**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-J2]
+- **Priority Area:** Dev mode / developer tooling
+- **Description:** Add Bun-based restart helpers, event-log surfaces, signal-trace plumbing, and leak/invalid-handle warnings for dev sessions.
+- **Out of Scope:** Native code hot swapping, public packaging UX, or repo inspector implementation
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given an example app running under the dev session helper
+When source changes trigger a restart
+Then the prior app shuts down deterministically before re-init
+And event logs, signal traces, and invalid-handle warnings remain inspectable across restarts
+```
+
+**[TASK-J4] Add Devtools Tests and Overhead Gates**
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-B2]
-- **Description:** Add cache-focused unit tests and benchmark scenarios validating hit-rate targets and eviction correctness under pressure.
+- **Dependencies:** [TASK-J3]
+- **Priority Area:** Dev mode / developer tooling
+- **Description:** Add headless tests and benchmark checks proving bounded trace storage, overlay correctness, and low debug-off overhead.
+- **Out of Scope:** New feature development or example-specific UI polish
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given repeated render workloads with stable inputs
-When benchmark suite runs
-Then cache hit rate reaches or exceeds the target threshold
-And eviction tests confirm no stale entries are returned after invalidation
+Given devtools are disabled on the transcript benchmark
+When the paired benchmark suite runs with devtools disabled and enabled
+Then the debug-off overhead stays within the documented budget
+And bounded trace buffers never exceed their configured retention limits
 ```
 
-### Epic C: Runner API Ergonomics (ADR-T26)
+### Epic K: App-Shaped Surfaces
 
-**[TASK-C1] Implement `app.run` and `app.stop` in Host Layer**
+**[TASK-K1] Implement Native SplitPane Layout and Resize Semantics**
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-B3]
-- **Description:** Implement Runner modes (`onChange`, `continuous`) in TS using existing FFI lifecycle/input/render calls without introducing native threading.
+- **Dependencies:** [TASK-I4]
+- **Priority Area:** Agent/devtool-oriented components
+- **Description:** Add `NodeType::SplitPane`, ratio/min-size state, and keyboard/mouse resize behavior as defined in the TechSpec.
+- **Out of Scope:** Command palette, code/diff viewer composites, or repo inspector example assembly
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a Kraken app instance
-When app.run() is called in onChange mode
-Then rendering occurs only when work is pending
-And app.stop() exits the loop without leaving terminal state corrupted
+Given a split pane with exactly two child regions
+When the divider is resized by keyboard or mouse
+Then child sizes update within configured minimum bounds
+And terminal resize preserves a valid ratio and visible divider state
 ```
 
-**[TASK-C2] Implement Signal Cleanup and Deterministic Shutdown Semantics**
+**[TASK-K2] Implement Host-Side Command Palette Composite**
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
-- **Dependencies:** [TASK-C1]
-- **Description:** Add SIGINT/SIGTERM cleanup handling and finally-block shutdown guarantees for deterministic terminal restoration.
+- **Dependencies:** [TASK-K1]
+- **Priority Area:** Agent/devtool-oriented components
+- **Description:** Build `CommandPalette` as a host composite over `Overlay`, `Input`, and `List`, with dense filtering behavior suitable for flagship examples.
+- **Out of Scope:** Native palette widget work or repo inspector metadata panes
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given app.run() is active
-When SIGINT or SIGTERM is received
-Then app.run() exits cleanly
-And terminal mode is restored exactly once
+Given a command palette opened over a running app
+When the developer types a filter query and navigates the result list
+Then visible commands narrow deterministically and selection remains keyboard driven
+And the palette can be reused in multiple examples without new native APIs
 ```
 
-**[TASK-C3] Add Runner Compatibility Tests and Legacy Loop Interop Coverage**
+**[TASK-K3] Implement TracePanel and StructuredLogView Composites on TranscriptView**
+
+- **Type:** Feature
+- **Effort:** Story Points: 3
+- **Dependencies:** [TASK-I5]
+- **Priority Area:** Agent/devtool-oriented components
+- **Description:** Build trace and structured-log surfaces as host composites on top of `TranscriptView`, including filtering hooks required by MVP examples.
+- **Out of Scope:** Code/diff surfaces or native log-view widgets
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given transcript-backed trace and log streams
+When the host composites apply filters or follow behavior
+Then the visible transcript blocks update without losing transcript anchor correctness
+And the same composite surfaces work in both agent and ops examples
+```
+
+**[TASK-K4] Implement CodeView and DiffView Host Composites and Measure Native-Promotion Need**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-K1]
+- **Priority Area:** Agent/devtool-oriented components
+- **Description:** Build initial code and diff viewer composites from existing text, scroll, and syntax-highlight primitives, then capture the measurements needed to decide whether native promotion is justified.
+- **Out of Scope:** Immediate native code/diff widgets or packaging work
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given code and diff content displayed through host composites
+When repo-inspector scenarios are exercised
+Then line wrapping, scrolling, and syntax highlighting remain usable
+And a written measurement exists describing whether native promotion is warranted
+```
+
+### Epic L: Flagship Examples and Proof
+
+**[TASK-L1] Build Agent Console Example**
+
+- **Type:** Feature
+- **Effort:** Story Points: 8
+- **Dependencies:** [TASK-J4, TASK-K2, TASK-K3]
+- **Priority Area:** Flagship examples as proof
+- **Description:** Build `agent-console` around transcript streaming, tool-call traces, split panes, command palette actions, and dev-mode inspection.
+- **Out of Scope:** Repo inspector workflows or packaging demos
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given the agent console example is running
+When AG-UI replay events stream assistant text, tool calls, and tool results
+Then the transcript, trace side panel, and unread behavior remain stable under load
+And the command palette and devtools surfaces are usable in the same session
+```
+
+**[TASK-L2] Build Ops/Log Console Example**
+
+- **Type:** Feature
+- **Effort:** Story Points: 5
+- **Dependencies:** [TASK-J3, TASK-K3]
+- **Priority Area:** Flagship examples as proof
+- **Description:** Build `ops-log-console` with follow mode, filtering, folding, and inspector overlays using transcript-backed log surfaces.
+- **Out of Scope:** Repo navigation, code/diff viewing, or packaging polish
+- **Acceptance Criteria (Gherkin):**
+
+```gherkin
+Given the ops log console example is running
+When logs stream continuously while the operator detaches, filters, and refollows
+Then follow mode, unread behavior, and folding remain predictable
+And dev overlays expose the viewport and dirty-region behavior during the session
+```
+
+**[TASK-L3] Add Replay Fixtures, Goldens, and Perf Budgets for MVP Examples**
 
 - **Type:** Chore
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-C2]
-- **Description:** Add tests proving compatibility between Runner API and existing manual loop pattern, including bundle guard verification.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given both app.run() and manual loop usage patterns
-When test suite executes
-Then both patterns pass behavior equivalence checks for input and render flow
-And bundle guard remains under the documented size budget
-```
-
-### Epic D: Dashboard Staple Widgets (ADR-T27)
-
-**[TASK-D1] Expand NodeType and Internal State Model for v3 Widgets**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-C3]
-- **Description:** Add `Table`, `List`, `Tabs`, and `Overlay` to node model and context storage with defaults and lifecycle hooks.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given the v3 NodeType enum
-When each new widget node type is created
-Then internal node state initializes with valid defaults
-And destruction paths release all widget-specific state
-```
-
-**[TASK-D2] Implement Table Widget Native Surface and FFI Contract**
-
-- **Type:** Feature
 - **Effort:** Story Points: 5
-- **Dependencies:** [TASK-D1]
-- **Description:** Implement Table state, rendering, selection behavior, and all Table FFI functions defined in TechSpec section 4.3.3.
+- **Dependencies:** [TASK-L1, TASK-L2]
+- **Priority Area:** Flagship examples as proof
+- **Description:** Convert the MVP examples into blocking proof artifacts with replay fixtures, goldens, and benchmark thresholds.
+- **Out of Scope:** New feature invention or repo inspector implementation
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a table with columns and rows
-When table cell values and selected row are updated via FFI
-Then rendered output reflects schema and selection state
-And all table getters return values consistent with the latest mutation
+Given the agent console and ops log console replay fixtures
+When example validation runs in CI
+Then goldens and replay assertions catch transcript, pane, and devtools regressions
+And benchmark thresholds fail the pipeline when real-tool behavior drifts outside the documented budget
 ```
 
-**[TASK-D3] Implement List Widget Native Surface and FFI Contract**
+**[TASK-L4] Build Repo Inspector Example**
 
 - **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-D2]
-- **Description:** Implement List state, rendering, selection behavior, and all List FFI functions defined in TechSpec section 4.3.4.
+- **Effort:** Story Points: 8
+- **Dependencies:** [TASK-K4, TASK-K2, TASK-J3]
+- **Priority Area:** Flagship examples as proof
+- **Description:** Build `repo-inspector` with file tree navigation, code/diff viewing, metadata pane, and command palette actions once the MVP stack is stable.
+- **Out of Scope:** Native code/diff promotion beyond the measurements captured in TASK-K4
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
-Given a list with multiple items
-When items are added, removed, cleared, and selected via FFI
-Then list rendering and selected index remain consistent
-And list getter APIs return correct item count and values
-```
-
-**[TASK-D4] Implement Tabs and Overlay Native Surfaces and FFI Contracts**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-D3]
-- **Description:** Implement Tabs and Overlay state/render/event behavior and all Tabs/Overlay FFI functions from TechSpec sections 4.3.5 and 4.3.6.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given tabs and overlay nodes in a composed UI
-When active tab and overlay modal state are changed via FFI
-Then tab focus state and overlay visibility update deterministically
-And overlay modal behavior blocks outside interaction when enabled
-```
-
-**[TASK-D5] Implement TypeScript Wrappers and Public Exports for v3 Widgets**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-D4]
-- **Description:** Add TS wrappers (`table.ts`, `list.ts`, `tabs.ts`, `overlay.ts`) and update package exports/index to expose full typed APIs.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given the TypeScript host package
-When a developer imports Table, List, Tabs, and Overlay wrappers
-Then all v3 widget methods are typed and callable
-And runtime calls map to the expected FFI symbols
-```
-
-**[TASK-D6] Update Change Event Payload Mapping and Integration Tests**
-
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-D5]
-- **Description:** Implement and verify event payload mapping for List/Tabs/Table change events in native and TS drain paths.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given list, tabs, and table interactions
-When change events are emitted and drained
-Then event data fields match the v3 payload contract for each widget type
-And integration tests validate payload decoding end-to-end
-```
-
-### Epic E: Editor-Grade TextArea (ADR-T28)
-
-**[TASK-E1] Implement Selection Model and Selection FFI APIs**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-D6]
-- **Description:** Implement selection anchor/focus state plus APIs for set/clear selection and selected text extraction.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a TextArea containing multiple lines
-When a selection range is set via FFI
-Then selected text length and bytes reflect the exact range
-And clearing selection removes active selection state
-```
-
-**[TASK-E2] Implement Bounded Undo/Redo History and Limit Control**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-E1]
-- **Description:** Add edit operation history stacks, undo/redo execution paths, and configurable history limit enforcement.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a TextArea with history limit configured
-When edits exceed the configured limit
-Then oldest history entries are discarded within the bound
-And undo and redo operations preserve deterministic cursor and content state
-```
-
-**[TASK-E3] Implement `find_next` Search (Literal and Regex Modes)**
-
-- **Type:** Feature
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-E2]
-- **Description:** Implement forward search with case-sensitive and regex options, anchored to current cursor position.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a TextArea with searchable content
-When find_next is called in literal or regex mode
-Then the next match is found from cursor position when present
-And the API returns no-match without mutating content when no match exists
-```
-
-**[TASK-E4] Integrate Selection and Search with Input Behavior and Wrap Modes**
-
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-E3]
-- **Description:** Ensure keyboard and mouse editing behavior remains correct with selection, search navigation, and wrap mode transitions.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given TextArea selection and search are active
-When cursor movement and edits occur across wrap mode changes
-Then cursor row and column remain valid
-And selection and search state stay internally consistent
-```
-
-**[TASK-E5] Add TS Bindings and Integration Tests for New TextArea APIs**
-
-- **Type:** Feature
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-E4]
-- **Description:** Expose new TextArea methods in TypeScript wrappers and validate full round-trip behavior through FFI integration tests.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given TypeScript TextArea wrapper methods for v3 APIs
-When integration tests call selection, history, and search methods
-Then native state updates are reflected in wrapper getters and outputs
-And all methods return documented error semantics on invalid handles
-```
-
-### Epic F: Cross-Platform Distribution UX (ADR-T29)
-
-**[TASK-F0] Spike Artifact Packaging and Release Matrix Workflow**
-
-- **Type:** Spike
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-E5]
-- **Description:** Validate release workflow for required target matrix, artifact naming, checksum/signature strategy, and fallback expectations.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given the required OS and architecture target matrix
-When packaging workflow options are evaluated
-Then a concrete publish and verification strategy is documented
-And fallback behavior is defined for unsupported or missing artifacts
-```
-
-**[TASK-F1] Implement Matrix CI Builds and Artifact Publication**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-F0]
-- **Description:** Implement CI workflows that build and publish prebuilt native artifacts for the required matrix with checksums.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a release pipeline run
-When matrix build jobs complete
-Then artifacts are produced for all required targets
-And checksum files are published and verifiable for each artifact
-```
-
-**[TASK-F2] Implement Runtime Artifact Resolution and Source-Build Fallback**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-F1]
-- **Description:** Implement runtime logic for selecting the correct prebuilt artifact and deterministic fallback to source build when needed.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a host runtime on a supported target
-When Kraken initializes native bindings
-Then the correct prebuilt artifact is selected and loaded
-And unsupported targets follow the documented fallback path
-```
-
-**[TASK-F3] Add Cross-Platform Install Smoke Tests and Diagnostics**
-
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-F2]
-- **Description:** Add install smoke tests and explicit diagnostics for missing libc, incompatible architecture, and load failures.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a fresh machine install scenario
-When native artifact loading fails for a known reason
-Then the error message identifies root cause and remediation steps
-And smoke tests cover each target class in the release matrix
-```
-
-### Epic G: Deterministic Testing and Benchmark Gates (ADR-T30)
-
-**[TASK-G1] Implement MockBackend Golden Snapshot Harness**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-F3]
-- **Description:** Add deterministic golden fixture harness for render output and event routing, including explicit fixture update workflow.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given a stable widget scene fixture
-When golden tests run through MockBackend
-Then generated snapshots match committed fixtures exactly
-And fixture mismatch fails with diff output that pinpoints changed rows
-```
-
-**[TASK-G2] Implement Canonical Native Benchmark Suites and CI Thresholds**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-G1]
-- **Description:** Add `cargo bench` suites for writer and cache workloads with enforced regression thresholds in CI.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given canonical benchmark workloads for writer and text cache
-When benchmark gates execute in CI
-Then regressions beyond configured thresholds fail the pipeline
-And benchmark output records baseline and delta values per workload
-```
-
-**[TASK-G3] Implement Host-Side Benchmark Harness and CI Integration**
-
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-G2]
-- **Description:** Implement `ts/bench-render.ts` scenarios and integrate host benchmark execution into CI validation.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given host benchmark scenarios for runner and event loops
-When bench-render.ts executes in CI
-Then measured host-side throughput and latency metrics are captured
-And failures are reported with actionable threshold context
-```
-
-**[TASK-G4] Enforce Final v3 Quality Gate Policy**
-
-- **Type:** Chore
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-G3]
-- **Description:** Finalize gate policy connecting bundle size, perf counters, benchmark thresholds, and golden test outcomes to pass/fail release readiness.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given the full v3 gate suite
-When release readiness validation runs
-Then bundle, perf, benchmark, and golden criteria are enforced as blocking checks
-And policy documentation maps each gate to its owning ticket and metric
-```
-
-### Epic H: Background Render Thread Experiment (ADR-T31, Conditional)
-
-**[TASK-H0] Spike Experimental Threaded Render Protocol and Rollback Plan**
-
-- **Type:** Spike
-- **Effort:** Story Points: 2
-- **Dependencies:** [TASK-G2]
-- **Description:** Define experiment constraints, parity criteria, and rollback protocol for background render thread evaluation.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given ADR-T31 promotion criteria
-When the experiment protocol is drafted
-Then success and failure thresholds are explicit and measurable
-And rollback steps are documented before implementation starts
-```
-
-**[TASK-H1] Implement Feature-Flagged Background Render Thread Prototype**
-
-- **Type:** Feature
-- **Effort:** Story Points: 5
-- **Dependencies:** [TASK-H0]
-- **Description:** Implement experimental threaded render mode behind explicit feature flag, preserving synchronous mode as default.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given threaded render feature flag is disabled
-When application render loop runs
-Then behavior is identical to synchronous baseline
-And enabling the flag activates the experimental threaded path without API breakage
-```
-
-**[TASK-H2] Run Parity and Benchmark Validation, Publish Go/No-Go Report**
-
-- **Type:** Chore
-- **Effort:** Story Points: 3
-- **Dependencies:** [TASK-H1]
-- **Description:** Execute parity and performance validation and publish a decision report stating whether the experiment advances or remains deferred.
-- **Acceptance Criteria (Gherkin):**
-
-```gherkin
-Given threaded and synchronous render modes are both executable
-When parity and benchmark validation runs
-Then event ordering, mutation visibility, and shutdown semantics are compared explicitly
-And the final report records go or no-go with supporting metrics
+Given the repo inspector example is running
+When the operator switches files, opens diffs, and triggers palette actions
+Then pane layout, code viewing, and diff navigation remain stable
+And the example uses only the primitives and composites already defined in the TechSpec
 ```
 
 ---
 
-## 5. V3 SUMMARY TABLE
+## 5. SUMMARY TABLE
 
-| ID       | Epic | Type    | SP | Dependencies | Status |
-| -------- | ---- | ------- | -- | ------------ | ------ |
-| TASK-A0  | A    | Spike   | 2  | None         | Done    |
-| TASK-A1  | A    | Feature | 5  | A0           | Done    |
-| TASK-A2  | A    | Feature | 5  | A1           | Done    |
-| TASK-A3  | A    | Chore   | 3  | A2           | Done    |
-| TASK-B0  | B    | Spike   | 2  | A3           | Done    |
-| TASK-B1  | B    | Feature | 5  | B0           | Done    |
-| TASK-B2  | B    | Feature | 5  | B1           | Done    |
-| TASK-B3  | B    | Chore   | 3  | B2           | Done    |
-| TASK-C1  | C    | Feature | 5  | B3           | Done    |
-| TASK-C2  | C    | Feature | 3  | C1           | Done    |
-| TASK-C3  | C    | Chore   | 2  | C2           | Done    |
-| TASK-D1  | D    | Feature | 3  | C3           | Done    |
-| TASK-D2  | D    | Feature | 5  | D1           | Done    |
-| TASK-D3  | D    | Feature | 5  | D2           | Done    |
-| TASK-D4  | D    | Feature | 5  | D3           | Done    |
-| TASK-D5  | D    | Feature | 3  | D4           | Done    |
-| TASK-D6  | D    | Chore   | 3  | D5           | Done    |
-| TASK-E1  | E    | Feature | 5  | D6           | Done    |
-| TASK-E2  | E    | Feature | 5  | E1           | Done    |
-| TASK-E3  | E    | Feature | 3  | E2           | Done    |
-| TASK-E4  | E    | Chore   | 3  | E3           | Done    |
-| TASK-E5  | E    | Feature | 2  | E4           | Done    |
-| TASK-F0  | F    | Spike   | 2  | E5           | Done    |
-| TASK-F1  | F    | Feature | 5  | F0           | Done    |
-| TASK-F2  | F    | Feature | 5  | F1           | Done    |
-| TASK-F3  | F    | Chore   | 3  | F2           | Done    |
-| TASK-G1  | G    | Feature | 5  | F3           | Done    |
-| TASK-G2  | G    | Feature | 5  | G1           | Done    |
-| TASK-G3  | G    | Chore   | 3  | G2           | Done    |
-| TASK-G4  | G    | Chore   | 2  | G3           | Done    |
-| TASK-H0  | H    | Spike   | 2  | G2           | Done    |
-| TASK-H1  | H    | Feature | 5  | H0           | Done    |
-| TASK-H2  | H    | Chore   | 3  | H1           | Done    |
-|          |      | **TOTAL** | **132** |              |        |
+| ID | Epic | Type | SP | Dependencies | Phase |
+| -- | ---- | ---- | -- | ------------ | ----- |
+| TASK-I0 | I | Spike | 2 | None | MVP |
+| TASK-I1 | I | Feature | 5 | I0 | MVP |
+| TASK-I2 | I | Feature | 5 | I1 | MVP |
+| TASK-I3 | I | Feature | 3 | I2 | MVP |
+| TASK-I4 | I | Feature | 5 | I3 | MVP |
+| TASK-I5 | I | Chore | 3 | I4 | MVP |
+| TASK-J0 | J | Spike | 2 | I5 | MVP |
+| TASK-J1 | J | Feature | 5 | J0 | MVP |
+| TASK-J2 | J | Feature | 5 | J1 | MVP |
+| TASK-J3 | J | Feature | 5 | J2 | MVP |
+| TASK-J4 | J | Chore | 3 | J3 | MVP |
+| TASK-K1 | K | Feature | 5 | I4 | MVP |
+| TASK-K2 | K | Feature | 3 | K1 | MVP |
+| TASK-K3 | K | Feature | 3 | I5 | MVP |
+| TASK-K4 | K | Feature | 5 | K1 | Post-MVP |
+| TASK-L1 | L | Feature | 8 | J4, K2, K3 | MVP |
+| TASK-L2 | L | Feature | 5 | J3, K3 | MVP |
+| TASK-L3 | L | Chore | 5 | L1, L2 | MVP |
+| TASK-L4 | L | Feature | 8 | K4, K2, J3 | Post-MVP |
+| | | **TOTAL** | **85** | | |

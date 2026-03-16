@@ -2,14 +2,15 @@
 
 ## Kraken TUI
 
-**Version**: 3.0
-**Status**: Draft (v3)
+**Version**: 3.1
+**Status**: Draft (v3 baseline, v4 emphasis)
 **Date**: March 2026
 **Source of Truth**: [PRD.md](./PRD.md)
 **Upstream Decisions**: [ADR-001 through ADR-005](./architecture/)
 
 **Changelog**:
 
+- v3.1 — Clarified the next-phase logical emphasis without changing the core architectural invariant: transcript-heavy surfaces for long-lived applications, anchor-aware viewport behavior, developer tooling/inspection, and pane-oriented workflows are now the primary logical extensions of the existing Native Core and Host Layer split.
 - v3.0 — Aligned Architecture with v3 TechSpec scope: terminal writer stage (ADR-T24), rich-text wrap cache (ADR-T25), host Runner API (ADR-T26), dashboard staple widgets (ADR-T27), editor-grade TextArea extensions (ADR-T28), distribution prebuild strategy (ADR-T29), deterministic golden and benchmark gates (ADR-T30), and conditional background render thread policy (ADR-T31). Updated FFI contract semantics and event drain flows (`tui_read_input` + `tui_next_event`).
 - v2.3 — Added v2 scope: Tree Module operations (subtree destruction, indexed insertion), v2 module additions (Reconciler Layer), new Appendix B decisions for v2. Resolved Risk 1 with safe concurrency primitives. Added Risk 7 (background render thread — explicitly descoped to v3). Updated Appendix A with ADR-004 amendment. **v2 COMPLETE — March 2026**.
 - v2.2 — Removed §6 Performance Budgets (implementation-level detail; migrated to TechSpec §5.5). Removed stale `lrsa-320` marker. Fixed duplicate §6 numbering — Logical Risks & Technical Debt is now the sole §6 per the Architecture output standard.
@@ -30,6 +31,8 @@ Kraken TUI is a single-process library composed of two language layers connected
 The FFI boundary enforces the **Facade pattern** (GoF): the Host Layer sees a flat command protocol, not the internal module structure. Internal to the Native Core, modules communicate through shared in-process state, with boundaries enforced by the language's visibility system.
 
 The render pipeline follows **Pipe-and-Filter**: mutation commands accumulate → animation advancement → layout resolution → dirty-flag diffing → writer run compaction → minimal terminal I/O. The input subsystem follows **Event-Driven**: terminal input is captured, buffered, classified, and drained by the Host Layer through `tui_read_input()` and `tui_next_event()` each tick.
+
+The current architectural emphasis is not generic widget breadth. It is the support of long-lived, streaming, information-dense terminal applications where transcript behavior, scrolling correctness, pane layout, and internal inspectability matter more than broad ecosystem polish.
 
 ### Core Architectural Invariant
 
@@ -69,10 +72,12 @@ These are not independently deployable containers but are architecturally signif
 | **Animation Module**  | _(v1)_ Manages active animation registry. Advances timed property transitions each render cycle using elapsed time. Applies interpolated values to target widgets and marks them dirty. Degrades gracefully when frame budget is exceeded (skips interpolation frames). v2: position animation and choreography timelines. | Tree, Style Modules                |
 | **Text Module**       | Rich text parsing: Markdown to styled spans, syntax highlighting, and wrap resolution. Built-in parsers are native. Custom formats are pre-processed in the Host Layer and arrive as styled span descriptors. v3: resolves cache keys and delegates bounded storage concerns to Text Cache Module.                         | Style, Text Cache Modules          |
 | **Text Cache Module** | _(v3)_ Owns bounded LRU cache for parse/highlight/wrap artifacts keyed by content hash, format, language hash, wrap width, and style fingerprint. Enforces byte-cap accounting and eviction policy.                                                                                                                        | Text Module                        |
+| **Transcript Module** | _(v4 focus)_ Owns ordered transcript/log-style content blocks, streaming append-or-patch updates, group collapse state, unread markers, and logical viewport anchors for long-lived surfaces.                                                                                                                               | Tree, Text, Scroll, Render Modules |
 | **Render Module**     | Double-buffered cell grid. Dirty-flag diffing (per ADR-001). Produces terminal-intent runs from changed cells and delegates terminal emission to Writer Module. Terminal capability detection and graceful degradation are preserved.                                                                                      | Tree, Layout, Style, Text, Scroll  |
 | **Writer Module**     | _(v3)_ Stateful terminal writer stage after diffing. Compacts contiguous runs, minimizes cursor/style commands by delta, applies frame-end reset policy, and records write-throughput counters.                                                                                                                            | Render Module, Terminal Backend    |
 | **Event Module**      | Terminal input capture. Event classification (key, mouse, resize, focus). Event buffer for poll-drain model using `tui_read_input()` + `tui_next_event()`. Hit-testing (mouse to widget routing via Layout geometry). Focus state machine (depth-first, DOM-order traversal, focus/blur lifecycle).                        | Tree, Layout Modules               |
-| **Scroll Module**     | Viewport state per scrollable widget. Overflow detection. Scroll position persistence across Render Passes. Content clipping during render. v3: native scrollbar presentation controls (visibility, side, width).                                                                                                          | Tree, Layout, Render Modules       |
+| **Scroll Module**     | Viewport state per scrollable widget. Overflow detection. Scroll position persistence across Render Passes. Content clipping during render. v3: native scrollbar presentation controls (visibility, side, width). v4 focus: anchor-aware viewport semantics and nested scroll handoff for transcript-heavy surfaces.        | Tree, Layout, Render Modules       |
+| **Devtools Module**   | _(v4 focus)_ Exposes inspectability concerns: debug overlays, widget-tree snapshots, viewport/focus traces, and bounded diagnostic streams for internal development workflows.                                                                                                                                               | Tree, Layout, Render, Event        |
 
 ### Module Dependency Direction
 
@@ -91,8 +96,10 @@ Host Language Bindings (commands + runner policy)
 │    │         └──► Event ┘                                                │
 │    │                                                                     │
 │    ├──► Theme ──► Style ──► Text ──► Text Cache                          │
+│    ├──► Transcript ───────► Render                                       │
 │    ├──► Scroll ───────────► Render                                       │
 │    └──► Animation ─────────► Render                                      │
+│              Devtools ◄──── Tree / Layout / Render / Event               │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -127,6 +134,8 @@ C4Container
 ---
 
 ## 4. CRITICAL EXECUTION FLOWS
+
+The flows below remain the architectural foundation. Transcript-heavy surfaces, developer tooling, and pane-based workflows are logical extensions built on the same command protocol, render pipeline, and event model rather than a separate architecture.
 
 ### Flow 1: Widget Composition and First Render (Epics 1, 2, 3 + ADR-T24)
 
@@ -431,6 +440,15 @@ This appendix captures decisions defined during Architecture work. It is split i
 | **Distribution UX (ADR-T29)**            | Treat prebuilt artifact matrix + source fallback as part of the logical release architecture.                                                                       | Reduces install friction and improves onboarding reliability across supported targets.                                   |
 | **Golden + Benchmark Gates (ADR-T30)**   | Require deterministic golden snapshots and benchmark gates for writer/cache-sensitive changes.                                                                      | Prevents performance and rendering regressions from silently entering the release stream.                                |
 | **Background Thread Policy (ADR-T31)**   | Preserve synchronous rendering as default; permit background rendering only as opt-in experiment with benchmark, semantic, and lifecycle parity promotion criteria. | Protects maintainability and deterministic behavior while leaving a controlled path for future evidence-based promotion. |
+
+### v4 Architectural Emphasis
+
+| Decision | Choice | Rationale |
+| -------- | ------ | --------- |
+| **Transcript-Heavy Surfaces** | Treat long-lived transcript, log, and trace views as a first-class logical workload within the Native Core rather than as a Host Layer tree-management pattern. | The product's primary pressure now comes from streaming, dense, long-running workflows where viewport correctness and low churn are product-defining. |
+| **Anchor-Aware Viewports** | Prioritize logical viewport anchors, unread markers, and deterministic nested scrolling over raw row-offset management for continuously updating surfaces. | Long-running developer and agent applications must remain readable while content changes underneath them. |
+| **Developer Tooling as Core Work** | Treat internal inspection, overlays, snapshots, and diagnostic traces as part of the architecture rather than as incidental debugging helpers. | The framework must be inspectable before it can be dependable in complex application shapes. |
+| **Pane-Oriented Workflow Composition** | Support dense multi-region application layouts as a primary application shape, with pane behavior treated as a logical extension of layout rather than as presentation garnish. | Agent consoles, repo inspectors, and ops tools depend on simultaneous navigation, transcript viewing, and side-panel inspection. |
 
 ## Appendix C: Resolved Open Questions
 
