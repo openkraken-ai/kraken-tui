@@ -109,7 +109,7 @@ pub(crate) fn compute_total_visible_rows(state: &TranscriptState) -> u32 {
 }
 
 /// Compute the row position of a specific block's start within the total visible rows.
-fn block_start_row(state: &TranscriptState, block_id: u64) -> Option<u32> {
+pub(crate) fn block_start_row(state: &TranscriptState, block_id: u64) -> Option<u32> {
     let mut row = 0u32;
     for block in &state.blocks {
         if is_block_hidden(state, block) {
@@ -128,7 +128,7 @@ fn block_start_row(state: &TranscriptState, block_id: u64) -> Option<u32> {
 }
 
 /// Compute the starting row of the viewport based on the current anchor.
-fn anchor_to_row(state: &TranscriptState) -> u32 {
+pub(crate) fn anchor_to_row(state: &TranscriptState) -> u32 {
     match &state.anchor_kind {
         ViewportAnchorKind::Tail => {
             let total = compute_total_visible_rows(state);
@@ -185,6 +185,15 @@ pub(crate) fn compute_visible_range(state: &TranscriptState) -> (usize, usize) {
     }
 
     (start_idx.unwrap_or(0), end_idx)
+}
+
+/// Recalculate rendered_rows for all blocks using the current viewport_width.
+/// Called when viewport_width changes (e.g. terminal resize).
+pub(crate) fn recalculate_all_rendered_rows(state: &mut TranscriptState) {
+    let width = state.viewport_width;
+    for block in &mut state.blocks {
+        block.rendered_rows = estimate_rendered_rows(&block.content, width);
+    }
 }
 
 /// Recompute anchor after content insertion (respects sticky-bottom).

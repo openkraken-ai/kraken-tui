@@ -1800,12 +1800,29 @@ fn render_transcript(
 
     // Update viewport dimensions from actual content area
     state.viewport_rows = content_h.max(0) as u32;
-    state.viewport_width = content_w.max(0) as u32;
+    let new_width = content_w.max(0) as u32;
+    if new_width != state.viewport_width && new_width > 0 {
+        state.viewport_width = new_width;
+        // Recalculate all block rendered_rows with the new width
+        crate::transcript::recalculate_all_rendered_rows(state);
+    }
+
+    // Compute viewport scroll offset: how many rows of the first visible block
+    // to skip (when the anchor is partway through a multi-line block).
+    let viewport_start_row = crate::transcript::anchor_to_row(state);
 
     // Extract only visible blocks for rendering to avoid cloning the full state.
     // We compute the visible range and collect just the blocks we need, then
     // release the borrow on ctx so we can call clip_set.
     let (start_idx, end_idx) = crate::transcript::compute_visible_range(state);
+
+    // Compute how many rows to skip in the first visible block
+    let first_block_start_row = if start_idx < state.blocks.len() {
+        crate::transcript::block_start_row(state, state.blocks[start_idx].id).unwrap_or(0)
+    } else {
+        0
+    };
+    let skip_rows = viewport_start_row.saturating_sub(first_block_start_row) as usize;
 
     struct RenderBlock {
         id: u64,
@@ -1830,6 +1847,7 @@ fn render_transcript(
 
     let mut y = content_y;
     let max_y = content_y + content_h;
+    let mut is_first_block = true;
 
     for block in &visible_blocks {
         if y >= max_y {
@@ -1866,8 +1884,14 @@ fn render_transcript(
             }
             y += 1;
         } else {
-            // Render block content line by line
-            for line in block.content.split('\n') {
+            // Render block content line by line.
+            // For the first visible block, skip lines that are above the viewport
+            // (when the anchor has a row_offset within a multi-line block).
+            let lines_to_skip = if is_first_block { skip_rows } else { 0 };
+            for (line_idx, line) in block.content.split('\n').enumerate() {
+                if line_idx < lines_to_skip {
+                    continue;
+                }
                 if y >= max_y {
                     break;
                 }
@@ -1885,11 +1909,10 @@ fn render_transcript(
                 }
                 y += 1;
             }
-            // If content is empty, still consume a row
-            if block.content.is_empty() {
-                y += 1;
-            }
+            // Empty content: split('\n') yields one empty string, so the loop
+            // already increments y by 1. No extra increment needed.
         }
+        is_first_block = false;
     }
 }
 
