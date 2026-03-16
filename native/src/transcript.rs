@@ -360,10 +360,29 @@ pub(crate) fn set_parent(
     if !state.block_index.contains_key(&parent_id) {
         return Err(format!("Unknown parent block_id: {parent_id}"));
     }
+    if block_id == parent_id {
+        return Err(format!("Block {block_id} cannot be its own parent"));
+    }
     let &idx = state
         .block_index
         .get(&block_id)
         .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
+
+    // Detect cycles: walk from parent_id up the chain; if we reach block_id, it's circular
+    let mut current = Some(parent_id);
+    while let Some(pid) = current {
+        if pid == block_id {
+            return Err(format!(
+                "Circular parent reference: {block_id} -> {parent_id} creates a cycle"
+            ));
+        }
+        if let Some(&pidx) = state.block_index.get(&pid) {
+            current = state.blocks[pidx].parent_id;
+        } else {
+            break;
+        }
+    }
+
     state.blocks[idx].parent_id = Some(parent_id);
     Ok(())
 }
@@ -1597,5 +1616,888 @@ mod tests {
         let state = validate_transcript(&ctx, handle).unwrap();
         assert!(state.tail_attached);
         assert_eq!(state.anchor_kind, ViewportAnchorKind::Tail);
+    }
+
+    // ====================================================================
+    // Edge Case Tests
+    // ====================================================================
+
+    #[test]
+    fn test_circular_parent_self_reference() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        let result = set_parent(&mut ctx, handle, 1, 1);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be its own parent"));
+    }
+
+    #[test]
+    fn test_circular_parent_two_node_cycle() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        append_block(&mut ctx, handle, 2, TranscriptBlockKind::Message, 2, "B").unwrap();
+
+        set_parent(&mut ctx, handle, 2, 1).unwrap(); // 2 -> 1 OK
+        let result = set_parent(&mut ctx, handle, 1, 2); // 1 -> 2 would create cycle
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Circular"));
+    }
+
+    #[test]
+    fn test_circular_parent_three_node_cycle() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        append_block(&mut ctx, handle, 2, TranscriptBlockKind::Message, 2, "B").unwrap();
+        append_block(&mut ctx, handle, 3, TranscriptBlockKind::Message, 2, "C").unwrap();
+
+        set_parent(&mut ctx, handle, 2, 1).unwrap(); // 2 -> 1
+        set_parent(&mut ctx, handle, 3, 2).unwrap(); // 3 -> 2 -> 1
+        let result = set_parent(&mut ctx, handle, 1, 3); // 1 -> 3 -> 2 -> 1 cycle!
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Circular"));
+    }
+
+    #[test]
+    fn test_deep_nesting_collapse_3_levels() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 20;
+        }
+
+        // Build 3-level hierarchy: 1 -> 2 -> 3 -> 4
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "Root").unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            2,
+            TranscriptBlockKind::ToolCall,
+            3,
+            "L1 child",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            3,
+            TranscriptBlockKind::ToolCall,
+            3,
+            "L2 child",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            4,
+            TranscriptBlockKind::ToolResult,
+            3,
+            "L3 leaf",
+        )
+        .unwrap();
+        set_parent(&mut ctx, handle, 2, 1).unwrap();
+        set_parent(&mut ctx, handle, 3, 2).unwrap();
+        set_parent(&mut ctx, handle, 4, 3).unwrap();
+
+        let total_before = {
+            let state = validate_transcript(&ctx, handle).unwrap();
+            compute_total_visible_rows(state)
+        };
+
+        // Collapse root — all descendants should be hidden
+        set_collapsed(&mut ctx, handle, 1, true).unwrap();
+
+        let total_after = {
+            let state = validate_transcript(&ctx, handle).unwrap();
+            compute_total_visible_rows(state)
+        };
+
+        // Only root (collapsed=1 row) should remain visible
+        assert_eq!(total_after, 1);
+        assert!(total_after < total_before);
+    }
+
+    #[test]
+    fn test_collapse_middle_level_hides_grandchildren() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "Root").unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            2,
+            TranscriptBlockKind::ToolCall,
+            3,
+            "Middle",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            3,
+            TranscriptBlockKind::ToolResult,
+            3,
+            "Leaf",
+        )
+        .unwrap();
+        set_parent(&mut ctx, handle, 2, 1).unwrap();
+        set_parent(&mut ctx, handle, 3, 2).unwrap();
+
+        // Collapse middle — leaf should be hidden, root visible, middle collapsed to 1 row
+        set_collapsed(&mut ctx, handle, 2, true).unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(!is_block_hidden(state, &state.blocks[0])); // root visible
+        assert!(!is_block_hidden(state, &state.blocks[1])); // middle visible (but collapsed)
+        assert!(is_block_hidden(state, &state.blocks[2])); // leaf hidden by middle collapse
+    }
+
+    #[test]
+    fn test_set_parent_after_collapse() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "Parent",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            2,
+            TranscriptBlockKind::ToolCall,
+            3,
+            "Orphan",
+        )
+        .unwrap();
+
+        // Collapse parent first, then assign child
+        set_collapsed(&mut ctx, handle, 1, true).unwrap();
+        set_parent(&mut ctx, handle, 2, 1).unwrap();
+
+        // Block 2 should now be hidden (parent is collapsed)
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(is_block_hidden(state, &state.blocks[1]));
+    }
+
+    #[test]
+    fn test_patch_after_finish() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "Hello",
+        )
+        .unwrap();
+        finish_block(&mut ctx, handle, 1).unwrap();
+
+        // Patching after finish should still work (content correction)
+        patch_block(&mut ctx, handle, 1, 0, " World").unwrap();
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[0].content, "Hello World");
+        assert!(!state.blocks[0].streaming); // Still finished
+    }
+
+    #[test]
+    fn test_multiple_patches_same_block_idempotent() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 10;
+        }
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "").unwrap();
+
+        // Apply many patches rapidly
+        for i in 0..50 {
+            patch_block(&mut ctx, handle, 1, 0, &format!("chunk{i} ")).unwrap();
+        }
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[0].version, 50);
+        assert!(state.blocks[0].content.starts_with("chunk0 chunk1 "));
+        assert!(state.tail_attached);
+    }
+
+    #[test]
+    fn test_streaming_into_collapsed_group_no_auto_expand() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "Parent",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            2,
+            TranscriptBlockKind::ToolCall,
+            3,
+            "Child streaming",
+        )
+        .unwrap();
+        set_parent(&mut ctx, handle, 2, 1).unwrap();
+
+        // Collapse parent
+        set_collapsed(&mut ctx, handle, 1, true).unwrap();
+        assert!(validate_transcript(&ctx, handle).unwrap().blocks[0].collapsed);
+
+        // Patch the child (streaming data into collapsed group)
+        patch_block(&mut ctx, handle, 2, 0, " more data").unwrap();
+
+        // Parent should remain collapsed — no auto-expand
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(state.blocks[0].collapsed);
+        assert!(is_block_hidden(state, &state.blocks[1]));
+    }
+
+    #[test]
+    fn test_tail_while_near_bottom_hysteresis() {
+        // Scroll up past threshold, append doesn't reattach;
+        // scroll back to near-bottom, append reattaches
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 10;
+        }
+
+        for i in 1..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+        // total=20, vp=10, max_row=10, currently at tail (row 10)
+
+        // Scroll up 5 rows — well past sticky_threshold_rows=2
+        handle_scroll(&mut ctx, handle, -5).unwrap();
+        assert!(!validate_transcript(&ctx, handle).unwrap().tail_attached);
+        // Now at row 5. viewport_end=15, total=20, gap=5 > threshold=2
+
+        // Append while far from bottom — should NOT reattach
+        append_block(&mut ctx, handle, 21, TranscriptBlockKind::Message, 2, "new").unwrap();
+        assert!(!validate_transcript(&ctx, handle).unwrap().tail_attached);
+        // Now total=21, at row 5, viewport_end=15, gap=6
+
+        // Scroll down to near-bottom.
+        // After append of 21: total=21, at row 5, max=11.
+        // We need: after the NEXT append (total=22), anchor_row+10 >= 22-2=20,
+        // so anchor_row >= 10. Scroll down 5 to row 10.
+        handle_scroll(&mut ctx, handle, 5).unwrap();
+        // Now at row 10. viewport_end=20, total=21, gap=1 <= threshold=2
+
+        // Now append — should reattach (within sticky threshold)
+        // After append: total=22, viewport_end=20, gap=2 <= threshold=2
+        append_block(
+            &mut ctx,
+            handle,
+            22,
+            TranscriptBlockKind::Message,
+            2,
+            "trigger",
+        )
+        .unwrap();
+        assert!(validate_transcript(&ctx, handle).unwrap().tail_attached);
+    }
+
+    #[test]
+    fn test_manual_mode_repeated_appends_never_reattach() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        set_follow_mode(&mut ctx, handle, FollowMode::Manual).unwrap();
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Detach
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+        assert!(!validate_transcript(&ctx, handle).unwrap().tail_attached);
+
+        // Append 20 more blocks — should never reattach in Manual
+        for i in 11..=30 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+            assert!(
+                !validate_transcript(&ctx, handle).unwrap().tail_attached,
+                "Reattached unexpectedly on block {i}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unread_anchor_survival_across_multiple_inserts() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Detach
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+
+        // Add 5 unread blocks
+        for i in 11..=15 {
+            append_block(
+                &mut ctx,
+                handle,
+                i,
+                TranscriptBlockKind::Message,
+                2,
+                "unread",
+            )
+            .unwrap();
+        }
+
+        // First unread anchor should be 11
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.unread_anchor, Some(11));
+        assert_eq!(state.unread_count, 5);
+
+        // Add 5 more — anchor stays at 11, count increases
+        for i in 16..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "more").unwrap();
+        }
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.unread_anchor, Some(11));
+        assert_eq!(state.unread_count, 10);
+    }
+
+    #[test]
+    fn test_detached_anchor_stable_under_streaming() {
+        // While detached viewing block 3, streaming patches to block 20
+        // should not affect the anchor position
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        set_follow_mode(&mut ctx, handle, FollowMode::Manual).unwrap();
+
+        for i in 1..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Detach and anchor at block 3
+        jump_to_block(&mut ctx, handle, 3, 0).unwrap();
+
+        // Stream 100 patches to block 20 (far from anchor)
+        for _ in 0..100 {
+            patch_block(&mut ctx, handle, 20, 0, "x").unwrap();
+        }
+
+        // Anchor should still be at block 3
+        let state = validate_transcript(&ctx, handle).unwrap();
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => {
+                assert_eq!(*block_id, 3);
+            }
+            other => panic!("Expected BlockStart at 3, got {:?}", other),
+        }
+        assert!(!state.tail_attached);
+    }
+
+    #[test]
+    fn test_resize_preserves_anchor_block() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 20;
+        }
+
+        for i in 1..=30 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Anchor at block 10
+        jump_to_block(&mut ctx, handle, 10, 0).unwrap();
+
+        // Resize smaller
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        // Anchor block should be preserved
+        let state = validate_transcript(&ctx, handle).unwrap();
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => {
+                assert_eq!(*block_id, 10);
+            }
+            other => panic!("Expected BlockStart at 10, got {:?}", other),
+        }
+
+        // Resize larger
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 40;
+        }
+
+        // Anchor should still reference block 10
+        let state = validate_transcript(&ctx, handle).unwrap();
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => {
+                assert_eq!(*block_id, 10);
+            }
+            other => panic!("Expected BlockStart at 10, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_jump_to_block_invalid_align() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        let result = jump_to_block(&mut ctx, handle, 1, 5);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid align"));
+    }
+
+    #[test]
+    fn test_patch_invalid_mode() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        let result = patch_block(&mut ctx, handle, 1, 99, "content");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid patch_mode"));
+    }
+
+    #[test]
+    fn test_finish_unknown_block() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        let result = finish_block(&mut ctx, handle, 999);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_finish_block_idempotent() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        finish_block(&mut ctx, handle, 1).unwrap();
+        // Second finish should be fine (idempotent)
+        finish_block(&mut ctx, handle, 1).unwrap();
+        assert!(!validate_transcript(&ctx, handle).unwrap().blocks[0].streaming);
+    }
+
+    #[test]
+    fn test_jump_to_unread_no_op_when_no_unreads() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        // No unreads — jump_to_unread should succeed but be a no-op
+        jump_to_unread(&mut ctx, handle).unwrap();
+        assert!(validate_transcript(&ctx, handle).unwrap().tail_attached);
+    }
+
+    #[test]
+    fn test_mark_read_no_unreads_no_op() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        mark_read(&mut ctx, handle).unwrap();
+        assert_eq!(get_unread_count(&ctx, handle).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_empty_transcript_scroll() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        // Scroll on empty transcript — should return false (boundary)
+        assert!(!handle_scroll(&mut ctx, handle, 1).unwrap());
+        assert!(!handle_scroll(&mut ctx, handle, -1).unwrap());
+    }
+
+    #[test]
+    fn test_empty_transcript_visible_range() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        let (start, end) = compute_visible_range(state);
+        assert_eq!(start, 0);
+        assert_eq!(end, 0);
+    }
+
+    #[test]
+    fn test_all_block_kinds() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        // Exercise every TranscriptBlockKind variant
+        let kinds = [
+            (1, TranscriptBlockKind::Message),
+            (2, TranscriptBlockKind::ToolCall),
+            (3, TranscriptBlockKind::ToolResult),
+            (4, TranscriptBlockKind::Reasoning),
+            (5, TranscriptBlockKind::Activity),
+            (6, TranscriptBlockKind::Divider),
+        ];
+
+        for (id, kind) in &kinds {
+            append_block(&mut ctx, handle, *id, *kind, 2, "content").unwrap();
+        }
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks.len(), 6);
+        for (i, (_, kind)) in kinds.iter().enumerate() {
+            assert_eq!(state.blocks[i].kind, *kind);
+        }
+    }
+
+    #[test]
+    fn test_collapse_anchor_moves_to_parent() {
+        // When anchor is on a child block and parent is collapsed,
+        // anchor should move to the parent block
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+        // Make blocks 2,3 children of 1
+        set_parent(&mut ctx, handle, 2, 1).unwrap();
+        set_parent(&mut ctx, handle, 3, 1).unwrap();
+
+        // Anchor at child block 2
+        jump_to_block(&mut ctx, handle, 2, 0).unwrap();
+
+        // Collapse parent — anchor should move to block 1
+        set_collapsed(&mut ctx, handle, 1, true).unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => {
+                assert_eq!(
+                    *block_id, 1,
+                    "Anchor should move to parent when child is hidden"
+                );
+            }
+            ViewportAnchorKind::Tail => {
+                // Also acceptable if collapsing brought us near bottom
+            }
+            other => panic!("Unexpected anchor kind: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tail_locked_always_reattaches() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        set_follow_mode(&mut ctx, handle, FollowMode::TailLocked).unwrap();
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Even after jumping away, appending should snap back
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+        append_block(&mut ctx, handle, 11, TranscriptBlockKind::Message, 2, "new").unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(state.tail_attached);
+        assert_eq!(state.anchor_kind, ViewportAnchorKind::Tail);
+    }
+
+    #[test]
+    fn test_empty_content_block_has_one_row() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "").unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[0].rendered_rows, 1);
+    }
+
+    #[test]
+    fn test_multiline_content_rendered_rows() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 80; // width used for wrapping
+        }
+
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "line1\nline2\nline3",
+        )
+        .unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[0].rendered_rows, 3);
+    }
+
+    #[test]
+    fn test_scroll_down_then_back_up_reattach() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Scroll up to detach
+        handle_scroll(&mut ctx, handle, -10).unwrap();
+        assert!(!validate_transcript(&ctx, handle).unwrap().tail_attached);
+
+        // Scroll all the way back down
+        for _ in 0..15 {
+            handle_scroll(&mut ctx, handle, 1).unwrap();
+        }
+
+        // Should reattach (TailWhileNearBottom mode by default)
+        assert!(validate_transcript(&ctx, handle).unwrap().tail_attached);
+    }
+
+    #[test]
+    fn test_keyboard_home_end() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        // Press Home — should go to first block
+        handle_key(&mut ctx, handle, crate::types::key::HOME).unwrap();
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(!state.tail_attached);
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => assert_eq!(*block_id, 1),
+            other => panic!("Expected BlockStart(1), got {:?}", other),
+        }
+
+        // Press End — should reattach to tail
+        handle_key(&mut ctx, handle, crate::types::key::END).unwrap();
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(state.tail_attached);
+        assert_eq!(state.anchor_kind, ViewportAnchorKind::Tail);
+    }
+
+    #[test]
+    fn test_unhandled_key_returns_false() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        // 'a' key (or any non-navigation key) should not be consumed
+        let consumed = handle_key(&mut ctx, handle, 97).unwrap(); // 'a'
+        assert!(!consumed);
+    }
+
+    // ====================================================================
+    // Stress Tests
+    // ====================================================================
+
+    #[test]
+    fn test_stress_10k_blocks_append() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 24;
+        }
+
+        for i in 1..=10_000 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks.len(), 10_000);
+        assert!(state.tail_attached);
+        assert_eq!(state.unread_count, 0);
+    }
+
+    #[test]
+    fn test_stress_1000_streaming_updates_tail_stable() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 24;
+        }
+
+        // Create 20 blocks, stream into the last one
+        for i in 1..=20 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        for j in 0..1000 {
+            patch_block(&mut ctx, handle, 20, 0, &format!(" word{j}")).unwrap();
+            // Tail should remain attached throughout
+            assert!(
+                validate_transcript(&ctx, handle).unwrap().tail_attached,
+                "Tail detached at streaming update {j}"
+            );
+        }
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert_eq!(state.blocks[19].version, 1000);
+    }
+
+    #[test]
+    fn test_stress_rapid_collapse_expand_cycles() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 10;
+        }
+
+        // Create parent with children
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "Parent",
+        )
+        .unwrap();
+        for i in 2..=10 {
+            append_block(
+                &mut ctx,
+                handle,
+                i,
+                TranscriptBlockKind::ToolCall,
+                3,
+                "Child",
+            )
+            .unwrap();
+            set_parent(&mut ctx, handle, i, 1).unwrap();
+        }
+
+        // Rapidly toggle collapse 100 times
+        for _ in 0..100 {
+            set_collapsed(&mut ctx, handle, 1, true).unwrap();
+            set_collapsed(&mut ctx, handle, 1, false).unwrap();
+        }
+
+        // State should be consistent
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(!state.blocks[0].collapsed);
+        assert_eq!(state.blocks.len(), 10);
+        // All children should be visible
+        for i in 1..10 {
+            assert!(!is_block_hidden(state, &state.blocks[i]));
+        }
+    }
+
+    #[test]
+    fn test_interleaved_append_patch_finish() {
+        // Realistic scenario: multiple concurrent streaming blocks
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 24;
+        }
+
+        // Start 3 concurrent streams
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "").unwrap();
+        append_block(&mut ctx, handle, 2, TranscriptBlockKind::ToolCall, 3, "").unwrap();
+        append_block(&mut ctx, handle, 3, TranscriptBlockKind::Reasoning, 2, "").unwrap();
+
+        // Interleave patches
+        for i in 0..20 {
+            patch_block(&mut ctx, handle, 1, 0, &format!("m{i} ")).unwrap();
+            patch_block(&mut ctx, handle, 2, 0, &format!("t{i} ")).unwrap();
+            patch_block(&mut ctx, handle, 3, 0, &format!("r{i} ")).unwrap();
+        }
+
+        // Finish in different order
+        finish_block(&mut ctx, handle, 2).unwrap();
+        finish_block(&mut ctx, handle, 3).unwrap();
+        finish_block(&mut ctx, handle, 1).unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(!state.blocks[0].streaming);
+        assert!(!state.blocks[1].streaming);
+        assert!(!state.blocks[2].streaming);
+        assert!(state.blocks[0].content.starts_with("m0 m1 "));
+        assert!(state.blocks[1].content.starts_with("t0 t1 "));
+        assert!(state.blocks[2].content.starts_with("r0 r1 "));
     }
 }

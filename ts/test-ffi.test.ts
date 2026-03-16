@@ -2802,5 +2802,74 @@ describe("FFI integration", () => {
 			expect(ffi.tui_transcript_append_block(h, 100n, 99, 2, Buffer.from(c), c.length)).toBe(-1);
 			ffi.tui_destroy_node(h);
 		});
+
+		// Edge case tests
+
+		test("circular parent self-reference returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_set_parent(h, 1n, 1n)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("circular parent two-node cycle returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_append_block(h, 2n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_set_parent(h, 2n, 1n)).toBe(0); // OK
+			expect(ffi.tui_transcript_set_parent(h, 1n, 2n)).toBe(-1); // Cycle!
+			ffi.tui_destroy_node(h);
+		});
+
+		test("patch after finish still works", () => {
+			const h = ffi.tui_create_node(10);
+			const c1 = new TextEncoder().encode("Hello");
+			const c2 = new TextEncoder().encode(" World");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c1), c1.length)).toBe(0);
+			expect(ffi.tui_transcript_finish_block(h, 1n)).toBe(0);
+			// Should still be able to patch
+			expect(ffi.tui_transcript_patch_block(h, 1n, 0, Buffer.from(c2), c2.length)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("finish unknown block returns error", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_finish_block(h, 999n)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("invalid patch mode returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_patch_block(h, 1n, 99, Buffer.from(c), c.length)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("collapse unknown block returns error", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_set_collapsed(h, 999n, 1)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("many blocks lifecycle stress test", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("msg");
+			// Append 100 blocks, patch each, finish each
+			for (let i = 1n; i <= 100n; i++) {
+				expect(ffi.tui_transcript_append_block(h, i, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			for (let i = 1n; i <= 100n; i++) {
+				const patch = new TextEncoder().encode(` extra${i}`);
+				expect(ffi.tui_transcript_patch_block(h, i, 0, Buffer.from(patch), patch.length)).toBe(0);
+			}
+			for (let i = 1n; i <= 100n; i++) {
+				expect(ffi.tui_transcript_finish_block(h, i)).toBe(0);
+			}
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
 	});
 });
