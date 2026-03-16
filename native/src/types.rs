@@ -2,7 +2,7 @@
 //!
 //! All types that cross module boundaries or define the FFI data model live here.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 #[allow(unused)]
 use bitflags::bitflags;
@@ -24,6 +24,7 @@ pub enum NodeType {
     List = 7,
     Tabs = 8,
     Overlay = 9,
+    Transcript = 10,
 }
 
 impl NodeType {
@@ -39,6 +40,7 @@ impl NodeType {
             7 => Some(Self::List),
             8 => Some(Self::Tabs),
             9 => Some(Self::Overlay),
+            10 => Some(Self::Transcript),
             _ => None,
         }
     }
@@ -54,6 +56,7 @@ impl NodeType {
                 | Self::Table
                 | Self::List
                 | Self::Tabs
+                | Self::Transcript
         )
     }
 }
@@ -704,6 +707,106 @@ impl Default for TextAreaState {
 }
 
 // ============================================================================
+// Transcript Types (ADR-T32, ADR-T33)
+// ============================================================================
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptBlockKind {
+    Message = 0,
+    ToolCall = 1,
+    ToolResult = 2,
+    Reasoning = 3,
+    Activity = 4,
+    Divider = 5,
+}
+
+impl TranscriptBlockKind {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Message),
+            1 => Some(Self::ToolCall),
+            2 => Some(Self::ToolResult),
+            3 => Some(Self::Reasoning),
+            4 => Some(Self::Activity),
+            5 => Some(Self::Divider),
+            _ => None,
+        }
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowMode {
+    Manual = 0,
+    TailLocked = 1,
+    TailWhileNearBottom = 2,
+}
+
+impl FollowMode {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Manual),
+            1 => Some(Self::TailLocked),
+            2 => Some(Self::TailWhileNearBottom),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViewportAnchorKind {
+    Tail,
+    BlockStart { block_id: u64, row_offset: u32 },
+    FocusedBlock { block_id: u64, row_offset: u32 },
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptBlock {
+    pub id: u64,
+    pub kind: TranscriptBlockKind,
+    pub parent_id: Option<u64>,
+    pub role: u8,
+    pub content: String,
+    pub content_format: ContentFormat,
+    pub code_language: Option<String>,
+    pub streaming: bool,
+    pub collapsed: bool,
+    pub unread: bool,
+    pub rendered_rows: u32,
+    pub version: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptState {
+    pub blocks: Vec<TranscriptBlock>,
+    pub block_index: HashMap<u64, usize>,
+    pub follow_mode: FollowMode,
+    pub anchor_kind: ViewportAnchorKind,
+    pub unread_anchor: Option<u64>,
+    pub unread_count: u32,
+    pub sticky_threshold_rows: u32,
+    pub tail_attached: bool,
+    pub viewport_rows: u32,
+}
+
+impl Default for TranscriptState {
+    fn default() -> Self {
+        Self {
+            blocks: Vec::new(),
+            block_index: HashMap::new(),
+            follow_mode: FollowMode::TailWhileNearBottom,
+            anchor_kind: ViewportAnchorKind::Tail,
+            unread_anchor: None,
+            unread_count: 0,
+            sticky_threshold_rows: 2,
+            tail_attached: true,
+            viewport_rows: 0,
+        }
+    }
+}
+
+// ============================================================================
 // TuiNode
 // ============================================================================
 
@@ -751,6 +854,8 @@ pub struct TuiNode {
     pub list_state: Option<ListState>,
     pub tabs_state: Option<TabsState>,
     pub overlay_state: Option<OverlayState>,
+    // Transcript widget state (ADR-T32)
+    pub transcript_state: Option<TranscriptState>,
 }
 
 impl TuiNode {
@@ -763,6 +868,7 @@ impl TuiNode {
                 | NodeType::Table
                 | NodeType::List
                 | NodeType::Tabs
+                | NodeType::Transcript
         );
         Self {
             node_type,
@@ -821,6 +927,11 @@ impl TuiNode {
             } else {
                 None
             },
+            transcript_state: if node_type == NodeType::Transcript {
+                Some(TranscriptState::default())
+            } else {
+                None
+            },
         }
     }
 }
@@ -839,7 +950,8 @@ mod tests {
         assert_eq!(NodeType::from_u8(7), Some(NodeType::List));
         assert_eq!(NodeType::from_u8(8), Some(NodeType::Tabs));
         assert_eq!(NodeType::from_u8(9), Some(NodeType::Overlay));
-        assert_eq!(NodeType::from_u8(10), None);
+        assert_eq!(NodeType::from_u8(10), Some(NodeType::Transcript));
+        assert_eq!(NodeType::from_u8(11), None);
     }
 
     #[test]

@@ -102,6 +102,7 @@ export const NodeType = {
 	List: 7,
 	Tabs: 8,
 	Overlay: 9,
+	Transcript: 10,
 } as const;
 
 /**

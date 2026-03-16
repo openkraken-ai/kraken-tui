@@ -33,6 +33,7 @@ mod textarea;
 mod theme;
 #[cfg(feature = "threaded-render")]
 mod threaded_render;
+mod transcript;
 mod tree;
 pub mod types;
 pub mod writer;
@@ -2521,6 +2522,149 @@ pub extern "C" fn tui_threaded_render_stop() -> i32 {
         let ctx = context_read()?;
         ctx.debug_log("threaded_render: stop (synchronous mode restored)");
         Ok(0)
+    })
+}
+
+// ============================================================================
+// Transcript Widget FFI (ADR-T32)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_append_block(
+    handle: u32,
+    block_id: u64,
+    kind: u8,
+    role: u8,
+    ptr: *const u8,
+    len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let k = types::TranscriptBlockKind::from_u8(kind)
+            .ok_or_else(|| format!("Invalid block kind: {kind}"))?;
+        let content = if ptr.is_null() {
+            ""
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {e}"))?
+        };
+        transcript::append_block(&mut ctx, handle, block_id, k, role, content)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_patch_block(
+    handle: u32,
+    block_id: u64,
+    patch_mode: u8,
+    ptr: *const u8,
+    len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let content = if ptr.is_null() {
+            ""
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(bytes).map_err(|e| format!("Invalid UTF-8: {e}"))?
+        };
+        transcript::patch_block(&mut ctx, handle, block_id, patch_mode, content)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_finish_block(handle: u32, block_id: u64) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::finish_block(&mut ctx, handle, block_id)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_set_parent(handle: u32, block_id: u64, parent_id: u64) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::set_parent(&mut ctx, handle, block_id, parent_id)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_set_collapsed(handle: u32, block_id: u64, collapsed: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::set_collapsed(&mut ctx, handle, block_id, collapsed != 0)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_jump_to_block(handle: u32, block_id: u64, align: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::jump_to_block(&mut ctx, handle, block_id, align)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_jump_to_unread(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::jump_to_unread(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_set_follow_mode(handle: u32, mode: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let m = types::FollowMode::from_u8(mode)
+            .ok_or_else(|| format!("Invalid follow mode: {mode}"))?;
+        transcript::set_follow_mode(&mut ctx, handle, m)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_get_follow_mode(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let mode = transcript::get_follow_mode(&ctx, handle)?;
+        Ok(mode as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_mark_read(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::mark_read(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_transcript_get_unread_count(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let count = transcript::get_unread_count(&ctx, handle)?;
+        Ok(count as i32)
     })
 }
 

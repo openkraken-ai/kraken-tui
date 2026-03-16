@@ -99,6 +99,14 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 continue;
                             }
                         }
+                        Some(crate::types::NodeType::Transcript) => {
+                            if let Ok(true) =
+                                crate::transcript::handle_key(ctx, focused_handle, code)
+                            {
+                                count += 1;
+                                continue;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -149,10 +157,21 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     }
                 }
 
-                // Scroll events (buttons 3-4) on ScrollBox
+                // Scroll events (buttons 3-4) on Transcript or ScrollBox
                 if button == 3 || button == 4 {
-                    if let Some(scroll_target) = find_scrollable_ancestor(ctx, target) {
-                        let dy = if button == 3 { -1 } else { 1 };
+                    let dy = if button == 3 { -1 } else { 1 };
+                    // Try Transcript first (innermost-first)
+                    if let Some(transcript_target) = find_transcript_ancestor(ctx, target) {
+                        let consumed = crate::transcript::handle_scroll(ctx, transcript_target, dy)
+                            .unwrap_or(false);
+                        if !consumed {
+                            // Bubble to parent ScrollBox
+                            if let Some(sb) = find_scrollable_ancestor_above(ctx, transcript_target)
+                            {
+                                crate::scroll::scroll_by(ctx, sb, 0, dy);
+                            }
+                        }
+                    } else if let Some(scroll_target) = find_scrollable_ancestor(ctx, target) {
                         crate::scroll::scroll_by(ctx, scroll_target, 0, dy);
                     }
                 }
@@ -852,6 +871,31 @@ fn find_scrollable_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
             return None;
         }
     }
+}
+
+/// Walk up the parent chain looking for a Transcript node.
+fn find_transcript_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let mut current = handle;
+    loop {
+        if let Some(node) = ctx.nodes.get(&current) {
+            if node.node_type == crate::types::NodeType::Transcript {
+                return Some(current);
+            }
+            match node.parent {
+                Some(parent) => current = parent,
+                None => return None,
+            }
+        } else {
+            return None;
+        }
+    }
+}
+
+/// Find the nearest ScrollBox ancestor above a given handle (exclusive of the
+/// handle itself). Used for bubble-up when a Transcript is at its scroll boundary.
+fn find_scrollable_ancestor_above(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let parent = ctx.nodes.get(&handle)?.parent?;
+    find_scrollable_ancestor(ctx, parent)
 }
 
 #[cfg(test)]

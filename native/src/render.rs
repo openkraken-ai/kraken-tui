@@ -501,6 +501,11 @@ fn render_node(
                 ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
             );
         }
+        NodeType::Transcript => {
+            render_transcript(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
+            );
+        }
     }
 
     // Render children (except ScrollBox which handled above; leaf types have no children)
@@ -1765,6 +1770,106 @@ fn diff_buffers(ctx: &TuiContext) -> Vec<CellUpdate> {
     }
 
     updates
+}
+
+// ============================================================================
+// Transcript Rendering (ADR-T32)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_transcript(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let state = match &mut node.transcript_state {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Update viewport_rows from actual content height
+    state.viewport_rows = content_h.max(0) as u32;
+
+    // Clone state for rendering (avoid borrow conflict)
+    let state_snapshot = state.clone();
+
+    let (start_idx, end_idx) = crate::transcript::compute_visible_range(&state_snapshot);
+
+    let mut y = content_y;
+    let max_y = content_y + content_h;
+
+    for i in start_idx..end_idx {
+        if y >= max_y {
+            break;
+        }
+        let block = &state_snapshot.blocks[i];
+
+        // Skip hidden blocks (collapsed ancestors)
+        if crate::transcript::is_block_hidden(&state_snapshot, block) {
+            continue;
+        }
+
+        if block.collapsed {
+            // Render collapsed indicator
+            let indicator = format!("\u{25B8} [collapsed] ({})", block.id);
+            for (ci, ch) in indicator.chars().enumerate() {
+                let sx = content_x + ci as i32;
+                if sx >= content_x + content_w {
+                    break;
+                }
+                let cell = Cell { ch, fg, bg, attrs };
+                clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
+            }
+            y += 1;
+        } else if block.kind == crate::types::TranscriptBlockKind::Divider {
+            // Render horizontal divider
+            for dx in 0..content_w {
+                let cell = Cell {
+                    ch: '\u{2500}', // ─
+                    fg,
+                    bg,
+                    attrs,
+                };
+                clip_set(&mut ctx.front_buffer, content_x + dx, y, cell, clip);
+            }
+            y += 1;
+        } else {
+            // Render block content line by line
+            for line in block.content.split('\n') {
+                if y >= max_y {
+                    break;
+                }
+                let mut x = content_x;
+                for ch in line.chars() {
+                    if x >= content_x + content_w {
+                        break;
+                    }
+                    let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+                    if w > 0 {
+                        let cell = Cell { ch, fg, bg, attrs };
+                        clip_set(&mut ctx.front_buffer, x, y, cell, clip);
+                        x += w;
+                    }
+                }
+                y += 1;
+            }
+            // If content is empty, still consume a row
+            if block.content.is_empty() {
+                y += 1;
+            }
+        }
+    }
 }
 
 // ============================================================================

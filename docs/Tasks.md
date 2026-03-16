@@ -2,9 +2,9 @@
 
 ## Kraken TUI
 
-**Version**: 6.0  
-**Status**: Planned (v4 focus reset)  
-**Date**: March 2026  
+**Version**: 6.0
+**Status**: In Progress (Epic I complete)
+**Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
 
 **Planning note**: v3 is complete and remains the implementation baseline. This file tracks only the next execution phase and depends on the concrete contracts defined in `TechSpec.md`.
@@ -126,9 +126,11 @@ flowchart LR
 
 - **Type:** Spike
 - **Effort:** Story Points: 2
+- **Status:** Done
 - **Dependencies:** None
 - **Priority Area:** Transcript / viewport architecture
-- **Description:** Time-box the transcript replay contract derived from the TechSpec. Define canonical AG-UI and log-stream fixtures, stable `block_id` rules, follow modes, unread anchor behavior, and the exact expected outcomes for resize, detach, and collapse cases.
+- **Description:** Time-box the transcript replay contract derived from the TechSpec. Define canonical replay fixtures, stable `block_id` rules, follow modes, unread anchor behavior, and the exact expected outcomes for resize, detach, and collapse cases.
+- **Implementation Notes:** Added `TranscriptBlockKind`, `FollowMode`, `ViewportAnchorKind`, `TranscriptBlock`, `TranscriptState` types to `native/src/types.rs`. Created 6 canonical fixtures (append_basic, patch_streaming, collapse_toggle, unread_detach, resize_stability, detach_reattach) in `native/src/transcript.rs` with `TranscriptFixture`, `FixtureBlock`, and `FixtureOp` test infrastructure.
 - **Out of Scope:** UI polish, command palette work, packaging, or generic virtualization research
 - **Acceptance Criteria (Gherkin):**
 
@@ -143,9 +145,11 @@ And each fixture encodes the expected visible anchor and unread outcome
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-I0]
 - **Priority Area:** Transcript / viewport architecture
 - **Description:** Add `NodeType::Transcript`, `TranscriptState`, `TranscriptBlock`, and the transcript FFI surface defined in TechSpec section 4.3.1.
+- **Implementation Notes:** Added `NodeType::Transcript = 10` with `is_leaf = true`, `focusable = true`. Created `native/src/transcript.rs` with 11 core functions (append_block, patch_block, finish_block, set_parent, set_collapsed, jump_to_block, jump_to_unread, set_follow_mode, get_follow_mode, mark_read, get_unread_count). Added 11 FFI entry points in `lib.rs`. 30 unit tests covering all operations and error cases.
 - **Out of Scope:** Devtools overlays, example wiring, or code/diff surfaces
 - **Acceptance Criteria (Gherkin):**
 
@@ -160,9 +164,11 @@ And invalid transcript handles or block identifiers return documented error sema
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-I1]
 - **Priority Area:** Transcript / viewport architecture
 - **Description:** Implement `FollowMode`, anchor tracking, sticky-bottom threshold logic, unread anchor creation, and `jump_to_unread`.
+- **Implementation Notes:** Implemented `compute_total_visible_rows`, `is_near_bottom`, `recompute_anchor_after_insert`, `recompute_anchor_after_collapse`, `compute_visible_range`, and `recompute_unread_state` in transcript.rs. TailWhileNearBottom uses 2-row sticky threshold. Unread anchor tracks first unseen block when detached. All 6 canonical fixtures pass.
 - **Out of Scope:** Split panes, watch mode, or inspector UIs
 - **Acceptance Criteria (Gherkin):**
 
@@ -181,9 +187,11 @@ And jump_to_unread lands on the earliest unread block
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
+- **Status:** Done
 - **Dependencies:** [TASK-I2]
 - **Priority Area:** Transcript / viewport architecture
-- **Description:** Add the `TranscriptView` host wrapper and replay adapters that translate AG-UI and log-stream identities into stable numeric `block_id` values.
+- **Description:** Add the `TranscriptView` host wrapper and replay adapters that translate host-side string identities into stable numeric `block_id` values.
+- **Implementation Notes:** Created `ts/src/widgets/transcript.ts` (TranscriptView class with string→BigInt ID mapping) and `ts/src/widgets/transcript-adapters.ts` (15-event TranscriptReplayEvent type with `applyReplayEvent` adapter). Added 11 FFI symbols to `ffi.ts`, `Transcript: 10` to structs.ts, JSX support in reconciler.ts (WIDGET_MAP + followMode prop), TranscriptProps in types.ts. Exported from index.ts. 19 FFI integration tests.
 - **Out of Scope:** Devtools inspectors, split panes, or replay benchmarks
 - **Acceptance Criteria (Gherkin):**
 
@@ -198,9 +206,11 @@ And host-side string identifiers map deterministically to transcript block ident
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-I3]
 - **Priority Area:** Transcript / viewport architecture
 - **Description:** Wire transcript anchors into existing scroll and focus paths so inner scrollables consume events first, then bubble at edges, while focus and cursor remain stable under streaming inserts and collapse toggles.
+- **Implementation Notes:** Added `handle_scroll` and `handle_key` in transcript.rs for scroll/keyboard navigation (Up/Down, PageUp/PageDown, Home/End). Modified event.rs: added `find_transcript_ancestor` and `find_scrollable_ancestor_above` helpers; updated scroll routing to try Transcript first, bubble to ScrollBox when at boundary. Transcript key handler wired into the widget-specific key dispatch. Focus stability inherent in block_id-based anchoring (inserts above anchor don't shift it).
 - **Out of Scope:** Dev snapshot export, example-specific inspector sidebars, or command palette work
 - **Acceptance Criteria (Gherkin):**
 
@@ -219,9 +229,11 @@ Then the focused visual region remains stable after render
 
 - **Type:** Chore
 - **Effort:** Story Points: 3
+- **Status:** Done
 - **Dependencies:** [TASK-I4]
 - **Priority Area:** Transcript / viewport architecture
 - **Description:** Add headless replay tests, golden snapshots, and transcript benchmark gates aligned to the TechSpec quality targets.
+- **Implementation Notes:** Added `render_transcript` in render.rs with block-based viewport rendering (collapsed indicators, divider lines, content rendering with clip_set). Added `test_append_1000_blocks_no_drift` and `test_streaming_no_viewport_shift` performance tests. 19 FFI integration tests in test-ffi.test.ts. Bundle budget verified at 47.3KB/50KB (95%). Total: 297 Rust tests, 179 FFI tests, 49 JSX tests passing.
 - **Out of Scope:** Devtools UI surfaces or flagship example assembly
 - **Acceptance Criteria (Gherkin):**
 

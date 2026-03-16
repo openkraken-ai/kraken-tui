@@ -194,6 +194,19 @@ const lib = dlopen(LIB_PATH, {
 	tui_overlay_set_clear_under:       { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
 	tui_overlay_set_dismiss_on_escape: { args: ["u32", "u8"] as FFIType[],       returns: "i32" as const },
 	tui_overlay_get_dismiss_on_escape: { args: ["u32"] as FFIType[],             returns: "i32" as const },
+
+	// Transcript Widget (ADR-T32)
+	tui_transcript_append_block:  { args: ["u32", "u64", "u8", "u8", "ptr", "u32"] as FFIType[], returns: "i32" as const },
+	tui_transcript_patch_block:   { args: ["u32", "u64", "u8", "ptr", "u32"] as FFIType[],       returns: "i32" as const },
+	tui_transcript_finish_block:  { args: ["u32", "u64"] as FFIType[],                           returns: "i32" as const },
+	tui_transcript_set_parent:    { args: ["u32", "u64", "u64"] as FFIType[],                    returns: "i32" as const },
+	tui_transcript_set_collapsed: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
+	tui_transcript_jump_to_block: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
+	tui_transcript_jump_to_unread:{ args: ["u32"] as FFIType[],                                  returns: "i32" as const },
+	tui_transcript_set_follow_mode:{ args: ["u32", "u8"] as FFIType[],                           returns: "i32" as const },
+	tui_transcript_get_follow_mode:{ args: ["u32"] as FFIType[],                                 returns: "i32" as const },
+	tui_transcript_mark_read:     { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
+	tui_transcript_get_unread_count:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
 });
 
 const ffi = lib.symbols;
@@ -2587,6 +2600,207 @@ describe("FFI integration", () => {
 			expect(ffi.tui_get_focused()).toBe(tabs);
 
 			ffi.tui_destroy_subtree(root);
+		});
+	});
+
+	// ── Transcript Widget (ADR-T32) ──────────────────────────────────
+
+	describe("Transcript Widget", () => {
+		test("create transcript node", () => {
+			const h = ffi.tui_create_node(10); // Transcript = 10
+			expect(h).toBeGreaterThan(0);
+			expect(ffi.tui_get_node_type(h)).toBe(10);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("transcript is a leaf node", () => {
+			const h = ffi.tui_create_node(10);
+			const child = ffi.tui_create_node(0); // Box
+			// Leaf nodes cannot have children
+			expect(ffi.tui_append_child(h, child)).toBe(-1);
+			ffi.tui_destroy_node(child);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("append and finish blocks", () => {
+			const h = ffi.tui_create_node(10);
+			const content = new TextEncoder().encode("Hello world");
+			// Append block: kind=0 (Message), role=2 (assistant)
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(content), content.length)).toBe(0);
+			// Finish block
+			expect(ffi.tui_transcript_finish_block(h, 1n)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("append block with null content", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, null, 0)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("duplicate block_id returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const content = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(content), content.length)).toBe(0);
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(content), content.length)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("wrong node type returns error", () => {
+			const box_h = ffi.tui_create_node(0); // Box
+			const content = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_append_block(box_h, 1n, 0, 2, Buffer.from(content), content.length)).toBe(-1);
+			ffi.tui_destroy_node(box_h);
+		});
+
+		test("patch block append mode", () => {
+			const h = ffi.tui_create_node(10);
+			const c1 = new TextEncoder().encode("Hello");
+			const c2 = new TextEncoder().encode(" World");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c1), c1.length)).toBe(0);
+			// Patch mode 0 = append
+			expect(ffi.tui_transcript_patch_block(h, 1n, 0, Buffer.from(c2), c2.length)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("patch block replace mode", () => {
+			const h = ffi.tui_create_node(10);
+			const c1 = new TextEncoder().encode("Hello");
+			const c2 = new TextEncoder().encode("Replaced");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c1), c1.length)).toBe(0);
+			// Patch mode 1 = replace
+			expect(ffi.tui_transcript_patch_block(h, 1n, 1, Buffer.from(c2), c2.length)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("patch unknown block returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const content = new TextEncoder().encode("A");
+			expect(ffi.tui_transcript_patch_block(h, 999n, 0, Buffer.from(content), content.length)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("set parent relationship", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_append_block(h, 2n, 1, 3, Buffer.from(c), c.length)).toBe(0);
+			// Set block 2's parent to block 1
+			expect(ffi.tui_transcript_set_parent(h, 2n, 1n)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("set parent unknown block returns error", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_set_parent(h, 1n, 999n)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("collapse and expand", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
+			expect(ffi.tui_transcript_set_collapsed(h, 1n, 0)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("follow mode get/set", () => {
+			const h = ffi.tui_create_node(10);
+			// Default is TailWhileNearBottom (2)
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(2);
+			// Set to Manual (0)
+			expect(ffi.tui_transcript_set_follow_mode(h, 0)).toBe(0);
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(0);
+			// Set to TailLocked (1)
+			expect(ffi.tui_transcript_set_follow_mode(h, 1)).toBe(0);
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(1);
+			// Invalid mode returns error
+			expect(ffi.tui_transcript_set_follow_mode(h, 99)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("unread count starts at 0", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("jump to block", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			for (let i = 1n; i <= 10n; i++) {
+				expect(ffi.tui_transcript_append_block(h, i, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			// Jump to block 5 (align=0=top)
+			expect(ffi.tui_transcript_jump_to_block(h, 5n, 0)).toBe(0);
+			// Jump to unknown block returns error
+			expect(ffi.tui_transcript_jump_to_block(h, 999n, 0)).toBe(-1);
+			// Invalid align returns error
+			expect(ffi.tui_transcript_jump_to_block(h, 5n, 99)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("jump to unread", () => {
+			const h = ffi.tui_create_node(10);
+			// No unread — should succeed (no-op)
+			expect(ffi.tui_transcript_jump_to_unread(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("mark read", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_mark_read(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("full lifecycle: append, patch, finish, follow, unread", () => {
+			const h = ffi.tui_create_node(10);
+			const enc = (s: string) => new TextEncoder().encode(s);
+
+			// Append several blocks
+			for (let i = 1n; i <= 5n; i++) {
+				const c = enc(`Block ${i}`);
+				expect(ffi.tui_transcript_append_block(h, i, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+
+			// Patch block 3 (append)
+			const patch = enc(" extra");
+			expect(ffi.tui_transcript_patch_block(h, 3n, 0, Buffer.from(patch), patch.length)).toBe(0);
+
+			// Finish block 3
+			expect(ffi.tui_transcript_finish_block(h, 3n)).toBe(0);
+
+			// Set parent: block 2 is child of block 1
+			expect(ffi.tui_transcript_set_parent(h, 2n, 1n)).toBe(0);
+
+			// Collapse block 1
+			expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
+
+			// Follow mode cycle
+			expect(ffi.tui_transcript_set_follow_mode(h, 0)).toBe(0); // Manual
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(0);
+
+			// Mark read
+			expect(ffi.tui_transcript_mark_read(h)).toBe(0);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("all block kinds valid", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("x");
+			// Test all 6 block kinds (0-5)
+			for (let kind = 0; kind < 6; kind++) {
+				expect(ffi.tui_transcript_append_block(h, BigInt(kind + 1), kind, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			// Invalid kind returns error
+			expect(ffi.tui_transcript_append_block(h, 100n, 99, 2, Buffer.from(c), c.length)).toBe(-1);
+			ffi.tui_destroy_node(h);
 		});
 	});
 });

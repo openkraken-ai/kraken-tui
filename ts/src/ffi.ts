@@ -518,6 +518,52 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+
+	// Transcript Widget (ADR-T32)
+	tui_transcript_append_block: {
+		args: ["u32", "u64", "u8", "u8", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_patch_block: {
+		args: ["u32", "u64", "u8", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_finish_block: {
+		args: ["u32", "u64"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_set_parent: {
+		args: ["u32", "u64", "u64"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_set_collapsed: {
+		args: ["u32", "u64", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_jump_to_block: {
+		args: ["u32", "u64", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_jump_to_unread: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_set_follow_mode: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_get_follow_mode: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_mark_read: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_transcript_get_unread_count: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);
