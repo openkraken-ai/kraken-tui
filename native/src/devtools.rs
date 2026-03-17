@@ -341,7 +341,13 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
 
 /// Recursive helper: draw overlay markers for one node and its subtree.
 /// `parent_x`/`parent_y` are the absolute screen offsets of the parent node.
-fn render_overlay_node(ctx: &mut TuiContext, handle: u32, parent_x: i32, parent_y: i32, flags: u32) {
+fn render_overlay_node(
+    ctx: &mut TuiContext,
+    handle: u32,
+    parent_x: i32,
+    parent_y: i32,
+    flags: u32,
+) {
     let (taffy_node, dirty, node_type, visible, children) = {
         let node = match ctx.nodes.get(&handle) {
             Some(n) => n,
@@ -420,7 +426,11 @@ fn render_overlay_node(ctx: &mut TuiContext, handle: u32, parent_x: i32, parent_
                 } else {
                     ('?', false)
                 };
-                let anchor_color = if tail { OVERLAY_PERF_COLOR } else { OVERLAY_COLOR };
+                let anchor_color = if tail {
+                    OVERLAY_PERF_COLOR
+                } else {
+                    OVERLAY_COLOR
+                };
                 if w > 1 {
                     ctx.front_buffer
                         .set(x + 1, y, overlay_cell(anchor_ch, anchor_color));
