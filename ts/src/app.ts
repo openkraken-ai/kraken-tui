@@ -185,10 +185,8 @@ export class Kraken {
 	 * Two-call pattern: query length, allocate, copy.
 	 */
 	debugGetSnapshot(): string {
-		const len = checkResult(
-			ffi.tui_debug_get_snapshot_len(),
-			"debugGetSnapshot:len",
-		);
+		const len = ffi.tui_debug_get_snapshot_len();
+		checkResult(len, "debugGetSnapshot:len");
 		if (len <= 0) return "{}";
 		const buf = new Uint8Array(len);
 		checkResult(ffi.tui_debug_get_snapshot(ptr(buf), len), "debugGetSnapshot");
@@ -200,10 +198,8 @@ export class Kraken {
 	 * kind: 0=event, 1=focus, 2=dirty, 3=viewport
 	 */
 	debugGetTrace(kind: number): string {
-		const len = checkResult(
-			ffi.tui_debug_get_trace_len(kind),
-			"debugGetTrace:len",
-		);
+		const len = ffi.tui_debug_get_trace_len(kind);
+		checkResult(len, "debugGetTrace:len");
 		if (len <= 0) return "[]";
 		const buf = new Uint8Array(len);
 		checkResult(

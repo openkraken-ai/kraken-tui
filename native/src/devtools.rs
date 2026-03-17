@@ -305,40 +305,74 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
         return;
     }
 
-    let handles: Vec<u32> = ctx.nodes.keys().copied().collect();
+    if let Some(root) = ctx.root {
+        render_overlay_node(ctx, root, 0, 0, flags);
+    }
 
-    for handle in handles {
-        let (taffy_node, dirty, node_type, visible, children) = {
-            let node = match ctx.nodes.get(&handle) {
-                Some(n) => n,
-                None => continue,
-            };
-            (
-                node.taffy_node,
-                node.dirty,
-                node.node_type,
-                node.visible,
-                node.children.clone(),
-            )
-        };
+    // PERF: draw one-line summary at row 0 (top of screen) — not node-relative
 
-        if !visible {
-            continue;
+    if flags & overlay_flags::PERF != 0 {
+        let perf_str = format!(
+            "layout:{}μs render:{}μs diff:{} runs:{} nodes:{}",
+            ctx.perf_layout_us,
+            ctx.perf_render_us,
+            ctx.perf_diff_cells,
+            ctx.perf_write_runs,
+            ctx.nodes.len(),
+        );
+        let bw = ctx.front_buffer.width as usize;
+        for (i, ch) in perf_str.chars().enumerate() {
+            if i >= bw {
+                break;
+            }
+            ctx.front_buffer.set(
+                i as u16,
+                0,
+                Cell {
+                    ch,
+                    fg: OVERLAY_PERF_COLOR,
+                    bg: 0,
+                    attrs: CellAttrs::empty(),
+                },
+            );
         }
+    }
+}
 
-        let layout = match ctx.tree.layout(taffy_node) {
-            Ok(l) => l,
-            Err(_) => continue,
+/// Recursive helper: draw overlay markers for one node and its subtree.
+/// `parent_x`/`parent_y` are the absolute screen offsets of the parent node.
+fn render_overlay_node(ctx: &mut TuiContext, handle: u32, parent_x: i32, parent_y: i32, flags: u32) {
+    let (taffy_node, dirty, node_type, visible, children) = {
+        let node = match ctx.nodes.get(&handle) {
+            Some(n) => n,
+            None => return,
         };
+        (
+            node.taffy_node,
+            node.dirty,
+            node.node_type,
+            node.visible,
+            node.children.clone(),
+        )
+    };
 
-        let x = layout.location.x as u16;
-        let y = layout.location.y as u16;
-        let w = layout.size.width as u16;
-        let h = layout.size.height as u16;
+    if !visible {
+        return;
+    }
 
-        if w == 0 || h == 0 {
-            continue;
-        }
+    let layout = match ctx.tree.layout(taffy_node) {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+
+    let abs_x = parent_x + layout.location.x as i32;
+    let abs_y = parent_y + layout.location.y as i32;
+    let w = layout.size.width as u16;
+    let h = layout.size.height as u16;
+
+    if w > 0 && h > 0 && abs_x >= 0 && abs_y >= 0 {
+        let x = abs_x as u16;
+        let y = abs_y as u16;
 
         // BOUNDS: draw corner markers at node rect
         if flags & overlay_flags::BOUNDS != 0 {
@@ -386,12 +420,7 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
                 } else {
                     ('?', false)
                 };
-                let _ = children; // suppress unused warning
-                let anchor_color = if tail {
-                    OVERLAY_PERF_COLOR
-                } else {
-                    OVERLAY_COLOR
-                };
+                let anchor_color = if tail { OVERLAY_PERF_COLOR } else { OVERLAY_COLOR };
                 if w > 1 {
                     ctx.front_buffer
                         .set(x + 1, y, overlay_cell(anchor_ch, anchor_color));
@@ -400,32 +429,9 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
         }
     }
 
-    // PERF: draw one-line summary at row 0 (top of screen)
-    if flags & overlay_flags::PERF != 0 {
-        let perf_str = format!(
-            "layout:{}μs render:{}μs diff:{} runs:{} nodes:{}",
-            ctx.perf_layout_us,
-            ctx.perf_render_us,
-            ctx.perf_diff_cells,
-            ctx.perf_write_runs,
-            ctx.nodes.len(),
-        );
-        let bw = ctx.front_buffer.width as usize;
-        for (i, ch) in perf_str.chars().enumerate() {
-            if i >= bw {
-                break;
-            }
-            ctx.front_buffer.set(
-                i as u16,
-                0,
-                Cell {
-                    ch,
-                    fg: OVERLAY_PERF_COLOR,
-                    bg: 0,
-                    attrs: CellAttrs::empty(),
-                },
-            );
-        }
+    // Recurse into children with this node's absolute position as the new parent origin
+    for child in children {
+        render_overlay_node(ctx, child, abs_x, abs_y, flags);
     }
 }
 

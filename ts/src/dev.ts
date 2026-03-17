@@ -108,13 +108,18 @@ export async function createDevSession(
 			process.stderr.write(`[devtools] handle ${handle} GC'd — call destroy()\n`);
 		});
 
-		// Track leaked handles for the root widget
-		leakRegistry.register(root, root.handle);
+		// Track leaked handles for the root widget.
+		// Use an unregister token so we can suppress the callback on clean shutdown.
+		const rootToken = {};
+		leakRegistry.register(root, root.handle, rootToken);
 
 		// Run the event loop
 		await app.run({
 			debugOverlay: overlayFlags !== 0,
 		});
+
+		// Root is intentionally alive until shutdown — suppress the false-positive GC warning.
+		leakRegistry.unregister(rootToken);
 
 	} finally {
 		process.off("SIGINT", sigintHandler);
