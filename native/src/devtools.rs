@@ -363,10 +363,8 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
         }
 
         // FOCUS: draw > at focused node top-left
-        if flags & overlay_flags::FOCUS != 0 {
-            if ctx.focused == Some(handle) {
-                ctx.back_buffer.set(x, y, overlay_cell('▶', OVERLAY_COLOR));
-            }
+        if flags & overlay_flags::FOCUS != 0 && ctx.focused == Some(handle) {
+            ctx.back_buffer.set(x, y, overlay_cell('▶', OVERLAY_COLOR));
         }
 
         // ANCHORS: draw anchor marker on Transcript nodes
