@@ -139,6 +139,10 @@ export interface OverlayProps extends CommonProps {
 	children?: VNode | VNode[];
 }
 
+export interface TranscriptProps extends CommonProps {
+	followMode?: MaybeSignal<"manual" | "tailLocked" | "tailWhileNearBottom">;
+}
+
 // ---------------------------------------------------------------------------
 // VNode — virtual node representation
 // ---------------------------------------------------------------------------
@@ -187,6 +191,7 @@ export declare namespace JSX {
 		List: ListProps;
 		Tabs: TabsProps;
 		Overlay: OverlayProps;
+		Transcript: TranscriptProps;
 	}
 
 	interface ElementChildrenAttribute {

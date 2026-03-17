@@ -501,6 +501,11 @@ fn render_node(
                 ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
             );
         }
+        NodeType::Transcript => {
+            render_transcript(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
+            );
+        }
     }
 
     // Render children (except ScrollBox which handled above; leaf types have no children)
@@ -1765,6 +1770,181 @@ fn diff_buffers(ctx: &TuiContext) -> Vec<CellUpdate> {
     }
 
     updates
+}
+
+// ============================================================================
+// Transcript Rendering (ADR-T32)
+// ============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_transcript(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get_mut(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let state = match &mut node.transcript_state {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Update viewport dimensions from actual content area
+    state.viewport_rows = content_h.max(0) as u32;
+    let new_width = content_w.max(0) as u32;
+    if new_width != state.viewport_width && new_width > 0 {
+        state.viewport_width = new_width;
+        // Recalculate all block rendered_rows with the new width
+        crate::transcript::recalculate_all_rendered_rows(state);
+    }
+
+    // Compute viewport scroll offset: how many rows of the first visible block
+    // to skip (when the anchor is partway through a multi-line block).
+    let viewport_start_row = crate::transcript::anchor_to_row(state);
+
+    // Extract only visible blocks for rendering to avoid cloning the full state.
+    // We compute the visible range and collect just the blocks we need, then
+    // release the borrow on ctx so we can call clip_set.
+    let (start_idx, end_idx) = crate::transcript::compute_visible_range(state);
+
+    // Compute how many rows to skip in the first visible block
+    let first_block_start_row = if start_idx < state.blocks.len() {
+        crate::transcript::block_start_row(state, state.blocks[start_idx].id).unwrap_or(0)
+    } else {
+        0
+    };
+    let skip_rows = viewport_start_row.saturating_sub(first_block_start_row) as usize;
+
+    struct RenderBlock {
+        id: u64,
+        kind: crate::types::TranscriptBlockKind,
+        content: String,
+        collapsed: bool,
+        hidden: bool,
+    }
+
+    let visible_blocks: Vec<RenderBlock> = (start_idx..end_idx)
+        .map(|i| {
+            let block = &state.blocks[i];
+            RenderBlock {
+                id: block.id,
+                kind: block.kind,
+                content: block.content.clone(),
+                collapsed: block.collapsed,
+                hidden: crate::transcript::is_block_hidden(state, block),
+            }
+        })
+        .collect();
+
+    let mut y = content_y;
+    let max_y = content_y + content_h;
+    let mut is_first_block = true;
+
+    for block in &visible_blocks {
+        if y >= max_y {
+            break;
+        }
+
+        // Skip hidden blocks (collapsed ancestors)
+        if block.hidden {
+            continue;
+        }
+
+        if block.collapsed {
+            // Render collapsed indicator
+            let indicator = format!("\u{25B8} [collapsed] ({})", block.id);
+            for (ci, ch) in indicator.chars().enumerate() {
+                let sx = content_x + ci as i32;
+                if sx >= content_x + content_w {
+                    break;
+                }
+                let cell = Cell { ch, fg, bg, attrs };
+                clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
+            }
+            y += 1;
+        } else if block.kind == crate::types::TranscriptBlockKind::Divider {
+            // Render horizontal divider
+            for dx in 0..content_w {
+                let cell = Cell {
+                    ch: '\u{2500}', // ─
+                    fg,
+                    bg,
+                    attrs,
+                };
+                clip_set(&mut ctx.front_buffer, content_x + dx, y, cell, clip);
+            }
+            y += 1;
+        } else {
+            // Render block content with line wrapping.
+            // Long lines wrap to the next row when they exceed content_w,
+            // matching the row estimation in estimate_rendered_rows().
+            // For the first visible block, skip rendered rows that are above
+            // the viewport (when the anchor has a row_offset within a block).
+            let rows_to_skip = if is_first_block { skip_rows } else { 0 };
+            let mut rendered_row = 0usize;
+            for line in block.content.split('\n') {
+                if y >= max_y {
+                    break;
+                }
+                let line_width = unicode_width::UnicodeWidthStr::width(line) as i32;
+                // Number of rendered rows for this line (wrapping at content_w)
+                let row_count = if content_w <= 0 || line_width == 0 {
+                    1
+                } else {
+                    ((line_width + content_w - 1) / content_w) as usize
+                };
+                // If this entire logical line is within the skip zone, skip it
+                if rendered_row + row_count <= rows_to_skip {
+                    rendered_row += row_count;
+                    continue;
+                }
+                // Render the line with wrapping
+                let mut x = content_x;
+                let skip_sub_rows = rows_to_skip.saturating_sub(rendered_row);
+                let mut sub_row = 0usize;
+                for ch in line.chars() {
+                    let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
+                    if w == 0 {
+                        continue;
+                    }
+                    // Wrap to next row when exceeding viewport width
+                    if x >= content_x + content_w {
+                        sub_row += 1;
+                        if sub_row < skip_sub_rows {
+                            x = content_x;
+                            continue;
+                        }
+                        y += 1;
+                        x = content_x;
+                        if y >= max_y {
+                            break;
+                        }
+                    }
+                    if sub_row >= skip_sub_rows {
+                        let cell = Cell { ch, fg, bg, attrs };
+                        clip_set(&mut ctx.front_buffer, x, y, cell, clip);
+                    }
+                    x += w;
+                }
+                if sub_row >= skip_sub_rows && y < max_y {
+                    y += 1;
+                }
+                rendered_row += row_count;
+            }
+            // Empty content: split('\n') yields one empty string with row_count=1,
+            // so the loop already increments y by 1. No extra increment needed.
+        }
+        is_first_block = false;
+    }
 }
 
 // ============================================================================

@@ -37,6 +37,7 @@ const WIDGET_MAP: Record<string, number> = {
 	List: NodeType.List,
 	Tabs: NodeType.Tabs,
 	Overlay: NodeType.Overlay,
+	Transcript: NodeType.Transcript,
 };
 
 // ---------------------------------------------------------------------------
@@ -486,6 +487,18 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		case "dismissOnEscape":
 			checkResult(ffi.tui_overlay_set_dismiss_on_escape(handle, value ? 1 : 0));
 			break;
+
+		// --- Transcript-specific ---
+		case "followMode": {
+			const modeMap: Record<string, number> = {
+				manual: 0,
+				tailLocked: 1,
+				tailWhileNearBottom: 2,
+			};
+			const modeNum = modeMap[value as string] ?? 2;
+			checkResult(ffi.tui_transcript_set_follow_mode(handle, modeNum));
+			break;
+		}
 
 		default:
 			break;

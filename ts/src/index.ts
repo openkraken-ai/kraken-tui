@@ -23,6 +23,10 @@ export { Table } from "./widgets/table";
 export { List } from "./widgets/list";
 export { Tabs } from "./widgets/tabs";
 export { Overlay } from "./widgets/overlay";
+export { TranscriptView } from "./widgets/transcript";
+export type { TranscriptOptions, BlockKind, FollowModeStr } from "./widgets/transcript";
+export { applyReplayEvent } from "./widgets/transcript-adapters";
+export type { TranscriptReplayEvent } from "./widgets/transcript-adapters";
 export { Theme, DARK_THEME, LIGHT_THEME } from "./theme";
 export { KrakenError, checkResult } from "./errors";
 export { parseColor, parseDimension } from "./style";
@@ -52,4 +56,5 @@ export type {
 	ListProps,
 	TabsProps,
 	OverlayProps,
+	TranscriptProps,
 } from "./jsx/types";
