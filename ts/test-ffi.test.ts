@@ -2981,5 +2981,139 @@ describe("FFI integration", () => {
 			expect(written).toBe(len1);
 			ffi.tui_set_debug(0);
 		});
+
+		// ---- Edge cases added for thorough review coverage -----------------
+
+		test("tui_debug_get_trace kind 1 (FOCUS) returns valid [] JSON", () => {
+			ffi.tui_debug_clear_traces();
+			const len = ffi.tui_debug_get_trace_len(1);
+			expect(len).toBeGreaterThanOrEqual(2);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_trace(1, buf, len);
+			expect(written).toBe(len);
+			expect(JSON.parse(buf.toString("utf8", 0, written))).toEqual([]);
+		});
+
+		test("tui_debug_get_trace kind 2 (DIRTY) returns valid [] JSON", () => {
+			ffi.tui_debug_clear_traces();
+			const len = ffi.tui_debug_get_trace_len(2);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_trace(2, buf, len);
+			expect(written).toBe(len);
+			expect(JSON.parse(buf.toString("utf8", 0, written))).toEqual([]);
+		});
+
+		test("tui_debug_get_trace kind 3 (VIEWPORT) returns valid [] JSON", () => {
+			ffi.tui_debug_clear_traces();
+			const len = ffi.tui_debug_get_trace_len(3);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_trace(3, buf, len);
+			expect(written).toBe(len);
+			expect(JSON.parse(buf.toString("utf8", 0, written))).toEqual([]);
+		});
+
+		test("tui_debug_get_trace kind 4 (out-of-bounds) returns [] JSON", () => {
+			// kind >= COUNT (4) must return "[]" not panic
+			const len = ffi.tui_debug_get_trace_len(4);
+			expect(len).toBeGreaterThanOrEqual(2);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_trace(4, buf, len);
+			expect(written).toBeGreaterThanOrEqual(2);
+			expect(JSON.parse(buf.toString("utf8", 0, written))).toEqual([]);
+		});
+
+		test("snapshot JSON widget_tree is an array", () => {
+			ffi.tui_set_debug(1);
+			const len = ffi.tui_debug_get_snapshot_len();
+			const buf = Buffer.alloc(len);
+			ffi.tui_debug_get_snapshot(buf, len);
+			const parsed = JSON.parse(buf.toString("utf8", 0, len));
+			expect(Array.isArray(parsed.widget_tree)).toBe(true);
+			ffi.tui_set_debug(0);
+		});
+
+		test("snapshot JSON transcript_anchors is an array", () => {
+			ffi.tui_set_debug(1);
+			const len = ffi.tui_debug_get_snapshot_len();
+			const buf = Buffer.alloc(len);
+			ffi.tui_debug_get_snapshot(buf, len);
+			const parsed = JSON.parse(buf.toString("utf8", 0, len));
+			expect(Array.isArray(parsed.transcript_anchors)).toBe(true);
+			ffi.tui_set_debug(0);
+		});
+
+		test("snapshot JSON contains overlay_flags and trace_flags as numbers", () => {
+			ffi.tui_set_debug(1);
+			ffi.tui_debug_set_overlay(0x05); // BOUNDS|DIRTY
+			ffi.tui_debug_set_trace_flags(0x03);
+			const len = ffi.tui_debug_get_snapshot_len();
+			const buf = Buffer.alloc(len);
+			ffi.tui_debug_get_snapshot(buf, len);
+			const parsed = JSON.parse(buf.toString("utf8", 0, len));
+			expect(typeof parsed.overlay_flags).toBe("number");
+			expect(typeof parsed.trace_flags).toBe("number");
+			expect(parsed.overlay_flags).toBe(0x05);
+			expect(parsed.trace_flags).toBe(0x03);
+			ffi.tui_debug_set_overlay(0);
+			ffi.tui_debug_set_trace_flags(0);
+			ffi.tui_set_debug(0);
+		});
+
+		test("snapshot JSON focused and frame_id are numbers", () => {
+			ffi.tui_set_debug(1);
+			const len = ffi.tui_debug_get_snapshot_len();
+			const buf = Buffer.alloc(len);
+			ffi.tui_debug_get_snapshot(buf, len);
+			const parsed = JSON.parse(buf.toString("utf8", 0, len));
+			expect(typeof parsed.frame_id).toBe("number");
+			expect(typeof parsed.focused).toBe("number");
+			expect(typeof parsed.dirty_nodes).toBe("number");
+			ffi.tui_set_debug(0);
+		});
+
+		test("all individual overlay flag values are accepted", () => {
+			// Each bit independently and all-clear must succeed
+			for (const f of [0x01, 0x02, 0x04, 0x08, 0x10, 0x1f, 0x00]) {
+				expect(ffi.tui_debug_set_overlay(f)).toBe(0);
+			}
+			ffi.tui_debug_set_overlay(0);
+		});
+
+		test("snapshot undersized buffer returns partial bytes (truncation, not error)", () => {
+			ffi.tui_set_debug(1);
+			const fullLen = ffi.tui_debug_get_snapshot_len();
+			expect(fullLen).toBeGreaterThan(4);
+			// Pass a buffer smaller than the full snapshot
+			const smallBuf = Buffer.alloc(4);
+			const written = ffi.tui_debug_get_snapshot(smallBuf, 4);
+			// Returns number of bytes actually copied, not an error
+			expect(written).toBeGreaterThan(0);
+			expect(written).toBeLessThanOrEqual(4);
+			ffi.tui_set_debug(0);
+		});
+
+		test("tui_debug_clear_traces resets perf counter 17 to 0", () => {
+			ffi.tui_set_debug(1);
+			ffi.tui_debug_set_trace_flags(0x0f);
+			// Render to give the system a chance to record traces
+			ffi.tui_render();
+			ffi.tui_debug_clear_traces();
+			expect(ffi.tui_get_perf_counter(17)).toBe(0n);
+			ffi.tui_set_debug(0);
+		});
+
+		test("tui_debug_get_trace kind 4 trace_len is idempotent across calls", () => {
+			// Two consecutive calls with the same out-of-bounds kind must return same length
+			const len1 = ffi.tui_debug_get_trace_len(4);
+			const len2 = ffi.tui_debug_get_trace_len(4);
+			expect(len1).toBe(len2);
+		});
+
+		test("tui_debug_set_overlay with all-bits-set does not crash", () => {
+			// 0xFFFFFFFF has unknown high bits; must be accepted without error
+			expect(ffi.tui_debug_set_overlay(0xffffffff)).toBe(0);
+			// Restore clean state
+			expect(ffi.tui_debug_set_overlay(0)).toBe(0);
+		});
 	});
 });

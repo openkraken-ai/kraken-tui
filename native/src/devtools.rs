@@ -29,12 +29,12 @@ pub(crate) fn push_trace(ctx: &mut TuiContext, kind: u8, target: u32, detail: St
     if !ctx.debug_mode {
         return;
     }
-    let flag: u32 = 1 << (kind as u32);
-    if ctx.debug_trace_flags & flag == 0 {
-        return;
-    }
     let idx = kind as usize;
     if idx >= trace_kind::COUNT {
+        return;
+    }
+    let flag: u32 = 1 << (kind as u32);
+    if ctx.debug_trace_flags & flag == 0 {
         return;
     }
     let seq = ctx.next_debug_seq;
@@ -568,5 +568,235 @@ mod tests {
         push_trace(&mut ctx, trace_kind::EVENT, 1, "ev".to_string());
 
         assert_eq!(ctx.debug_traces[trace_kind::EVENT as usize].len(), 0);
+    }
+
+    // ---- Edge case: out-of-bounds trace kind --------------------------------
+
+    #[test]
+    fn test_trace_out_of_bounds_kind_returns_empty_json() {
+        let ctx = make_ctx();
+        // kind >= COUNT (4) must return "[]" without panicking
+        let json4 = build_trace_json(&ctx, 4).unwrap();
+        assert_eq!(json4, "[]");
+        let json255 = build_trace_json(&ctx, 255).unwrap();
+        assert_eq!(json255, "[]");
+    }
+
+    #[test]
+    fn test_push_trace_out_of_bounds_kind_is_no_op() {
+        let mut ctx = make_ctx();
+        // Pushing an out-of-bounds kind must not panic or modify any ring
+        push_trace(&mut ctx, 4, 1, "bad kind".to_string());
+        push_trace(&mut ctx, 200, 1, "bad kind".to_string());
+        for ring in &ctx.debug_traces {
+            assert!(ring.is_empty());
+        }
+    }
+
+    // ---- Edge case: kind isolation ------------------------------------------
+
+    #[test]
+    fn test_trace_kind_isolation() {
+        let mut ctx = make_ctx();
+        push_trace(&mut ctx, trace_kind::EVENT, 1, "ev".to_string());
+        // Pushing EVENT must not affect FOCUS, DIRTY, or VIEWPORT rings
+        assert_eq!(ctx.debug_traces[trace_kind::FOCUS as usize].len(), 0);
+        assert_eq!(ctx.debug_traces[trace_kind::DIRTY as usize].len(), 0);
+        assert_eq!(ctx.debug_traces[trace_kind::VIEWPORT as usize].len(), 0);
+    }
+
+    // ---- Edge case: global sequence monotonicity ---------------------------
+
+    #[test]
+    fn test_trace_seq_monotonic_across_kinds() {
+        let mut ctx = make_ctx();
+        push_trace(&mut ctx, trace_kind::EVENT, 1, "a".to_string());
+        push_trace(&mut ctx, trace_kind::FOCUS, 2, "b".to_string());
+        push_trace(&mut ctx, trace_kind::EVENT, 3, "c".to_string());
+
+        let ev_seqs: Vec<u64> = ctx.debug_traces[trace_kind::EVENT as usize]
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+        let foc_seqs: Vec<u64> = ctx.debug_traces[trace_kind::FOCUS as usize]
+            .iter()
+            .map(|e| e.seq)
+            .collect();
+
+        // seq values: EVENT→0, FOCUS→1, EVENT→2 (global counter)
+        assert_eq!(ev_seqs.len(), 2);
+        assert_eq!(foc_seqs.len(), 1);
+        assert!(foc_seqs[0] > ev_seqs[0], "FOCUS seq must be after first EVENT seq");
+        assert!(foc_seqs[0] < ev_seqs[1], "FOCUS seq must be before second EVENT seq");
+        // Strictly increasing
+        assert!(ev_seqs[1] > ev_seqs[0]);
+    }
+
+    // ---- Edge case: frame snapshot ring overflow ----------------------------
+
+    #[test]
+    fn test_frame_snapshot_ring_overflow() {
+        let mut ctx = make_ctx();
+        for i in 0u64..65 {
+            ctx.frame_seq = i;
+            take_frame_snapshot(&mut ctx);
+        }
+        // Must never exceed 64
+        assert_eq!(ctx.debug_frames.len(), 64);
+        // Oldest (frame_id=0) must have been evicted
+        assert_ne!(ctx.debug_frames.front().unwrap().frame_id, 0);
+        // Newest (frame_id=64) must be at the back
+        assert_eq!(ctx.debug_frames.back().unwrap().frame_id, 64);
+    }
+
+    // ---- Edge case: clear_traces also clears frame ring --------------------
+
+    #[test]
+    fn test_clear_traces_also_clears_frames() {
+        let mut ctx = make_ctx();
+        take_frame_snapshot(&mut ctx);
+        assert!(!ctx.debug_frames.is_empty());
+        clear_traces(&mut ctx);
+        assert!(ctx.debug_frames.is_empty());
+        for ring in &ctx.debug_traces {
+            assert!(ring.is_empty());
+        }
+    }
+
+    // ---- Edge case: snapshot JSON completeness -----------------------------
+
+    #[test]
+    fn test_snapshot_json_contains_overlay_and_trace_flags() {
+        let mut ctx = make_ctx();
+        ctx.debug_overlay_flags = overlay_flags::BOUNDS | overlay_flags::PERF;
+        ctx.debug_trace_flags = 0x07;
+        let json = build_snapshot_json(&ctx).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed["overlay_flags"].as_u64().unwrap(),
+            (overlay_flags::BOUNDS | overlay_flags::PERF) as u64
+        );
+        assert_eq!(parsed["trace_flags"].as_u64().unwrap(), 0x07u64);
+    }
+
+    #[test]
+    fn test_snapshot_json_widget_tree_empty_without_root() {
+        let ctx = make_ctx();
+        // No root set → widget_tree must be an empty array
+        let json = build_snapshot_json(&ctx).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let tree = parsed["widget_tree"].as_array().unwrap();
+        assert!(tree.is_empty(), "widget_tree should be empty when no root is set");
+    }
+
+    #[test]
+    fn test_snapshot_json_transcript_anchors_is_array() {
+        let ctx = make_ctx();
+        let json = build_snapshot_json(&ctx).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["transcript_anchors"].is_array());
+    }
+
+    // ---- Edge case: trace JSON filters correctly by kind -------------------
+
+    #[test]
+    fn test_trace_json_filters_by_kind() {
+        let mut ctx = make_ctx();
+        push_trace(&mut ctx, trace_kind::EVENT, 1, "event".to_string());
+        push_trace(&mut ctx, trace_kind::FOCUS, 2, "focus".to_string());
+        push_trace(&mut ctx, trace_kind::DIRTY, 3, "dirty".to_string());
+        push_trace(&mut ctx, trace_kind::VIEWPORT, 4, "viewport".to_string());
+
+        let focus_json = build_trace_json(&ctx, trace_kind::FOCUS).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&focus_json).unwrap();
+        let arr = parsed.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["kind"].as_u64().unwrap(), trace_kind::FOCUS as u64);
+        assert_eq!(arr[0]["target"].as_u64().unwrap(), 2);
+    }
+
+    // ---- Edge case: trace entry JSON schema --------------------------------
+
+    #[test]
+    fn test_trace_entries_have_required_fields() {
+        let mut ctx = make_ctx();
+        push_trace(&mut ctx, trace_kind::EVENT, 42, "Key(Space)".to_string());
+        let json = build_trace_json(&ctx, trace_kind::EVENT).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let entry = &parsed.as_array().unwrap()[0];
+        assert!(entry.get("seq").is_some(), "missing 'seq'");
+        assert!(entry.get("kind").is_some(), "missing 'kind'");
+        assert!(entry.get("target").is_some(), "missing 'target'");
+        assert!(entry.get("detail").is_some(), "missing 'detail'");
+        assert_eq!(entry["target"].as_u64().unwrap(), 42);
+        assert_eq!(entry["detail"].as_str().unwrap(), "Key(Space)");
+    }
+
+    // ---- Edge case: trace bounded at exact boundary ------------------------
+
+    #[test]
+    fn test_trace_bounded_at_exact_boundary() {
+        let mut ctx = make_ctx();
+        for i in 0..DEBUG_TRACE_MAX {
+            push_trace(&mut ctx, trace_kind::DIRTY, 1, format!("dirty {i}"));
+        }
+        assert_eq!(ctx.debug_traces[trace_kind::DIRTY as usize].len(), DEBUG_TRACE_MAX);
+
+        // One more entry: oldest evicted, count stays at max
+        push_trace(&mut ctx, trace_kind::DIRTY, 1, "overflow".to_string());
+        assert_eq!(ctx.debug_traces[trace_kind::DIRTY as usize].len(), DEBUG_TRACE_MAX);
+        // Newest entry is at back
+        let last = ctx.debug_traces[trace_kind::DIRTY as usize].back().unwrap();
+        assert_eq!(last.detail, "overflow");
+    }
+
+    // ---- Edge case: overlay PERF writes to back buffer row 0 ---------------
+
+    #[test]
+    fn test_overlay_perf_writes_to_back_buffer_row_zero() {
+        let mut ctx = make_ctx();
+        ctx.debug_overlay_flags = overlay_flags::PERF;
+        ctx.perf_layout_us = 1234;
+        ctx.perf_render_us = 5678;
+        ctx.perf_diff_cells = 99;
+        ctx.perf_write_runs = 7;
+        render_overlay(&mut ctx);
+        // PERF writes perf_str characters starting at (0, 0)
+        let cell = ctx.back_buffer.get(0, 0).unwrap();
+        // The perf string starts with "layout:", so first char is 'l'
+        assert_eq!(cell.ch, 'l', "PERF overlay should write perf string at (0,0)");
+    }
+
+    // ---- Edge case: overlay with no nodes does not panic -------------------
+
+    #[test]
+    fn test_overlay_with_no_nodes_does_not_panic() {
+        let mut ctx = make_ctx();
+        ctx.debug_overlay_flags = overlay_flags::BOUNDS
+            | overlay_flags::FOCUS
+            | overlay_flags::DIRTY
+            | overlay_flags::ANCHORS;
+        // render_overlay with no nodes should be a no-op, not a panic
+        render_overlay(&mut ctx);
+    }
+
+    // ---- Edge case: snapshot all fields are correct types ------------------
+
+    #[test]
+    fn test_snapshot_json_numeric_fields_are_numbers() {
+        let mut ctx = make_ctx();
+        ctx.frame_seq = 7;
+        ctx.perf_diff_cells = 3;
+        ctx.perf_write_runs = 5;
+        take_frame_snapshot(&mut ctx);
+        let json = build_snapshot_json(&ctx).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed["frame_id"].is_number(), "frame_id must be a number");
+        assert!(parsed["focused"].is_number(), "focused must be a number");
+        assert!(parsed["dirty_nodes"].is_number(), "dirty_nodes must be a number");
+        assert!(parsed["diff_cells"].is_number(), "diff_cells must be a number");
+        assert!(parsed["write_runs"].is_number(), "write_runs must be a number");
+        assert!(parsed["overlay_flags"].is_number(), "overlay_flags must be a number");
+        assert!(parsed["trace_flags"].is_number(), "trace_flags must be a number");
     }
 }
