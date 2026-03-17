@@ -109,17 +109,17 @@ export async function createDevSession(
 		});
 
 		// Track leaked handles for the root widget.
-		// Use an unregister token so we can suppress the callback on clean shutdown.
-		const rootToken = {};
-		leakRegistry.register(root, root.handle, rootToken);
+		// root is used as its own unregister token so we can suppress the false-positive GC
+		// warning after clean shutdown (root is strongly referenced until the scope exits).
+		leakRegistry.register(root, root.handle, root);
 
 		// Run the event loop
 		await app.run({
 			debugOverlay: overlayFlags !== 0,
 		});
 
-		// Root is intentionally alive until shutdown — suppress the false-positive GC warning.
-		leakRegistry.unregister(rootToken);
+		// Root lived its full lifetime — suppress the GC warning.
+		leakRegistry.unregister(root);
 
 	} finally {
 		process.off("SIGINT", sigintHandler);

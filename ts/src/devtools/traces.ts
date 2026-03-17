@@ -28,7 +28,6 @@ export class TraceViewer {
 
 	/** Fetch all trace entries for a given kind. */
 	fetchTraces(kind: TraceKind): TraceEntry[] {
-		const parsed = JSON.parse(this.app.debugGetTrace(kind));
-		return Array.isArray(parsed) ? (parsed as TraceEntry[]) : [];
+		return JSON.parse(this.app.debugGetTrace(kind)) as TraceEntry[];
 	}
 }
