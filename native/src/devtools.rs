@@ -296,7 +296,7 @@ fn overlay_cell(ch: char, color: u32) -> Cell {
     }
 }
 
-/// Render all active overlay markers into the back buffer.
+/// Render all active overlay markers into the front buffer.
 /// Must NOT re-run layout. Reads taffy layout results directly.
 /// Called after the normal render pass, before diff.
 pub(crate) fn render_overlay(ctx: &mut TuiContext) {
@@ -342,16 +342,16 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
 
         // BOUNDS: draw corner markers at node rect
         if flags & overlay_flags::BOUNDS != 0 {
-            ctx.back_buffer.set(x, y, overlay_cell('┌', OVERLAY_COLOR));
+            ctx.front_buffer.set(x, y, overlay_cell('┌', OVERLAY_COLOR));
             if w > 1 {
-                ctx.back_buffer
+                ctx.front_buffer
                     .set(x + w - 1, y, overlay_cell('┐', OVERLAY_COLOR));
             }
             if h > 1 {
-                ctx.back_buffer
+                ctx.front_buffer
                     .set(x, y + h - 1, overlay_cell('└', OVERLAY_COLOR));
                 if w > 1 {
-                    ctx.back_buffer
+                    ctx.front_buffer
                         .set(x + w - 1, y + h - 1, overlay_cell('┘', OVERLAY_COLOR));
                 }
             }
@@ -359,12 +359,12 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
 
         // DIRTY: draw · at dirty node top-left
         if flags & overlay_flags::DIRTY != 0 && dirty {
-            ctx.back_buffer.set(x, y, overlay_cell('·', OVERLAY_COLOR));
+            ctx.front_buffer.set(x, y, overlay_cell('·', OVERLAY_COLOR));
         }
 
         // FOCUS: draw > at focused node top-left
         if flags & overlay_flags::FOCUS != 0 && ctx.focused == Some(handle) {
-            ctx.back_buffer.set(x, y, overlay_cell('▶', OVERLAY_COLOR));
+            ctx.front_buffer.set(x, y, overlay_cell('▶', OVERLAY_COLOR));
         }
 
         // ANCHORS: draw anchor marker on Transcript nodes
@@ -393,7 +393,7 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
                     OVERLAY_COLOR
                 };
                 if w > 1 {
-                    ctx.back_buffer
+                    ctx.front_buffer
                         .set(x + 1, y, overlay_cell(anchor_ch, anchor_color));
                 }
             }
@@ -410,12 +410,12 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
             ctx.perf_write_runs,
             ctx.nodes.len(),
         );
-        let bw = ctx.back_buffer.width as usize;
+        let bw = ctx.front_buffer.width as usize;
         for (i, ch) in perf_str.chars().enumerate() {
             if i >= bw {
                 break;
             }
-            ctx.back_buffer.set(
+            ctx.front_buffer.set(
                 i as u16,
                 0,
                 Cell {
@@ -807,7 +807,7 @@ mod tests {
         ctx.perf_write_runs = 7;
         render_overlay(&mut ctx);
         // PERF writes perf_str characters starting at (0, 0)
-        let cell = ctx.back_buffer.get(0, 0).unwrap();
+        let cell = ctx.front_buffer.get(0, 0).unwrap();
         // The perf string starts with "layout:", so first char is 'l'
         assert_eq!(
             cell.ch, 'l',

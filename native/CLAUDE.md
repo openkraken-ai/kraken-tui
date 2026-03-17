@@ -10,7 +10,7 @@ Rust cdylib that owns all state, layout, rendering, events, and text parsing. Se
 cargo build --manifest-path native/Cargo.toml --release   # Shared library (required before TS)
 cargo build --manifest-path native/Cargo.toml              # Debug build
 cargo check --manifest-path native/Cargo.toml              # Type-check only
-cargo test  --manifest-path native/Cargo.toml              # Unit tests (267 tests)
+cargo test  --manifest-path native/Cargo.toml              # Unit tests (356 tests)
 cargo test  --manifest-path native/Cargo.toml <name> -- --exact   # Single test
 cargo fmt   --manifest-path native/Cargo.toml              # Format
 cargo clippy --manifest-path native/Cargo.toml             # Lint
@@ -22,9 +22,9 @@ cargo clippy --manifest-path native/Cargo.toml             # Lint
 
 | File | Responsibility |
 |------|----------------|
-| `lib.rs` | `extern "C"` FFI entry points **only** (142 functions). Zero logic — delegates via `ffi_wrap()`/`ffi_wrap_handle()`. |
+| `lib.rs` | `extern "C"` FFI entry points **only** (160 functions). Zero logic — delegates via `ffi_wrap()`/`ffi_wrap_handle()`. |
 | `context.rs` | `TuiContext` struct. `OnceLock<RwLock<TuiContext>>` for safe global state (ADR-T16). Thread-affinity enforcement via `OWNER_THREAD`. |
-| `types.rs` | All shared enums (`NodeType` with 10 variants, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`, `AccessibilityRole`), `TuiEvent` struct, key code constants. |
+| `types.rs` | All shared enums (`NodeType` with 12 variants, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`, `AccessibilityRole`), `TuiEvent` struct, key code constants. |
 | `tree.rs` | Handle allocation (`next_handle++`, never recycled), node CRUD, parent-child, dirty-flag propagation. `destroy_subtree()` (ADR-T17), `insert_child()` (ADR-T18). |
 | `layout.rs` | Taffy integration: `tui_set_layout_*` → read-modify-write on Taffy `Style` (ADR-T04). Hit-testing via computed rectangles. |
 | `style.rs` | `VisualStyle` per node. Color encoding (u32 tagged: 0x00=default, 0x01=RGB, 0x02=indexed). Style mask bits (ADR-T12). `resolve_style()` with 4-level precedence (ADR-T21). |
@@ -92,8 +92,8 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit. R
 
 ## Current State
 
-- 142 FFI exports. 267 unit tests passing. Zero clippy warnings.
-- 10 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay.
+- 160 FFI exports. 356 unit tests passing. Zero clippy warnings.
+- 12 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay, Transcript, SplitPane.
 - Handles: monotonic u32, never recycled. Handle 0 = invalid sentinel.
 - Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` (ADR-T16) — no `static mut`.
 - Zero TODO/FIXME markers in codebase.
