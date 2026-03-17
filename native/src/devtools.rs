@@ -43,7 +43,12 @@ pub(crate) fn push_trace(ctx: &mut TuiContext, kind: u8, target: u32, detail: St
     if ring.len() >= DEBUG_TRACE_MAX {
         ring.pop_front();
     }
-    ring.push_back(DebugTraceEntry { seq, kind, target, detail });
+    ring.push_back(DebugTraceEntry {
+        seq,
+        kind,
+        target,
+        detail,
+    });
 }
 
 /// Clear all trace rings.
@@ -140,7 +145,12 @@ struct DebugSnapshotJson<'a> {
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
-fn build_widget_tree(ctx: &TuiContext, handle: u32, parent_x: i32, parent_y: i32) -> WidgetNodeJson {
+fn build_widget_tree(
+    ctx: &TuiContext,
+    handle: u32,
+    parent_x: i32,
+    parent_y: i32,
+) -> WidgetNodeJson {
     let node = match ctx.nodes.get(&handle) {
         Some(n) => n,
         None => {
@@ -203,7 +213,11 @@ pub(crate) fn build_snapshot_json(ctx: &TuiContext) -> Result<String, String> {
         .values()
         .filter_map(|n| n.transcript_state.as_ref())
         .fold((0u32, 0u32, false), |(b, u, t), ts| {
-            (b + ts.blocks.len() as u32, u + ts.unread_count, t || ts.tail_attached)
+            (
+                b + ts.blocks.len() as u32,
+                u + ts.unread_count,
+                t || ts.tail_attached,
+            )
         });
 
     let widget_tree = if let Some(root) = ctx.root {
@@ -299,7 +313,13 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
                 Some(n) => n,
                 None => continue,
             };
-            (node.taffy_node, node.dirty, node.node_type, node.visible, node.children.clone())
+            (
+                node.taffy_node,
+                node.dirty,
+                node.node_type,
+                node.visible,
+                node.children.clone(),
+            )
         };
 
         if !visible {
@@ -324,12 +344,15 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
         if flags & overlay_flags::BOUNDS != 0 {
             ctx.back_buffer.set(x, y, overlay_cell('┌', OVERLAY_COLOR));
             if w > 1 {
-                ctx.back_buffer.set(x + w - 1, y, overlay_cell('┐', OVERLAY_COLOR));
+                ctx.back_buffer
+                    .set(x + w - 1, y, overlay_cell('┐', OVERLAY_COLOR));
             }
             if h > 1 {
-                ctx.back_buffer.set(x, y + h - 1, overlay_cell('└', OVERLAY_COLOR));
+                ctx.back_buffer
+                    .set(x, y + h - 1, overlay_cell('└', OVERLAY_COLOR));
                 if w > 1 {
-                    ctx.back_buffer.set(x + w - 1, y + h - 1, overlay_cell('┘', OVERLAY_COLOR));
+                    ctx.back_buffer
+                        .set(x + w - 1, y + h - 1, overlay_cell('┘', OVERLAY_COLOR));
                 }
             }
         }
@@ -366,9 +389,14 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
                     ('?', false)
                 };
                 let _ = children; // suppress unused warning
-                let anchor_color = if tail { OVERLAY_PERF_COLOR } else { OVERLAY_COLOR };
+                let anchor_color = if tail {
+                    OVERLAY_PERF_COLOR
+                } else {
+                    OVERLAY_COLOR
+                };
                 if w > 1 {
-                    ctx.back_buffer.set(x + 1, y, overlay_cell(anchor_ch, anchor_color));
+                    ctx.back_buffer
+                        .set(x + 1, y, overlay_cell(anchor_ch, anchor_color));
                 }
             }
         }
@@ -389,12 +417,16 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
             if i >= bw {
                 break;
             }
-            ctx.back_buffer.set(i as u16, 0, Cell {
-                ch,
-                fg: OVERLAY_PERF_COLOR,
-                bg: 0,
-                attrs: CellAttrs::empty(),
-            });
+            ctx.back_buffer.set(
+                i as u16,
+                0,
+                Cell {
+                    ch,
+                    fg: OVERLAY_PERF_COLOR,
+                    bg: 0,
+                    attrs: CellAttrs::empty(),
+                },
+            );
         }
     }
 }
@@ -626,8 +658,14 @@ mod tests {
         // seq values: EVENT→0, FOCUS→1, EVENT→2 (global counter)
         assert_eq!(ev_seqs.len(), 2);
         assert_eq!(foc_seqs.len(), 1);
-        assert!(foc_seqs[0] > ev_seqs[0], "FOCUS seq must be after first EVENT seq");
-        assert!(foc_seqs[0] < ev_seqs[1], "FOCUS seq must be before second EVENT seq");
+        assert!(
+            foc_seqs[0] > ev_seqs[0],
+            "FOCUS seq must be after first EVENT seq"
+        );
+        assert!(
+            foc_seqs[0] < ev_seqs[1],
+            "FOCUS seq must be before second EVENT seq"
+        );
         // Strictly increasing
         assert!(ev_seqs[1] > ev_seqs[0]);
     }
@@ -686,7 +724,10 @@ mod tests {
         let json = build_snapshot_json(&ctx).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         let tree = parsed["widget_tree"].as_array().unwrap();
-        assert!(tree.is_empty(), "widget_tree should be empty when no root is set");
+        assert!(
+            tree.is_empty(),
+            "widget_tree should be empty when no root is set"
+        );
     }
 
     #[test]
@@ -740,11 +781,17 @@ mod tests {
         for i in 0..DEBUG_TRACE_MAX {
             push_trace(&mut ctx, trace_kind::DIRTY, 1, format!("dirty {i}"));
         }
-        assert_eq!(ctx.debug_traces[trace_kind::DIRTY as usize].len(), DEBUG_TRACE_MAX);
+        assert_eq!(
+            ctx.debug_traces[trace_kind::DIRTY as usize].len(),
+            DEBUG_TRACE_MAX
+        );
 
         // One more entry: oldest evicted, count stays at max
         push_trace(&mut ctx, trace_kind::DIRTY, 1, "overflow".to_string());
-        assert_eq!(ctx.debug_traces[trace_kind::DIRTY as usize].len(), DEBUG_TRACE_MAX);
+        assert_eq!(
+            ctx.debug_traces[trace_kind::DIRTY as usize].len(),
+            DEBUG_TRACE_MAX
+        );
         // Newest entry is at back
         let last = ctx.debug_traces[trace_kind::DIRTY as usize].back().unwrap();
         assert_eq!(last.detail, "overflow");
@@ -764,7 +811,10 @@ mod tests {
         // PERF writes perf_str characters starting at (0, 0)
         let cell = ctx.back_buffer.get(0, 0).unwrap();
         // The perf string starts with "layout:", so first char is 'l'
-        assert_eq!(cell.ch, 'l', "PERF overlay should write perf string at (0,0)");
+        assert_eq!(
+            cell.ch, 'l',
+            "PERF overlay should write perf string at (0,0)"
+        );
     }
 
     // ---- Edge case: overlay with no nodes does not panic -------------------
@@ -793,10 +843,25 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed["frame_id"].is_number(), "frame_id must be a number");
         assert!(parsed["focused"].is_number(), "focused must be a number");
-        assert!(parsed["dirty_nodes"].is_number(), "dirty_nodes must be a number");
-        assert!(parsed["diff_cells"].is_number(), "diff_cells must be a number");
-        assert!(parsed["write_runs"].is_number(), "write_runs must be a number");
-        assert!(parsed["overlay_flags"].is_number(), "overlay_flags must be a number");
-        assert!(parsed["trace_flags"].is_number(), "trace_flags must be a number");
+        assert!(
+            parsed["dirty_nodes"].is_number(),
+            "dirty_nodes must be a number"
+        );
+        assert!(
+            parsed["diff_cells"].is_number(),
+            "diff_cells must be a number"
+        );
+        assert!(
+            parsed["write_runs"].is_number(),
+            "write_runs must be a number"
+        );
+        assert!(
+            parsed["overlay_flags"].is_number(),
+            "overlay_flags must be a number"
+        );
+        assert!(
+            parsed["trace_flags"].is_number(),
+            "trace_flags must be a number"
+        );
     }
 }

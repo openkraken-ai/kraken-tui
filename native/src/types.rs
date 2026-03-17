@@ -2,8 +2,8 @@
 //!
 //! All types that cross module boundaries or define the FFI data model live here.
 
-use std::collections::{HashMap, VecDeque};
 use serde::Serialize;
+use std::collections::{HashMap, VecDeque};
 
 #[allow(unused)]
 use bitflags::bitflags;

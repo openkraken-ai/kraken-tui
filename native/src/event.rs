@@ -126,7 +126,12 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     } else {
                         format!("Key(0x{code:04x})")
                     };
-                    crate::devtools::push_trace(ctx, crate::types::trace_kind::EVENT, target, detail);
+                    crate::devtools::push_trace(
+                        ctx,
+                        crate::types::trace_kind::EVENT,
+                        target,
+                        detail,
+                    );
                 }
                 count += 1;
             }
@@ -162,7 +167,12 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                     // Trace: record focus change (ADR-T34)
                                     if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
                                         let detail = format!("Focus({old_focus}->{target})");
-                                        crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, target, detail);
+                                        crate::devtools::push_trace(
+                                            ctx,
+                                            crate::types::trace_kind::FOCUS,
+                                            target,
+                                            detail,
+                                        );
                                     }
                                     maybe_emit_accessibility_event(ctx, target);
                                 }
