@@ -207,6 +207,15 @@ const lib = dlopen(LIB_PATH, {
 	tui_transcript_get_follow_mode:{ args: ["u32"] as FFIType[],                                 returns: "i32" as const },
 	tui_transcript_mark_read:     { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_get_unread_count:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
+
+	// Debug and Devtools (ADR-T34, TechSpec §4.3.3)
+	tui_debug_set_overlay:         { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_debug_set_trace_flags:     { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_debug_get_snapshot_len:    { args: [] as FFIType[],                                     returns: "i32" as const },
+	tui_debug_get_snapshot:        { args: ["ptr", "u32"] as FFIType[],                         returns: "i32" as const },
+	tui_debug_get_trace_len:       { args: ["u8"] as FFIType[],                                 returns: "i32" as const },
+	tui_debug_get_trace:           { args: ["u8", "ptr", "u32"] as FFIType[],                   returns: "i32" as const },
+	tui_debug_clear_traces:        { args: [] as FFIType[],                                     returns: "i32" as const },
 });
 
 const ffi = lib.symbols;
@@ -2870,6 +2879,107 @@ describe("FFI integration", () => {
 			}
 			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
 			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// =========================================================================
+	// Devtools / Debug FFI (ADR-T34, TechSpec §4.3.3)
+	// =========================================================================
+
+	describe("devtools FFI", () => {
+		test("tui_debug_set_overlay round-trips flags", () => {
+			expect(ffi.tui_debug_set_overlay(0x03)).toBe(0); // BOUNDS|FOCUS
+			expect(ffi.tui_debug_set_overlay(0)).toBe(0);    // clear
+		});
+
+		test("tui_debug_set_trace_flags round-trips flags", () => {
+			expect(ffi.tui_debug_set_trace_flags(0x0f)).toBe(0); // all traces
+			expect(ffi.tui_debug_set_trace_flags(0)).toBe(0);    // clear
+		});
+
+		test("tui_debug_get_snapshot_len returns positive after init", () => {
+			ffi.tui_set_debug(1);
+			const len = ffi.tui_debug_get_snapshot_len();
+			expect(len).toBeGreaterThan(0);
+			ffi.tui_set_debug(0);
+		});
+
+		test("tui_debug_get_snapshot returns valid JSON", () => {
+			ffi.tui_set_debug(1);
+			const len = ffi.tui_debug_get_snapshot_len();
+			expect(len).toBeGreaterThan(0);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_snapshot(buf, len);
+			expect(written).toBeGreaterThan(0);
+			const json = buf.slice(0, written).toString("utf8");
+			const parsed = JSON.parse(json);
+			expect(parsed).toHaveProperty("frame_id");
+			expect(parsed).toHaveProperty("focused");
+			expect(parsed).toHaveProperty("widget_tree");
+			expect(parsed).toHaveProperty("transcript_anchors");
+			ffi.tui_set_debug(0);
+		});
+
+		test("tui_debug_get_trace_len returns at least 2 bytes ([])", () => {
+			ffi.tui_debug_clear_traces();
+			const len = ffi.tui_debug_get_trace_len(0); // EVENT kind
+			expect(len).toBeGreaterThanOrEqual(2); // at minimum "[]"
+		});
+
+		test("tui_debug_get_trace returns [] JSON with no traces", () => {
+			ffi.tui_debug_clear_traces();
+			const len = ffi.tui_debug_get_trace_len(0);
+			const buf = Buffer.alloc(len);
+			const written = ffi.tui_debug_get_trace(0, buf, len);
+			const json = buf.slice(0, written).toString("utf8");
+			const parsed = JSON.parse(json);
+			expect(Array.isArray(parsed)).toBe(true);
+		});
+
+		test("tui_debug_clear_traces returns success", () => {
+			expect(ffi.tui_debug_clear_traces()).toBe(0);
+		});
+
+		test("perf counter 14 (transcript block count) returns bigint >= 0", () => {
+			const val = ffi.tui_get_perf_counter(14);
+			expect(typeof val).toBe("bigint");
+			expect(val).toBeGreaterThanOrEqual(0n);
+		});
+
+		test("perf counter 15 (transcript visible rows) returns bigint", () => {
+			expect(typeof ffi.tui_get_perf_counter(15)).toBe("bigint");
+		});
+
+		test("perf counter 16 (transcript unread count) returns bigint", () => {
+			expect(typeof ffi.tui_get_perf_counter(16)).toBe("bigint");
+		});
+
+		test("perf counter 17 (debug trace depth) returns 0 after clear", () => {
+			ffi.tui_debug_clear_traces();
+			expect(ffi.tui_get_perf_counter(17)).toBe(0n);
+		});
+
+		test("perf counter 18 (transcript tail attached) returns bigint", () => {
+			expect(typeof ffi.tui_get_perf_counter(18)).toBe("bigint");
+		});
+
+		test("trace flags off: no traces captured", () => {
+			ffi.tui_debug_clear_traces();
+			ffi.tui_set_debug(1);
+			ffi.tui_debug_set_trace_flags(0); // no flags
+			const depth = ffi.tui_get_perf_counter(17);
+			expect(depth).toBe(0n);
+			ffi.tui_set_debug(0);
+		});
+
+		test("snapshot JSON snapshot_len matches actual data", () => {
+			ffi.tui_set_debug(1);
+			const len1 = ffi.tui_debug_get_snapshot_len();
+			const buf = Buffer.alloc(len1);
+			const written = ffi.tui_debug_get_snapshot(buf, len1);
+			// written bytes should match what len query returned
+			expect(written).toBe(len1);
+			ffi.tui_set_debug(0);
 		});
 	});
 });

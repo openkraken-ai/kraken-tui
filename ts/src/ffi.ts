@@ -564,6 +564,36 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+
+	// Debug and Devtools (ADR-T34, TechSpec §4.3.3)
+	tui_debug_set_overlay: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_set_trace_flags: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_get_snapshot_len: {
+		args: [] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_get_snapshot: {
+		args: ["ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_get_trace_len: {
+		args: ["u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_get_trace: {
+		args: ["u8", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_debug_clear_traces: {
+		args: [] as FFIType[],
+		returns: "i32" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);

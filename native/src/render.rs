@@ -180,10 +180,15 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     ctx.perf_write_runs = metrics.run_count;
     ctx.perf_style_deltas = metrics.style_delta_count;
 
-    // 6. Swap buffers
+    // 6. Overlay rendering (ADR-T34): draw markers into back_buffer before diff swap
+    if ctx.debug_mode && ctx.debug_overlay_flags != 0 {
+        crate::devtools::render_overlay(ctx);
+    }
+
+    // 7. Swap buffers
     std::mem::swap(&mut ctx.front_buffer, &mut ctx.back_buffer);
 
-    // 7. Clear dirty flags
+    // 8. Clear dirty flags
     crate::tree::clear_dirty_flags(ctx);
 
     ctx.perf_render_us = start.elapsed().as_micros() as u64;
@@ -191,6 +196,12 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
         "render: {}μs, {} cells changed",
         ctx.perf_render_us, ctx.perf_diff_cells
     ));
+
+    // 9. Frame snapshot (ADR-T34): capture after render metrics are finalized
+    if ctx.debug_mode {
+        crate::devtools::take_frame_snapshot(ctx);
+        ctx.frame_seq += 1;
+    }
 
     Ok(())
 }
@@ -505,6 +516,9 @@ fn render_node(
             render_transcript(
                 ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
             );
+        }
+        NodeType::SplitPane => {
+            // SplitPane renders via its children; no content of its own.
         }
     }
 

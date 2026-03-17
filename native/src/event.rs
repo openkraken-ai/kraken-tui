@@ -119,6 +119,15 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
 
                 ctx.event_buffer
                     .push(TuiEvent::key(target, code, modifiers, codepoint));
+                // Trace: record key event (ADR-T34)
+                if ctx.debug_mode && (ctx.debug_trace_flags & 0x1) != 0 {
+                    let detail = if character != '\0' {
+                        format!("Key(0x{code:04x},'{character}')")
+                    } else {
+                        format!("Key(0x{code:04x})")
+                    };
+                    crate::devtools::push_trace(ctx, crate::types::trace_kind::EVENT, target, detail);
+                }
                 count += 1;
             }
             TerminalInputEvent::Mouse {
@@ -150,6 +159,11 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                     ctx.focused = Some(target);
                                     ctx.event_buffer
                                         .push(TuiEvent::focus_change(old_focus, target));
+                                    // Trace: record focus change (ADR-T34)
+                                    if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+                                        let detail = format!("Focus({old_focus}->{target})");
+                                        crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, target, detail);
+                                    }
                                     maybe_emit_accessibility_event(ctx, target);
                                 }
                             }
@@ -737,6 +751,11 @@ pub(crate) fn focus_next(ctx: &mut TuiContext) {
 
     ctx.event_buffer
         .push(TuiEvent::focus_change(old_focus, new_focus));
+    // Trace: record focus change (ADR-T34)
+    if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+        let detail = format!("Focus({old_focus}->{new_focus})");
+        crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, new_focus, detail);
+    }
     maybe_emit_accessibility_event(ctx, new_focus);
 }
 
@@ -764,6 +783,11 @@ pub(crate) fn focus_prev(ctx: &mut TuiContext) {
 
     ctx.event_buffer
         .push(TuiEvent::focus_change(old_focus, new_focus));
+    // Trace: record focus change (ADR-T34)
+    if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+        let detail = format!("Focus({old_focus}->{new_focus})");
+        crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, new_focus, detail);
+    }
     maybe_emit_accessibility_event(ctx, new_focus);
 }
 

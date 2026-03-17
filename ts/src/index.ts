@@ -34,6 +34,23 @@ export { AnimProp, Easing } from "./animation-constants";
 export { EventType, KeyCode, Modifier, NodeType, AccessibilityRole } from "./ffi/structs";
 export type { KrakenEvent, KrakenEventType } from "./events";
 
+// Dev Mode and Devtools (ADR-T34)
+export {
+	createDevSession,
+	OVERLAY_FLAGS,
+	TRACE_FLAGS,
+} from "./dev";
+export type { DevSessionOptions, OverlayName } from "./dev";
+export { WidgetInspector } from "./devtools/inspector";
+export type {
+	WidgetNode,
+	TranscriptAnchor,
+	DebugSnapshot,
+} from "./devtools/inspector";
+export { PerfHud, PERF_COUNTER_NAMES, PERF_COUNTER_COUNT } from "./devtools/hud";
+export { TraceViewer, TRACE_KIND } from "./devtools/traces";
+export type { TraceEntry, TraceKind } from "./devtools/traces";
+
 // JSX runtime (v2 — ADR-T20)
 export { jsx, jsxs, Fragment } from "./jsx/jsx-runtime";
 export { signal, computed, effect, batch } from "@preact/signals-core";

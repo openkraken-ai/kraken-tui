@@ -3,7 +3,7 @@
 //! The context owns all mutable state for the TUI system.
 //! A single global instance is managed via `tui_init()` / `tui_shutdown()`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 #[cfg(not(test))]
@@ -13,7 +13,7 @@ use std::time::Instant;
 use crate::animation::{Animation, ChoreographyGroup};
 use crate::terminal::TerminalBackend;
 use crate::theme::Theme;
-use crate::types::{Buffer, TextCache, TuiEvent, TuiNode};
+use crate::types::{Buffer, DebugFrameSnapshot, DebugTraceEntry, TextCache, TuiEvent, TuiNode};
 use crate::writer::WriterState;
 
 pub struct TuiContext {
@@ -66,6 +66,15 @@ pub struct TuiContext {
     pub perf_text_wrap_us: u64,
     pub perf_text_cache_hits: u32,
     pub perf_text_cache_misses: u32,
+
+    // Dev Mode (ADR-T34)
+    pub debug_overlay_flags: u32,
+    pub debug_trace_flags: u32,
+    /// Per-kind bounded trace rings: [events, focus, dirty, viewport]
+    pub debug_traces: [VecDeque<DebugTraceEntry>; 4],
+    pub debug_frames: VecDeque<DebugFrameSnapshot>,
+    pub next_debug_seq: u64,
+    pub frame_seq: u64,
 }
 
 // SAFETY: ADR-T16 preserves Kraken TUI's single-threaded execution model.
@@ -124,6 +133,18 @@ impl TuiContext {
             perf_text_wrap_us: 0,
             perf_text_cache_hits: 0,
             perf_text_cache_misses: 0,
+
+            debug_overlay_flags: 0,
+            debug_trace_flags: 0,
+            debug_traces: [
+                VecDeque::new(),
+                VecDeque::new(),
+                VecDeque::new(),
+                VecDeque::new(),
+            ],
+            debug_frames: VecDeque::new(),
+            next_debug_seq: 0,
+            frame_seq: 0,
         }
     }
 
