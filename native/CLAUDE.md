@@ -87,6 +87,8 @@ Every `tui_set_style_*` call must also set the corresponding `style_mask` bit. R
 | unicode-width | 0.2 | Display cell width |
 | unicode-segmentation | 1.12 | Grapheme cluster iteration |
 | regex | 1 | Pattern matching |
+| serde | 1.0 | Serialization derive macros (debug snapshots, trace JSON) |
+| serde_json | 1.0 | JSON serialization for `tui_debug_get_snapshot` / `tui_debug_get_trace` |
 
 ---
 

@@ -118,7 +118,9 @@ export async function createDevSession(
 			debugOverlay: overlayFlags !== 0,
 		});
 
-		// Root lived its full lifetime — suppress the GC warning.
+		// Root lived its full lifetime — unregister before it goes out of scope so the
+		// finalization callback never fires on a cleanly-shut-down session.
+		// (Addresses the false-positive GC warning noted in wave-3 review; already fixed here.)
 		leakRegistry.unregister(root);
 
 	} finally {
@@ -143,5 +145,5 @@ function overlayNamesToFlags(names: OverlayName[]): number {
 		anchors: OVERLAY_FLAGS.ANCHORS,
 		perf: OVERLAY_FLAGS.PERF,
 	};
-	return names.reduce((f, n) => f | (map[n] ?? 0), 0);
+	return names.reduce((f, n) => f | map[n], 0);
 }
