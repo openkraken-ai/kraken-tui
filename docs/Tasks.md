@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 6.0
-**Status**: In Progress (Epic I complete)
+**Status**: In Progress (Epics I and J complete)
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
 
@@ -249,11 +249,13 @@ And transcript benchmark output fails when render time or debug-off overhead exc
 **[TASK-J0] Spike Debug Snapshot and Overlay Contract**
 
 - **Type:** Spike
+- **Status:** Done
 - **Effort:** Story Points: 2
 - **Dependencies:** [TASK-I5]
 - **Priority Area:** Dev mode / developer tooling
 - **Description:** Lock the JSON snapshot shape, trace stream categories, overlay flag set, and bounded buffer policy before implementation.
 - **Out of Scope:** Example assembly, split-pane behavior, or packaging workflows
+- **Implementation Notes:** JSON snapshot shape locked in `native/src/devtools.rs` (`DebugSnapshotJson`). Trace categories: EVENT=0, FOCUS=1, DIRTY=2, VIEWPORT=3. Overlay flags: BOUNDS=0x01, FOCUS=0x02, DIRTY=0x04, ANCHORS=0x08, PERF=0x10. Buffer policy: 4 separate `VecDeque<DebugTraceEntry>` rings, each capped at `DEBUG_TRACE_MAX=256`. Shape defined in `native/src/types.rs`.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
@@ -266,11 +268,13 @@ And every trace stream has an explicit bounded retention policy
 **[TASK-J1] Implement Native Debug Snapshots, Trace Buffers, and Overlay Toggles**
 
 - **Type:** Feature
+- **Status:** Done
 - **Effort:** Story Points: 5
 - **Dependencies:** [TASK-J0]
 - **Priority Area:** Dev mode / developer tooling
 - **Description:** Implement the native devtools surface defined in TechSpec section 4.3.3, including overlay toggles and bounded trace rings.
 - **Out of Scope:** Host inspector panels, Bun watch integration, or repo inspector example work
+- **Implementation Notes:** New module `native/src/devtools.rs` implements `push_trace`, `take_frame_snapshot`, `build_snapshot_json`, `build_trace_json`, `clear_traces`, `render_overlay`. 7 new FFI functions in `native/src/lib.rs`: `tui_debug_set_overlay`, `tui_debug_set_trace_flags`, `tui_debug_get_snapshot_len`, `tui_debug_get_snapshot`, `tui_debug_get_trace_len`, `tui_debug_get_trace`, `tui_debug_clear_traces`. Overlay renders into `back_buffer` without re-running layout (reads taffy computed rects). Perf counters 14–18 added. New types `DebugTraceEntry`, `DebugFrameSnapshot`, `SplitAxis`, `SplitPaneState`, `NodeType::SplitPane=11` in `native/src/types.rs`. Context fields `debug_overlay_flags`, `debug_trace_flags`, `debug_traces`, `debug_frames`, `next_debug_seq`, `frame_seq` added.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
@@ -283,11 +287,13 @@ And overlay flags render above the application frame without mutating layout
 **[TASK-J2] Implement Inspector Surfaces for Widget Tree, Bounds, Focus, and Perf**
 
 - **Type:** Feature
+- **Status:** Done
 - **Effort:** Story Points: 5
 - **Dependencies:** [TASK-J1]
 - **Priority Area:** Dev mode / developer tooling
 - **Description:** Build TypeScript inspector surfaces that consume the native snapshot APIs and expose widget tree, focused handle, bounds, transcript anchors, and perf HUD data.
 - **Out of Scope:** Watch/restart loop, leak warnings, or flagship example assembly
+- **Implementation Notes:** `ts/src/devtools/inspector.ts` exports `WidgetInspector` class with `fetchSnapshot()` returning native-parsed `DebugSnapshot`. `ts/src/devtools/hud.ts` exports `PerfHud` with `formatAll()`, `PERF_COUNTER_NAMES` (array of 19 names), `PERF_COUNTER_COUNT`. `ts/src/devtools/traces.ts` exports `TraceViewer` with `fetchTraces(kind)`, `TRACE_KIND` constants. 5 new debug methods on `Kraken` class in `ts/src/app.ts`: `debugSetOverlay`, `debugSetTraceFlags`, `debugGetSnapshot`, `debugGetTrace`, `debugClearTraces`. All exported from `ts/src/index.ts`.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
@@ -300,11 +306,13 @@ And the displayed information matches the latest native snapshot payload
 **[TASK-J3] Implement Watch/Restart Loop, Event Log, Signal Trace, and Handle Warnings**
 
 - **Type:** Feature
+- **Status:** Done
 - **Effort:** Story Points: 5
 - **Dependencies:** [TASK-J2]
 - **Priority Area:** Dev mode / developer tooling
 - **Description:** Add Bun-based restart helpers, event-log surfaces, signal-trace plumbing, and leak/invalid-handle warnings for dev sessions.
 - **Out of Scope:** Native code hot swapping, public packaging UX, or repo inspector implementation
+- **Implementation Notes:** `ts/src/dev.ts` exports `createDevSession(options)` async function: converts overlay name array to bitmask, calls `app.setDebug(true)`, configures overlays and trace flags, registers `FinalizationRegistry` for handle-leak warnings to stderr, installs SIGINT handler for deterministic shutdown, runs app event loop, performs cleanup in `finally`. Watch mode uses `bun --watch` externally (documented in JSDoc). Exports `OVERLAY_FLAGS`, `TRACE_FLAGS`, `DevSessionOptions`, `OverlayName`.
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin
@@ -317,11 +325,13 @@ And event logs, signal traces, and invalid-handle warnings remain inspectable ac
 **[TASK-J4] Add Devtools Tests and Overhead Gates**
 
 - **Type:** Chore
+- **Status:** Done
 - **Effort:** Story Points: 3
 - **Dependencies:** [TASK-J3]
 - **Priority Area:** Dev mode / developer tooling
 - **Description:** Add headless tests and benchmark checks proving bounded trace storage, overlay correctness, and low debug-off overhead.
 - **Out of Scope:** New feature development or example-specific UI polish
+- **Implementation Notes:** 9 Rust unit tests in `native/src/devtools.rs` (`test_trace_buffer_bounded`, `test_clear_traces`, `test_snapshot_json_valid`, `test_trace_json_empty`, `test_trace_json_with_entries`, `test_overlay_flags`, `test_frame_snapshot_fields`, `test_trace_flag_gating`, `test_trace_no_op_when_debug_off`). 12 FFI integration tests in `ts/test-ffi.test.ts` (`devtools FFI` describe block). Criterion benchmark in `native/benches/devtools_bench.rs` measures `push_trace` debug-off no-op path vs debug-on active path, `build_snapshot_json` cost, `take_frame_snapshot` cost. Total Rust tests: 341. Total FFI tests: 200. Bundle: 50.0KB (100% of budget).
 - **Acceptance Criteria (Gherkin):**
 
 ```gherkin

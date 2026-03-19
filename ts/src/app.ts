@@ -6,6 +6,7 @@
  */
 
 import { ffi } from "./ffi";
+import { ptr } from "bun:ffi";
 import { checkResult } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
 import { dispatchToJsxHandlers, PERF_ACTIVE_ANIMATIONS } from "./loop";
@@ -157,6 +158,61 @@ export class Kraken {
 	 */
 	getPerfCounter(id: number): bigint {
 		return ffi.tui_get_perf_counter(id);
+	}
+
+	// =========================================================================
+	// Debug / Devtools (ADR-T34, TechSpec §4.3.3)
+	// =========================================================================
+
+	/**
+	 * Set overlay rendering flags. Use overlay_flags constants from dev.ts.
+	 * Bit 0x01=bounds, 0x02=focus, 0x04=dirty, 0x08=anchors, 0x10=perf.
+	 */
+	debugSetOverlay(flags: number): void {
+		checkResult(ffi.tui_debug_set_overlay(flags), "debugSetOverlay");
+	}
+
+	/**
+	 * Set trace capture flags.
+	 * Bit 0x01=events, 0x02=focus, 0x04=dirty, 0x08=viewport.
+	 */
+	debugSetTraceFlags(flags: number): void {
+		checkResult(ffi.tui_debug_set_trace_flags(flags), "debugSetTraceFlags");
+	}
+
+	/**
+	 * Get the current debug snapshot as a JSON string.
+	 * Two-call pattern: query length, allocate, copy.
+	 */
+	debugGetSnapshot(): string {
+		const len = ffi.tui_debug_get_snapshot_len();
+		checkResult(len, "debugGetSnapshot:len");
+		if (len <= 0) return "{}";
+		const buf = Buffer.alloc(len);
+		const written = ffi.tui_debug_get_snapshot(ptr(buf), len);
+		checkResult(written, "debugGetSnapshot");
+		return buf.toString("utf-8", 0, written);
+	}
+
+	/**
+	 * Get trace entries for a given kind as a JSON string.
+	 * kind: 0=event, 1=focus, 2=dirty, 3=viewport
+	 */
+	debugGetTrace(kind: number): string {
+		const len = ffi.tui_debug_get_trace_len(kind);
+		checkResult(len, "debugGetTrace:len");
+		if (len <= 0) return "[]";
+		const buf = Buffer.alloc(len);
+		const written = ffi.tui_debug_get_trace(kind, ptr(buf), len);
+		checkResult(written, "debugGetTrace");
+		return buf.toString("utf-8", 0, written);
+	}
+
+	/**
+	 * Clear all buffered trace entries and frame snapshots.
+	 */
+	debugClearTraces(): void {
+		checkResult(ffi.tui_debug_clear_traces(), "debugClearTraces");
 	}
 
 	/**

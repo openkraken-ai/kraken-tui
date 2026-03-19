@@ -18,6 +18,7 @@
 
 mod animation;
 mod context;
+pub mod devtools;
 mod event;
 #[cfg(test)]
 mod golden;
@@ -2475,6 +2476,32 @@ pub extern "C" fn tui_get_perf_counter(counter_id: u32) -> u64 {
             11 => ctx.perf_text_wrap_us,
             12 => ctx.perf_text_cache_hits as u64,
             13 => ctx.perf_text_cache_misses as u64,
+            // v4 additions (TechSpec §4.5)
+            14 => ctx
+                .nodes
+                .values()
+                .filter_map(|n| n.transcript_state.as_ref())
+                .map(|t| t.blocks.len() as u64)
+                .sum(),
+            15 => ctx
+                .nodes
+                .values()
+                .filter_map(|n| n.transcript_state.as_ref())
+                .map(|t| t.viewport_rows as u64)
+                .sum(),
+            16 => ctx
+                .nodes
+                .values()
+                .filter_map(|n| n.transcript_state.as_ref())
+                .map(|t| t.unread_count as u64)
+                .sum(),
+            17 => ctx.debug_traces.iter().map(|d| d.len() as u64).sum(),
+            18 => ctx
+                .nodes
+                .values()
+                .filter_map(|n| n.transcript_state.as_ref())
+                .filter(|t| t.tail_attached)
+                .count() as u64,
             _ => 0,
         }
     }))
@@ -2487,6 +2514,97 @@ pub extern "C" fn tui_free_string(_ptr: *const u8) {
     // (get_last_error) or caller-provides-buffer (get_content).
     // This function is reserved for future use when the native core
     // allocates strings that the host must free.
+}
+
+// ============================================================================
+// 4.13 Debug and Devtools (ADR-T34, TechSpec §4.3.3)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_debug_set_overlay(flags: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.debug_overlay_flags = flags;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_debug_set_trace_flags(flags: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.debug_trace_flags = flags;
+        Ok(0)
+    })
+}
+
+/// Return the byte length of the current debug snapshot JSON.
+/// Returns -1 on error.
+#[no_mangle]
+pub extern "C" fn tui_debug_get_snapshot_len() -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        let json = devtools::build_snapshot_json(&ctx)?;
+        Ok(json.len() as i32)
+    })
+}
+
+/// Copy the current debug snapshot JSON into caller-provided buffer.
+/// Returns the number of bytes written, or -1 on error.
+#[no_mangle]
+pub extern "C" fn tui_debug_get_snapshot(buffer: *mut u8, buffer_len: u32) -> i32 {
+    ffi_wrap(|| {
+        if buffer.is_null() {
+            return Err("Null buffer pointer".to_string());
+        }
+        let ctx = context_read()?;
+        let json = devtools::build_snapshot_json(&ctx)?;
+        let bytes = json.as_bytes();
+        let copy_len = bytes.len().min(buffer_len as usize);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+        }
+        Ok(copy_len as i32)
+    })
+}
+
+/// Return the byte length of a trace stream JSON for the given kind.
+/// Returns -1 on error.
+#[no_mangle]
+pub extern "C" fn tui_debug_get_trace_len(kind: u8) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        let json = devtools::build_trace_json(&ctx, kind)?;
+        Ok(json.len() as i32)
+    })
+}
+
+/// Copy a trace stream JSON for the given kind into caller-provided buffer.
+/// Returns the number of bytes written, or -1 on error.
+#[no_mangle]
+pub extern "C" fn tui_debug_get_trace(kind: u8, buffer: *mut u8, buffer_len: u32) -> i32 {
+    ffi_wrap(|| {
+        if buffer.is_null() {
+            return Err("Null buffer pointer".to_string());
+        }
+        let ctx = context_read()?;
+        let json = devtools::build_trace_json(&ctx, kind)?;
+        let bytes = json.as_bytes();
+        let copy_len = bytes.len().min(buffer_len as usize);
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, copy_len);
+        }
+        Ok(copy_len as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_debug_clear_traces() -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        devtools::clear_traces(&mut ctx);
+        Ok(0)
+    })
 }
 
 // ============================================================================

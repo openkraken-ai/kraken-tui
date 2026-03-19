@@ -2,6 +2,7 @@
 //!
 //! All types that cross module boundaries or define the FFI data model live here.
 
+use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 
 #[allow(unused)]
@@ -12,7 +13,7 @@ use bitflags::bitflags;
 // ============================================================================
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum NodeType {
     Box = 0,
     Text = 1,
@@ -25,6 +26,7 @@ pub enum NodeType {
     Tabs = 8,
     Overlay = 9,
     Transcript = 10,
+    SplitPane = 11,
 }
 
 impl NodeType {
@@ -41,6 +43,7 @@ impl NodeType {
             8 => Some(Self::Tabs),
             9 => Some(Self::Overlay),
             10 => Some(Self::Transcript),
+            11 => Some(Self::SplitPane),
             _ => None,
         }
     }
@@ -810,6 +813,95 @@ impl Default for TranscriptState {
 }
 
 // ============================================================================
+// SplitPane Types (ADR-T35)
+// ============================================================================
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SplitAxis {
+    Horizontal = 0,
+    Vertical = 1,
+}
+
+impl SplitAxis {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Horizontal),
+            1 => Some(Self::Vertical),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SplitPaneState {
+    pub axis: SplitAxis,
+    pub primary_ratio_permille: u16,
+    pub min_primary: u16,
+    pub min_secondary: u16,
+    pub resize_step: u16,
+    pub resizable: bool,
+}
+
+impl Default for SplitPaneState {
+    fn default() -> Self {
+        Self {
+            axis: SplitAxis::Horizontal,
+            primary_ratio_permille: 500,
+            min_primary: 0,
+            min_secondary: 0,
+            resize_step: 1,
+            resizable: true,
+        }
+    }
+}
+
+// ============================================================================
+// Debug / Devtools Types (ADR-T34)
+// ============================================================================
+
+/// Maximum number of trace entries retained per trace kind.
+pub const DEBUG_TRACE_MAX: usize = 256;
+
+/// Overlay rendering flag bits.
+pub mod overlay_flags {
+    pub const BOUNDS: u32 = 0x01;
+    pub const FOCUS: u32 = 0x02;
+    pub const DIRTY: u32 = 0x04;
+    pub const ANCHORS: u32 = 0x08;
+    pub const PERF: u32 = 0x10;
+}
+
+/// Trace kind discriminants.
+pub mod trace_kind {
+    pub const EVENT: u8 = 0;
+    pub const FOCUS: u8 = 1;
+    pub const DIRTY: u8 = 2;
+    pub const VIEWPORT: u8 = 3;
+    pub const COUNT: usize = 4;
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugTraceEntry {
+    pub seq: u64,
+    pub kind: u8,
+    pub target: u32,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DebugFrameSnapshot {
+    pub frame_id: u64,
+    pub focused: u32,
+    pub dirty_nodes: u32,
+    pub diff_cells: u32,
+    pub write_runs: u32,
+    pub transcript_blocks: u32,
+    pub transcript_unread: u32,
+    pub tail_attached: bool,
+}
+
+// ============================================================================
 // TuiNode
 // ============================================================================
 
@@ -859,6 +951,8 @@ pub struct TuiNode {
     pub overlay_state: Option<OverlayState>,
     // Transcript widget state (ADR-T32)
     pub transcript_state: Option<TranscriptState>,
+    // SplitPane widget state (ADR-T35)
+    pub split_pane_state: Option<SplitPaneState>,
 }
 
 impl TuiNode {
@@ -935,6 +1029,11 @@ impl TuiNode {
             } else {
                 None
             },
+            split_pane_state: if node_type == NodeType::SplitPane {
+                Some(SplitPaneState::default())
+            } else {
+                None
+            },
         }
     }
 }
@@ -954,7 +1053,8 @@ mod tests {
         assert_eq!(NodeType::from_u8(8), Some(NodeType::Tabs));
         assert_eq!(NodeType::from_u8(9), Some(NodeType::Overlay));
         assert_eq!(NodeType::from_u8(10), Some(NodeType::Transcript));
-        assert_eq!(NodeType::from_u8(11), None);
+        assert_eq!(NodeType::from_u8(11), Some(NodeType::SplitPane));
+        assert_eq!(NodeType::from_u8(12), None);
     }
 
     #[test]

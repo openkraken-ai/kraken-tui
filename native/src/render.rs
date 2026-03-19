@@ -162,11 +162,16 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
         render_node(ctx, root, 0, 0, clip)?;
     }
 
-    // 4. Diff
+    // 4. Overlay rendering (ADR-T34): draw markers into front_buffer before diff
+    if ctx.debug_mode && ctx.debug_overlay_flags != 0 {
+        crate::devtools::render_overlay(ctx);
+    }
+
+    // 5. Diff
     let diff = diff_buffers(ctx);
     ctx.perf_diff_cells = diff.len() as u32;
 
-    // 5. Compact runs and emit via writer through backend (ADR-T24)
+    // 6. Compact runs and emit via writer through backend (ADR-T24)
     let runs = crate::writer::compact_runs(&diff);
     let root_bg = match ctx.root {
         Some(h) if ctx.nodes.contains_key(&h) => crate::style::resolve_style(h, ctx).bg_color,
@@ -180,17 +185,23 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
     ctx.perf_write_runs = metrics.run_count;
     ctx.perf_style_deltas = metrics.style_delta_count;
 
-    // 6. Swap buffers
+    // 7. Swap buffers
     std::mem::swap(&mut ctx.front_buffer, &mut ctx.back_buffer);
-
-    // 7. Clear dirty flags
-    crate::tree::clear_dirty_flags(ctx);
 
     ctx.perf_render_us = start.elapsed().as_micros() as u64;
     ctx.debug_log(&format!(
         "render: {}μs, {} cells changed",
         ctx.perf_render_us, ctx.perf_diff_cells
     ));
+
+    // 8. Frame snapshot (ADR-T34): capture before dirty flags are cleared so dirty_nodes is accurate
+    if ctx.debug_mode {
+        crate::devtools::take_frame_snapshot(ctx);
+        ctx.frame_seq += 1;
+    }
+
+    // 9. Clear dirty flags
+    crate::tree::clear_dirty_flags(ctx);
 
     Ok(())
 }
@@ -505,6 +516,9 @@ fn render_node(
             render_transcript(
                 ctx, handle, content_x, content_y, content_w, content_h, fg, bg, attrs, clip,
             );
+        }
+        NodeType::SplitPane => {
+            // SplitPane renders via its children; no content of its own.
         }
     }
 
