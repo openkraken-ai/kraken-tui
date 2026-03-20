@@ -24,6 +24,8 @@ export { List } from "./widgets/list";
 export { Tabs } from "./widgets/tabs";
 export { Overlay } from "./widgets/overlay";
 export { TranscriptView } from "./widgets/transcript";
+export { SplitPane } from "./widgets/splitpane";
+export type { SplitPaneOptions, SplitAxis } from "./widgets/splitpane";
 export type { TranscriptOptions, BlockKind, FollowModeStr } from "./widgets/transcript";
 export { applyReplayEvent } from "./widgets/transcript-adapters";
 export type { TranscriptReplayEvent } from "./widgets/transcript-adapters";
@@ -51,6 +53,24 @@ export { PerfHud, PERF_COUNTER_NAMES, PERF_COUNTER_COUNT } from "./devtools/hud"
 export { TraceViewer, TRACE_KIND } from "./devtools/traces";
 export type { TraceEntry, TraceKind } from "./devtools/traces";
 
+// App-Shaped Surface Composites (Epic K, ADR-T35)
+export { CommandPalette } from "./composites/command-palette";
+export type { Command, CommandPaletteOptions } from "./composites/command-palette";
+export { TracePanel, StructuredLogView } from "./composites/trace-panel";
+export type {
+	TraceKind as TracePanelKind,
+	TracePanelOptions,
+	StructuredLogEntry,
+	StructuredLogViewOptions,
+	LogLevel,
+} from "./composites/trace-panel";
+export { CodeView, DiffView } from "./composites/code-view";
+export type {
+	CodeViewOptions,
+	DiffViewOptions,
+	DiffMode,
+} from "./composites/code-view";
+
 // JSX runtime (v2 — ADR-T20)
 export { jsx, jsxs, Fragment } from "./jsx/jsx-runtime";
 export { signal, computed, effect, batch } from "@preact/signals-core";
@@ -74,4 +94,5 @@ export type {
 	TabsProps,
 	OverlayProps,
 	TranscriptProps,
+	SplitPaneProps,
 } from "./jsx/types";

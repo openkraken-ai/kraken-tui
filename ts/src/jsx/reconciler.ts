@@ -38,6 +38,7 @@ const WIDGET_MAP: Record<string, number> = {
 	Tabs: NodeType.Tabs,
 	Overlay: NodeType.Overlay,
 	Transcript: NodeType.Transcript,
+	SplitPane: NodeType.SplitPane,
 };
 
 // ---------------------------------------------------------------------------
@@ -486,6 +487,25 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 			break;
 		case "dismissOnEscape":
 			checkResult(ffi.tui_overlay_set_dismiss_on_escape(handle, value ? 1 : 0));
+			break;
+
+		// --- SplitPane-specific ---
+		case "axis": {
+			const axisMap: Record<string, number> = {
+				horizontal: 0,
+				vertical: 1,
+			};
+			checkResult(ffi.tui_splitpane_set_axis(handle, axisMap[value as string] ?? 0));
+			break;
+		}
+		case "ratio":
+			checkResult(ffi.tui_splitpane_set_ratio(handle, value as number));
+			break;
+		case "resizable":
+			checkResult(ffi.tui_splitpane_set_resizable(handle, value ? 1 : 0));
+			break;
+		case "resizeStep":
+			checkResult(ffi.tui_splitpane_set_resize_step(handle, value as number));
 			break;
 
 		// --- Transcript-specific ---

@@ -107,6 +107,12 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 continue;
                             }
                         }
+                        Some(crate::types::NodeType::SplitPane) => {
+                            if crate::splitpane::handle_key(ctx, focused_handle, code) {
+                                count += 1;
+                                continue;
+                            }
+                        }
                         _ => {}
                     }
                 }

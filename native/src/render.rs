@@ -518,7 +518,10 @@ fn render_node(
             );
         }
         NodeType::SplitPane => {
-            // SplitPane renders via its children; no content of its own.
+            // SplitPane renders a 1-cell divider between its two children.
+            render_splitpane_divider(
+                ctx, handle, content_x, content_y, content_w, content_h, fg, bg, clip,
+            );
         }
     }
 
@@ -1784,6 +1787,108 @@ fn diff_buffers(ctx: &TuiContext) -> Vec<CellUpdate> {
     }
 
     updates
+}
+
+// ============================================================================
+// SplitPane Divider (ADR-T35)
+// ============================================================================
+
+/// Render a 1-cell divider line between the two children of a SplitPane.
+#[allow(clippy::too_many_arguments)]
+fn render_splitpane_divider(
+    ctx: &mut TuiContext,
+    handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    fg: u32,
+    bg: u32,
+    clip: ClipRect,
+) {
+    let node = match ctx.nodes.get(&handle) {
+        Some(n) => n,
+        None => return,
+    };
+    let state = match node.split_pane_state.as_ref() {
+        Some(s) => s,
+        None => return,
+    };
+    let children = node.children.clone();
+    if children.len() < 2 {
+        return;
+    }
+
+    let axis = state.axis;
+
+    // Read the computed layout of the first child to determine divider position
+    let primary_taffy = match ctx.nodes.get(&children[0]) {
+        Some(n) => n.taffy_node,
+        None => return,
+    };
+    let primary_layout = match ctx.tree.layout(primary_taffy) {
+        Ok(l) => *l,
+        Err(_) => return,
+    };
+
+    // Use border_color if explicitly set, otherwise use fg
+    let divider_fg = {
+        let vs = &ctx.nodes.get(&handle).map(|n| &n.visual_style);
+        if let Some(vs) = vs {
+            if vs.style_mask & crate::types::VisualStyle::MASK_BORDER_COLOR != 0 {
+                vs.border_color
+            } else {
+                fg
+            }
+        } else {
+            fg
+        }
+    };
+
+    let attrs = CellAttrs::empty();
+
+    match axis {
+        crate::types::SplitAxis::Horizontal => {
+            // Vertical divider line between left and right children
+            let divider_x = content_x + primary_layout.size.width as i32;
+            if divider_x >= content_x && divider_x < content_x + content_w {
+                for row in 0..content_h {
+                    clip_set(
+                        &mut ctx.front_buffer,
+                        divider_x,
+                        content_y + row,
+                        Cell {
+                            ch: '│',
+                            fg: divider_fg,
+                            bg,
+                            attrs,
+                        },
+                        clip,
+                    );
+                }
+            }
+        }
+        crate::types::SplitAxis::Vertical => {
+            // Horizontal divider line between top and bottom children
+            let divider_y = content_y + primary_layout.size.height as i32;
+            if divider_y >= content_y && divider_y < content_y + content_h {
+                for col in 0..content_w {
+                    clip_set(
+                        &mut ctx.front_buffer,
+                        content_x + col,
+                        divider_y,
+                        Cell {
+                            ch: '─',
+                            fg: divider_fg,
+                            bg,
+                            attrs,
+                        },
+                        clip,
+                    );
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================

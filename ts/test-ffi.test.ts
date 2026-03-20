@@ -208,6 +208,14 @@ const lib = dlopen(LIB_PATH, {
 	tui_transcript_mark_read:     { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_get_unread_count:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
 
+	// SplitPane Widget (ADR-T35)
+	tui_splitpane_set_axis:        { args: ["u32", "u8"] as FFIType[],                          returns: "i32" as const },
+	tui_splitpane_set_ratio:       { args: ["u32", "u16"] as FFIType[],                         returns: "i32" as const },
+	tui_splitpane_get_ratio:       { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_splitpane_set_min_sizes:   { args: ["u32", "u16", "u16"] as FFIType[],                  returns: "i32" as const },
+	tui_splitpane_set_resize_step: { args: ["u32", "u16"] as FFIType[],                         returns: "i32" as const },
+	tui_splitpane_set_resizable:   { args: ["u32", "u8"] as FFIType[],                          returns: "i32" as const },
+
 	// Debug and Devtools (ADR-T34, TechSpec §4.3.3)
 	tui_debug_set_overlay:         { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_debug_set_trace_flags:     { args: ["u32"] as FFIType[],                                returns: "i32" as const },
@@ -3114,6 +3122,385 @@ describe("FFI integration", () => {
 			expect(ffi.tui_debug_set_overlay(0xffffffff)).toBe(0);
 			// Restore clean state
 			expect(ffi.tui_debug_set_overlay(0)).toBe(0);
+		});
+	});
+
+	// ====================================================================
+	// SplitPane Widget (ADR-T35)
+	// ====================================================================
+
+	describe("SplitPane Widget", () => {
+		test("tui_create_node returns valid handle for SplitPane", () => {
+			const sp = ffi.tui_create_node(11); // NodeType::SplitPane
+			expect(sp).toBeGreaterThan(0);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_axis and get_ratio defaults", () => {
+			const sp = ffi.tui_create_node(11);
+			// Default ratio is 500
+			const ratio = ffi.tui_splitpane_get_ratio(sp);
+			expect(ratio).toBe(500);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_axis horizontal", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_axis(sp, 0)).toBe(0); // Horizontal
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_axis vertical", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_axis(sp, 1)).toBe(0); // Vertical
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_axis invalid returns -1", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_axis(sp, 5)).toBe(-1);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_ratio and get_ratio roundtrip", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_ratio(sp, 300)).toBe(0);
+			expect(ffi.tui_splitpane_get_ratio(sp)).toBe(300);
+
+			expect(ffi.tui_splitpane_set_ratio(sp, 700)).toBe(0);
+			expect(ffi.tui_splitpane_get_ratio(sp)).toBe(700);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_ratio clamps to 1000", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_ratio(sp, 1500)).toBe(0);
+			expect(ffi.tui_splitpane_get_ratio(sp)).toBe(1000);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_ratio zero allowed", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_ratio(sp, 0)).toBe(0);
+			expect(ffi.tui_splitpane_get_ratio(sp)).toBe(0);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_min_sizes", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_min_sizes(sp, 10, 20)).toBe(0);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_resize_step", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_resize_step(sp, 5)).toBe(0);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("tui_splitpane_set_resizable on and off", () => {
+			const sp = ffi.tui_create_node(11);
+			expect(ffi.tui_splitpane_set_resizable(sp, 0)).toBe(0);
+			expect(ffi.tui_splitpane_set_resizable(sp, 1)).toBe(0);
+			ffi.tui_destroy_node(sp);
+		});
+
+		test("SplitPane two-child constraint: two children accepted", () => {
+			const sp = ffi.tui_create_node(11);
+			const c1 = ffi.tui_create_node(0); // Box
+			const c2 = ffi.tui_create_node(0); // Box
+			expect(ffi.tui_append_child(sp, c1)).toBe(0);
+			expect(ffi.tui_append_child(sp, c2)).toBe(0);
+			expect(ffi.tui_get_child_count(sp)).toBe(2);
+			ffi.tui_destroy_subtree(sp);
+		});
+
+		test("SplitPane two-child constraint: third child rejected", () => {
+			const sp = ffi.tui_create_node(11);
+			const c1 = ffi.tui_create_node(0);
+			const c2 = ffi.tui_create_node(0);
+			const c3 = ffi.tui_create_node(0);
+			ffi.tui_append_child(sp, c1);
+			ffi.tui_append_child(sp, c2);
+			expect(ffi.tui_append_child(sp, c3)).toBe(-1);
+			expect(ffi.tui_get_child_count(sp)).toBe(2);
+			ffi.tui_destroy_node(c3);
+			ffi.tui_destroy_subtree(sp);
+		});
+
+		test("SplitPane invalid handle returns -1", () => {
+			expect(ffi.tui_splitpane_set_axis(99999, 0)).toBe(-1);
+			expect(ffi.tui_splitpane_get_ratio(99999)).toBe(-1);
+			expect(ffi.tui_splitpane_set_ratio(99999, 500)).toBe(-1);
+			expect(ffi.tui_splitpane_set_min_sizes(99999, 0, 0)).toBe(-1);
+			expect(ffi.tui_splitpane_set_resize_step(99999, 1)).toBe(-1);
+			expect(ffi.tui_splitpane_set_resizable(99999, 1)).toBe(-1);
+		});
+
+		test("SplitPane on non-splitpane node returns -1", () => {
+			const box1 = ffi.tui_create_node(0); // Box
+			expect(ffi.tui_splitpane_set_axis(box1, 0)).toBe(-1);
+			expect(ffi.tui_splitpane_get_ratio(box1)).toBe(-1);
+			expect(ffi.tui_splitpane_set_ratio(box1, 500)).toBe(-1);
+			ffi.tui_destroy_node(box1);
+		});
+
+		test("Nested SplitPanes work correctly", () => {
+			const outer = ffi.tui_create_node(11);
+			const inner = ffi.tui_create_node(11);
+			const panel1 = ffi.tui_create_node(0);
+			const panel2 = ffi.tui_create_node(0);
+			const panel3 = ffi.tui_create_node(0);
+
+			// Outer: horizontal split
+			ffi.tui_splitpane_set_axis(outer, 0);
+			ffi.tui_append_child(outer, inner);
+			ffi.tui_append_child(outer, panel1);
+
+			// Inner: vertical split
+			ffi.tui_splitpane_set_axis(inner, 1);
+			ffi.tui_append_child(inner, panel2);
+			ffi.tui_append_child(inner, panel3);
+
+			expect(ffi.tui_get_child_count(outer)).toBe(2);
+			expect(ffi.tui_get_child_count(inner)).toBe(2);
+
+			// Set different ratios
+			expect(ffi.tui_splitpane_set_ratio(outer, 300)).toBe(0);
+			expect(ffi.tui_splitpane_set_ratio(inner, 600)).toBe(0);
+			expect(ffi.tui_splitpane_get_ratio(outer)).toBe(300);
+			expect(ffi.tui_splitpane_get_ratio(inner)).toBe(600);
+
+			ffi.tui_destroy_subtree(outer);
+		});
+
+		test("SplitPane is focusable", () => {
+			const sp = ffi.tui_create_node(11);
+			// SplitPane should be focusable (for keyboard resize)
+			const focusable = ffi.tui_is_focusable(sp);
+			expect(focusable).toBe(1);
+			ffi.tui_destroy_node(sp);
+		});
+	});
+
+	// ====================================================================
+	// K2: CommandPalette Composite (host-side integration)
+	// ====================================================================
+
+	describe("CommandPalette Composite", () => {
+		test("palette uses Overlay + Input + List primitives", () => {
+			// Overlay (modal)
+			const overlay = ffi.tui_create_node(9); // NodeType::Overlay
+			ffi.tui_overlay_set_modal(overlay, 1);
+			ffi.tui_overlay_set_dismiss_on_escape(overlay, 1);
+
+			// Container Box
+			const container = ffi.tui_create_node(0); // Box
+			ffi.tui_append_child(overlay, container);
+
+			// Input for filter
+			const input = ffi.tui_create_node(2); // Input
+			ffi.tui_append_child(container, input);
+
+			// List for commands
+			const list = ffi.tui_create_node(7); // List
+			ffi.tui_append_child(container, list);
+
+			// Add items to list
+			const enc = (s: string) => new TextEncoder().encode(s);
+			const cmd1 = enc("Open File");
+			const cmd2 = enc("Close Tab");
+			const cmd3 = enc("Toggle Theme");
+			expect(ffi.tui_list_add_item(list, Buffer.from(cmd1), cmd1.length)).toBe(0);
+			expect(ffi.tui_list_add_item(list, Buffer.from(cmd2), cmd2.length)).toBe(0);
+			expect(ffi.tui_list_add_item(list, Buffer.from(cmd3), cmd3.length)).toBe(0);
+			expect(ffi.tui_list_get_count(list)).toBe(3);
+
+			// Open overlay
+			ffi.tui_overlay_set_open(overlay, 1);
+			expect(ffi.tui_overlay_get_open(overlay)).toBe(1);
+
+			// Select and navigate
+			expect(ffi.tui_list_set_selected(list, 0)).toBe(0);
+			expect(ffi.tui_list_get_selected(list)).toBe(0);
+			expect(ffi.tui_list_set_selected(list, 2)).toBe(0);
+			expect(ffi.tui_list_get_selected(list)).toBe(2);
+
+			// Clear and re-filter
+			ffi.tui_list_clear_items(list);
+			expect(ffi.tui_list_get_count(list)).toBe(0);
+			const filtered = enc("Open File");
+			ffi.tui_list_add_item(list, Buffer.from(filtered), filtered.length);
+			expect(ffi.tui_list_get_count(list)).toBe(1);
+
+			// Close
+			ffi.tui_overlay_set_open(overlay, 0);
+			expect(ffi.tui_overlay_get_open(overlay)).toBe(0);
+
+			ffi.tui_destroy_subtree(overlay);
+		});
+
+		test("palette reusable across open/close cycles", () => {
+			const overlay = ffi.tui_create_node(9);
+			ffi.tui_overlay_set_dismiss_on_escape(overlay, 1);
+
+			for (let i = 0; i < 3; i++) {
+				ffi.tui_overlay_set_open(overlay, 1);
+				expect(ffi.tui_overlay_get_open(overlay)).toBe(1);
+				ffi.tui_overlay_set_open(overlay, 0);
+				expect(ffi.tui_overlay_get_open(overlay)).toBe(0);
+			}
+
+			ffi.tui_destroy_node(overlay);
+		});
+	});
+
+	// ====================================================================
+	// K3: TracePanel / StructuredLogView (host-side integration)
+	// ====================================================================
+
+	describe("TracePanel and StructuredLogView Composites", () => {
+		test("transcript-backed trace panel appends and tracks blocks", () => {
+			const h = ffi.tui_create_node(10); // Transcript
+			const enc = (s: string) => new TextEncoder().encode(s);
+
+			// Append trace entries as transcript blocks
+			const t1 = enc("[EVENT] click on button");
+			expect(ffi.tui_transcript_append_block(h, 1n, 4, 0, Buffer.from(t1), t1.length)).toBe(0);
+			ffi.tui_transcript_finish_block(h, 1n);
+
+			const t2 = enc("[FOCUS] input gained focus");
+			expect(ffi.tui_transcript_append_block(h, 2n, 1, 0, Buffer.from(t2), t2.length)).toBe(0);
+			ffi.tui_transcript_finish_block(h, 2n);
+
+			const t3 = enc("[DIRTY] 5 nodes marked dirty");
+			expect(ffi.tui_transcript_append_block(h, 3n, 2, 0, Buffer.from(t3), t3.length)).toBe(0);
+			ffi.tui_transcript_finish_block(h, 3n);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("transcript follow mode for trace tailing", () => {
+			const h = ffi.tui_create_node(10);
+			// Default or tail-locked
+			ffi.tui_transcript_set_follow_mode(h, 1); // tailLocked
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(1);
+
+			// Switch to manual
+			ffi.tui_transcript_set_follow_mode(h, 0); // manual
+			expect(ffi.tui_transcript_get_follow_mode(h)).toBe(0);
+
+			ffi.tui_destroy_node(h);
+		});
+
+		test("structured log entries as transcript blocks with metadata", () => {
+			const h = ffi.tui_create_node(10);
+			const enc = (s: string) => new TextEncoder().encode(s);
+
+			// Simulate structured log entries
+			const log1 = enc('2026-03-20T10:00:00Z INFO [auth] User logged in {"user":"alice"}');
+			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(log1), log1.length)).toBe(0);
+			ffi.tui_transcript_finish_block(h, 1n);
+
+			const log2 = enc('2026-03-20T10:00:01Z ERROR [db] Connection failed {"retry":3}');
+			expect(ffi.tui_transcript_append_block(h, 2n, 2, 3, Buffer.from(log2), log2.length)).toBe(0);
+			ffi.tui_transcript_finish_block(h, 2n);
+
+			ffi.tui_destroy_node(h);
+		});
+	});
+
+	// ====================================================================
+	// K4: CodeView / DiffView (host-side integration)
+	// ====================================================================
+
+	describe("CodeView and DiffView Composites", () => {
+		test("code view uses ScrollBox + Text with code format", () => {
+			const scrollbox = ffi.tui_create_node(4); // ScrollBox
+			const text = ffi.tui_create_node(1); // Text
+
+			ffi.tui_append_child(scrollbox, text);
+
+			// Set code format
+			expect(ffi.tui_set_content_format(text, 2)).toBe(0); // 2 = code
+
+			// Set language
+			const lang = new TextEncoder().encode("rust");
+			expect(ffi.tui_set_code_language(text, Buffer.from(lang), lang.length)).toBe(0);
+
+			// Set content
+			const code = new TextEncoder().encode('fn main() {\n    println!("Hello");\n}');
+			expect(ffi.tui_set_content(text, Buffer.from(code), code.length)).toBe(0);
+
+			// Verify content roundtrip
+			const len = ffi.tui_get_content_len(text);
+			expect(len).toBeGreaterThan(0);
+			const buf = Buffer.alloc(len + 1);
+			const written = ffi.tui_get_content(text, buf, len + 1);
+			expect(written).toBe(len);
+			expect(buf.toString("utf-8", 0, written)).toContain("fn main()");
+
+			ffi.tui_destroy_subtree(scrollbox);
+		});
+
+		test("diff view uses SplitPane with two code views", () => {
+			const splitpane = ffi.tui_create_node(11); // SplitPane
+			ffi.tui_splitpane_set_axis(splitpane, 0); // horizontal
+			ffi.tui_splitpane_set_ratio(splitpane, 500);
+
+			// Left code view
+			const leftScroll = ffi.tui_create_node(4);
+			const leftText = ffi.tui_create_node(1);
+			ffi.tui_append_child(leftScroll, leftText);
+			ffi.tui_set_content_format(leftText, 2);
+
+			// Right code view
+			const rightScroll = ffi.tui_create_node(4);
+			const rightText = ffi.tui_create_node(1);
+			ffi.tui_append_child(rightScroll, rightText);
+			ffi.tui_set_content_format(rightText, 2);
+
+			ffi.tui_append_child(splitpane, leftScroll);
+			ffi.tui_append_child(splitpane, rightScroll);
+			expect(ffi.tui_get_child_count(splitpane)).toBe(2);
+
+			// Set different content in each side
+			const left = new TextEncoder().encode("const x = 1;");
+			const right = new TextEncoder().encode("const x = 2;");
+			ffi.tui_set_content(leftText, Buffer.from(left), left.length);
+			ffi.tui_set_content(rightText, Buffer.from(right), right.length);
+
+			ffi.tui_destroy_subtree(splitpane);
+		});
+
+		test("code view scroll works", () => {
+			const scrollbox = ffi.tui_create_node(4);
+			const text = ffi.tui_create_node(1);
+			ffi.tui_append_child(scrollbox, text);
+
+			// Set scroll position
+			expect(ffi.tui_set_scroll(scrollbox, 0, 10)).toBe(0);
+
+			ffi.tui_destroy_subtree(scrollbox);
+		});
+
+		test("line numbers via gutter Text node", () => {
+			const container = ffi.tui_create_node(0); // Box
+			const gutter = ffi.tui_create_node(1); // Text for line numbers
+			const code = ffi.tui_create_node(1); // Text for code
+			ffi.tui_append_child(container, gutter);
+			ffi.tui_append_child(container, code);
+
+			const gutterContent = new TextEncoder().encode(" 1\n 2\n 3");
+			ffi.tui_set_content(gutter, Buffer.from(gutterContent), gutterContent.length);
+
+			const codeContent = new TextEncoder().encode("line one\nline two\nline three");
+			ffi.tui_set_content(code, Buffer.from(codeContent), codeContent.length);
+			ffi.tui_set_content_format(code, 2); // code format
+
+			expect(ffi.tui_get_child_count(container)).toBe(2);
+
+			ffi.tui_destroy_subtree(container);
 		});
 	});
 });

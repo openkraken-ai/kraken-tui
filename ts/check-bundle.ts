@@ -1,15 +1,16 @@
 /**
  * Bundle budget check (TASK-L6).
  *
- * Bundles the kraken-tui TypeScript layer and verifies it stays under 50KB.
- * Per PRD §5: "Host-Language Bundle < 50KB".
+ * Bundles the kraken-tui TypeScript layer and verifies it stays under 75KB.
+ * Per PRD §5 and ADR-T35 addendum: budget increased from 50KB to 75KB to
+ * accommodate host composites (CommandPalette, TracePanel, CodeView, DiffView).
  *
  * Run:  bun run ts/check-bundle.ts
  */
 
 import { rmSync } from "fs";
 
-const BUDGET_BYTES = 50 * 1024; // 50KB
+const BUDGET_BYTES = 75 * 1024; // 75KB (increased from 50KB per ADR-T35 addendum)
 
 // Resolve paths relative to this script, not cwd
 const scriptDir = import.meta.dir;

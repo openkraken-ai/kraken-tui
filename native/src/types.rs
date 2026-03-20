@@ -966,6 +966,7 @@ impl TuiNode {
                 | NodeType::List
                 | NodeType::Tabs
                 | NodeType::Transcript
+                | NodeType::SplitPane
         );
         Self {
             node_type,

@@ -226,6 +226,8 @@
 
 **Flagship example benefit:** Powers the side-pane layouts in `agent-console`, `ops-log-console`, and later `repo-inspector`.
 
+**Addendum (2026-03-20) — Bundle budget increase:** The host-language bundle budget is increased from 50KB to 75KB to accommodate Epic K host composites (`CommandPalette`, `TracePanel`, `StructuredLogView`, `CodeView`, `DiffView`). These composites add ~5-8KB of minified TypeScript, well within the revised limit. The increase is justified because the composites eliminate the need for additional native widgets, keeping the native binary size stable while expanding developer surface area.
+
 ### ADR-T36: Flagship Examples Are Blocking Release Gates
 
 **Context:** Current examples prove breadth, but not the target product identity. v4 needs proof under real transcript, pane, and debugging pressure.

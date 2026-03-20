@@ -25,6 +25,7 @@ mod golden;
 mod layout;
 mod render;
 mod scroll;
+mod splitpane;
 mod style;
 mod terminal;
 mod text;
@@ -2783,6 +2784,74 @@ pub extern "C" fn tui_transcript_get_unread_count(handle: u32) -> i32 {
         ctx.validate_handle(handle)?;
         let count = transcript::get_unread_count(&ctx, handle)?;
         Ok(count as i32)
+    })
+}
+
+// ============================================================================
+// SplitPane FFI (ADR-T35)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_set_axis(handle: u32, axis: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        splitpane::set_axis(&mut ctx, handle, axis)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_set_ratio(handle: u32, ratio: u16) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        splitpane::set_ratio(&mut ctx, handle, ratio)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_get_ratio(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let ctx = context_read()?;
+        ctx.validate_handle(handle)?;
+        let ratio = splitpane::get_ratio(&ctx, handle)?;
+        Ok(ratio as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_set_min_sizes(
+    handle: u32,
+    min_primary: u16,
+    min_secondary: u16,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        splitpane::set_min_sizes(&mut ctx, handle, min_primary, min_secondary)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_set_resize_step(handle: u32, step: u16) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        splitpane::set_resize_step(&mut ctx, handle, step)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_splitpane_set_resizable(handle: u32, enabled: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        splitpane::set_resizable(&mut ctx, handle, enabled != 0)?;
+        Ok(0)
     })
 }
 

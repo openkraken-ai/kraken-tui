@@ -143,6 +143,14 @@ export interface TranscriptProps extends CommonProps {
 	followMode?: MaybeSignal<"manual" | "tailLocked" | "tailWhileNearBottom">;
 }
 
+export interface SplitPaneProps extends CommonProps {
+	axis?: MaybeSignal<"horizontal" | "vertical">;
+	ratio?: MaybeSignal<number>;
+	resizable?: MaybeSignal<boolean>;
+	resizeStep?: MaybeSignal<number>;
+	children?: VNode | VNode[];
+}
+
 // ---------------------------------------------------------------------------
 // VNode — virtual node representation
 // ---------------------------------------------------------------------------
@@ -192,6 +200,7 @@ export declare namespace JSX {
 		Tabs: TabsProps;
 		Overlay: OverlayProps;
 		Transcript: TranscriptProps;
+		SplitPane: SplitPaneProps;
 	}
 
 	interface ElementChildrenAttribute {

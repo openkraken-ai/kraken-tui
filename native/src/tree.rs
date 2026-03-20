@@ -231,6 +231,11 @@ pub(crate) fn insert_child(
         );
     }
 
+    // Enforce SplitPane two-child constraint (ADR-T35).
+    if parent_node.node_type == NodeType::SplitPane && parent_children.len() > 2 {
+        return Err("SplitPane accepts exactly two children".to_string());
+    }
+
     // Detach from previous parent if any.
     if let Some(old_parent) = child_parent {
         if old_parent != parent {
@@ -655,6 +660,48 @@ mod tests {
             .unwrap_err()
             .contains("ScrollBox accepts exactly one child"));
         assert_eq!(ctx.nodes[&sb].children, vec![child1]);
+    }
+
+    #[test]
+    fn test_splitpane_two_children_allowed() {
+        let mut ctx = test_ctx();
+        let sp = create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(append_child(&mut ctx, sp, c1).is_ok());
+        assert!(append_child(&mut ctx, sp, c2).is_ok());
+        assert_eq!(ctx.nodes[&sp].children, vec![c1, c2]);
+    }
+
+    #[test]
+    fn test_splitpane_third_child_rejected() {
+        let mut ctx = test_ctx();
+        let sp = create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = create_node(&mut ctx, NodeType::Box).unwrap();
+        let c3 = create_node(&mut ctx, NodeType::Box).unwrap();
+
+        append_child(&mut ctx, sp, c1).unwrap();
+        append_child(&mut ctx, sp, c2).unwrap();
+        let result = append_child(&mut ctx, sp, c3);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("SplitPane accepts exactly two children"));
+        assert_eq!(ctx.nodes[&sp].children, vec![c1, c2]);
+    }
+
+    #[test]
+    fn test_splitpane_re_append_same_child() {
+        let mut ctx = test_ctx();
+        let sp = create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = create_node(&mut ctx, NodeType::Box).unwrap();
+
+        append_child(&mut ctx, sp, c1).unwrap();
+        append_child(&mut ctx, sp, c2).unwrap();
+        // Re-appending an existing child is idempotent
+        assert!(append_child(&mut ctx, sp, c1).is_ok());
     }
 
     #[test]
