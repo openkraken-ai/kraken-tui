@@ -68,6 +68,12 @@ export abstract class Widget {
 
 	// --- Layout properties ---
 
+	setFlexDirection(direction: string): void {
+		checkResult(
+			ffi.tui_set_layout_flex(this.handle, 0, parseFlexDirection(direction)),
+		);
+	}
+
 	setWidth(value: string | number): void {
 		const [v, u] = parseDimension(value);
 		checkResult(ffi.tui_set_layout_dimension(this.handle, 0, v, u));

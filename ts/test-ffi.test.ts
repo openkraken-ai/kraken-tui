@@ -3524,4 +3524,132 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_subtree(container);
 		});
 	});
+
+	// ====================================================================
+	// Host Composite Class Instantiation (smoke tests)
+	// ====================================================================
+
+	describe("Host Composite Instantiation", () => {
+		test("CodeView constructs without throwing", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const cv = new CodeView({ lineNumbers: true, language: "rust" });
+			cv.setContent("fn main() {}\n// line 2\n// line 3", "rust");
+			expect(cv.getContent()).toContain("fn main()");
+			expect(cv.getLanguage()).toBe("rust");
+			cv.getWidget().destroySubtree();
+		});
+
+		test("CodeView without line numbers constructs", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const cv = new CodeView({ lineNumbers: false });
+			cv.setContent("hello");
+			expect(cv.getContent()).toBe("hello");
+			cv.getWidget().destroySubtree();
+		});
+
+		test("CodeView toggles line numbers after creation", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const cv = new CodeView({ lineNumbers: false });
+			cv.setContent("a\nb\nc");
+			cv.setLineNumbers(true);
+			cv.setLineNumbers(false);
+			expect(cv.getContent()).toBe("a\nb\nc");
+			cv.getWidget().destroySubtree();
+		});
+
+		test("DiffView side-by-side constructs without throwing", async () => {
+			const { DiffView } = await import("./src/composites/code-view");
+			const dv = new DiffView({ mode: "side-by-side", language: "js" });
+			dv.setDiff("const x = 1;", "const x = 2;");
+			expect(dv.getMode()).toBe("side-by-side");
+			dv.getWidget().destroySubtree();
+		});
+
+		test("DiffView unified constructs without throwing", async () => {
+			const { DiffView } = await import("./src/composites/code-view");
+			const dv = new DiffView({ mode: "unified" });
+			dv.setDiff("a\nb\nc", "a\nx\nb\nc");
+			expect(dv.getMode()).toBe("unified");
+			dv.getWidget().destroySubtree();
+		});
+
+		test("CommandPalette constructs and cycles open/close", async () => {
+			const { CommandPalette } = await import("./src/composites/command-palette");
+			let executed = false;
+			const palette = new CommandPalette({
+				commands: [
+					{ id: "a", label: "Open File", action: () => { executed = true; } },
+					{ id: "b", label: "Close Tab", action: () => {} },
+					{ id: "c", label: "Toggle Theme", action: () => {} },
+				],
+			});
+			expect(palette.isOpen()).toBe(false);
+			palette.open();
+			expect(palette.isOpen()).toBe(true);
+
+			// Filter
+			palette.applyFilter("open");
+			expect(palette.getFilteredCount()).toBe(1);
+
+			// Navigate and execute
+			palette.selectNext();
+			palette.selectPrevious();
+			expect(palette.executeSelected()).toBe(true);
+			expect(executed).toBe(true);
+			expect(palette.isOpen()).toBe(false);
+
+			// Reopen cycle
+			palette.open();
+			palette.close();
+
+			palette.getWidget().destroySubtree();
+		});
+
+		test("TracePanel constructs, appends, and filters", async () => {
+			const { TracePanel } = await import("./src/composites/trace-panel");
+			const tp = new TracePanel({ filter: "all" });
+			tp.appendTrace("event", "click");
+			tp.appendTrace("focus", "input gained");
+			tp.appendTrace("dirty", "5 nodes");
+			expect(tp.getEntryCount()).toBe(3);
+			expect(tp.getVisibleCount()).toBe(3);
+
+			tp.setFilter("event");
+			expect(tp.getVisibleCount()).toBe(1);
+
+			tp.setFilter("all");
+			expect(tp.getVisibleCount()).toBe(3);
+
+			tp.follow();
+			tp.unfollow();
+			tp.getWidget().destroySubtree();
+		});
+
+		test("StructuredLogView constructs, appends, and filters", async () => {
+			const { StructuredLogView } = await import("./src/composites/trace-panel");
+			const slv = new StructuredLogView();
+			slv.appendLog({ level: "info", message: "started", timestamp: "T1" });
+			slv.appendLog({ level: "error", message: "failed", timestamp: "T2" });
+			slv.appendLog({ level: "info", message: "retried", timestamp: "T3" });
+			expect(slv.getEntryCount()).toBe(3);
+
+			slv.setFilter("error");
+			// Future entries respect the filter
+			slv.appendLog({ level: "info", message: "ignored visually", timestamp: "T4" });
+			expect(slv.getEntryCount()).toBe(4);
+
+			slv.clearFilter();
+			slv.follow();
+			slv.unfollow();
+			slv.getWidget().destroySubtree();
+		});
+
+		test("generateUnifiedDiff handles insertions correctly", async () => {
+			const { DiffView } = await import("./src/composites/code-view");
+			const dv = new DiffView({ mode: "unified" });
+			// A single insertion at the top should NOT flag all subsequent lines as changed
+			dv.setDiff("a\nb\nc", "x\na\nb\nc");
+			dv.getWidget().destroySubtree();
+		});
+	});
 });

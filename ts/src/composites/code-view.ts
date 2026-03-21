@@ -228,22 +228,48 @@ export class DiffView {
 	}
 }
 
-/** Generate a simple unified diff representation. */
+/**
+ * Generate a unified diff using the Myers / LCS algorithm.
+ *
+ * Computes the longest common subsequence of lines so that insertions and
+ * deletions are attributed correctly even when edits shift all subsequent
+ * line indices.
+ */
 function generateUnifiedDiff(left: string, right: string): string {
-	const leftLines = left.split("\n");
-	const rightLines = right.split("\n");
+	const a = left.split("\n");
+	const b = right.split("\n");
+
+	// Compute LCS table (bottom-up DP)
+	const m = a.length;
+	const n = b.length;
+	const dp: number[][] = Array.from({ length: m + 1 }, () =>
+		new Array<number>(n + 1).fill(0),
+	);
+	for (let i = m - 1; i >= 0; i--) {
+		for (let j = n - 1; j >= 0; j--) {
+			if (a[i] === b[j]) {
+				dp[i]![j] = dp[i + 1]![j + 1]! + 1;
+			} else {
+				dp[i]![j] = Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+			}
+		}
+	}
+
+	// Walk the table to emit diff lines
 	const result: string[] = [];
-	const maxLen = Math.max(leftLines.length, rightLines.length);
-
-	for (let i = 0; i < maxLen; i++) {
-		const l = i < leftLines.length ? leftLines[i] : undefined;
-		const r = i < rightLines.length ? rightLines[i] : undefined;
-
-		if (l === r) {
-			result.push(` ${l}`);
+	let i = 0;
+	let j = 0;
+	while (i < m || j < n) {
+		if (i < m && j < n && a[i] === b[j]) {
+			result.push(` ${a[i]}`);
+			i++;
+			j++;
+		} else if (j < n && (i >= m || dp[i]![j + 1]! >= dp[i + 1]![j]!)) {
+			result.push(`+${b[j]}`);
+			j++;
 		} else {
-			if (l !== undefined) result.push(`-${l}`);
-			if (r !== undefined) result.push(`+${r}`);
+			result.push(`-${a[i]}`);
+			i++;
 		}
 	}
 
