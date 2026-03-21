@@ -277,6 +277,17 @@ pub(crate) fn insert_child(
         }
     }
 
+    // SplitPane: sync children layout when the second child is attached.
+    // The constructor may have set ratio/min-sizes before children existed,
+    // so we replay those settings into Taffy once both children are present.
+    if ctx
+        .nodes
+        .get(&parent)
+        .is_some_and(|n| n.node_type == NodeType::SplitPane && n.children.len() == 2)
+    {
+        crate::splitpane::sync_children_layout(ctx, parent)?;
+    }
+
     mark_dirty_ancestors(ctx, parent);
     ctx.debug_log(&format!(
         "insert_child: parent={parent}, child={child}, index={insert_index}"

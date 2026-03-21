@@ -238,19 +238,27 @@ function applyProps(instance: Instance, type: string, props: Record<string, unkn
 		// Signal-wrapped or static prop
 		if (isSignal(value)) {
 			const dispose = effect(() => {
-				applyStaticProp(handle, type, prop, (value as { readonly value: unknown }).value);
+				applyStaticProp(handle, type, prop, (value as { readonly value: unknown }).value, props);
 			});
 			instance.cleanups.push(dispose);
 		} else {
-			applyStaticProp(handle, type, prop, value);
+			applyStaticProp(handle, type, prop, value, props);
 		}
 	}
 }
 
 /**
+ * Resolve a prop value that may be a signal or a plain value.
+ */
+function resolveValue(v: unknown): unknown {
+	if (isSignal(v)) return (v as { readonly value: unknown }).value;
+	return v;
+}
+
+/**
  * Apply a single static (non-signal) prop value to the native widget via FFI.
  */
-function applyStaticProp(handle: number, type: string, prop: string, value: unknown): void {
+function applyStaticProp(handle: number, type: string, prop: string, value: unknown, allProps: Record<string, unknown> = {}): void {
 	switch (prop) {
 		// --- Layout (common) ---
 		case "width": {
@@ -507,6 +515,15 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 		case "resizeStep":
 			checkResult(ffi.tui_splitpane_set_resize_step(handle, value as number));
 			break;
+		case "minPrimary":
+		case "minSecondary": {
+			// set_min_sizes sets both values atomically, so resolve the sibling
+			// prop from the current VNode to avoid overwriting it with 0.
+			const primary = (resolveValue(allProps.minPrimary) ?? 0) as number;
+			const secondary = (resolveValue(allProps.minSecondary) ?? 0) as number;
+			checkResult(ffi.tui_splitpane_set_min_sizes(handle, primary, secondary));
+			break;
+		}
 
 		// --- Transcript-specific ---
 		case "followMode": {

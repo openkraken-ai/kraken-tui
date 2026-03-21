@@ -148,6 +148,8 @@ export interface SplitPaneProps extends CommonProps {
 	ratio?: MaybeSignal<number>;
 	resizable?: MaybeSignal<boolean>;
 	resizeStep?: MaybeSignal<number>;
+	minPrimary?: MaybeSignal<number>;
+	minSecondary?: MaybeSignal<number>;
 	children?: VNode | VNode[];
 }
 

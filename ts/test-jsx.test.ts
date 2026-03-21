@@ -980,4 +980,60 @@ describe("Accessibility JSX props", () => {
 			while (ffi.tui_next_event(eventBuf) > 0) {}
 		}
 	});
+
+	describe("SplitPane JSX props", () => {
+		test("minPrimary and minSecondary are applied via JSX", () => {
+			const app = createMockApp();
+			const vnode = jsx("SplitPane", {
+				axis: "horizontal",
+				ratio: 400,
+				minPrimary: 10,
+				minSecondary: 20,
+				resizable: true,
+				resizeStep: 3,
+				children: [
+					jsx("Box", { key: "left" }),
+					jsx("Box", { key: "right" }),
+				],
+			});
+			const instance = render(vnode, app);
+			const spHandle = instance.widget.handle;
+
+			// Verify SplitPane was created (node type 11)
+			expect(getNodeType(spHandle)).toBe(11);
+			// Verify ratio was applied
+			expect(ffi.tui_splitpane_get_ratio(spHandle)).toBe(400);
+			// Verify two children
+			expect(getChildCount(spHandle)).toBe(2);
+
+			unmount(instance);
+		});
+
+		test("minPrimary/minSecondary react to signal updates", () => {
+			const app = createMockApp();
+			const minP = signal(5);
+			const minS = signal(15);
+
+			const vnode = jsx("SplitPane", {
+				axis: "horizontal",
+				minPrimary: minP,
+				minSecondary: minS,
+				children: [
+					jsx("Box", { key: "a" }),
+					jsx("Box", { key: "b" }),
+				],
+			});
+			const instance = render(vnode, app);
+			const spHandle = instance.widget.handle;
+
+			expect(getNodeType(spHandle)).toBe(11);
+			expect(getChildCount(spHandle)).toBe(2);
+
+			// Update signals — should not throw
+			minP.value = 10;
+			minS.value = 25;
+
+			unmount(instance);
+		});
+	});
 });

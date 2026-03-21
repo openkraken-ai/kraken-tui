@@ -3277,6 +3277,24 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_subtree(outer);
 		});
 
+		test("SplitPane ratio set before children is applied after attach", () => {
+			const sp = ffi.tui_create_node(11);
+			// Set ratio BEFORE children
+			expect(ffi.tui_splitpane_set_ratio(sp, 300)).toBe(0);
+			expect(ffi.tui_splitpane_set_min_sizes(sp, 10, 20)).toBe(0);
+
+			// Attach children
+			const c1 = ffi.tui_create_node(0);
+			const c2 = ffi.tui_create_node(0);
+			ffi.tui_append_child(sp, c1);
+			ffi.tui_append_child(sp, c2);
+
+			// Ratio should still be 300 (not reset to default)
+			expect(ffi.tui_splitpane_get_ratio(sp)).toBe(300);
+
+			ffi.tui_destroy_subtree(sp);
+		});
+
 		test("SplitPane is focusable", () => {
 			const sp = ffi.tui_create_node(11);
 			// SplitPane should be focusable (for keyboard resize)

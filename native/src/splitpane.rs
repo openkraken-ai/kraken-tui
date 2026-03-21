@@ -266,6 +266,16 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
         SplitAxis::Horizontal => FlexDirection::Row,
         SplitAxis::Vertical => FlexDirection::Column,
     };
+    // Reserve 1 cell for the divider between children. Without this gap the
+    // secondary child occupies the divider column/row and paints over it.
+    match state.axis {
+        SplitAxis::Horizontal => {
+            pane_style.gap.width = length(1.0);
+        }
+        SplitAxis::Vertical => {
+            pane_style.gap.height = length(1.0);
+        }
+    }
 
     ctx.tree
         .set_style(taffy_node, pane_style)
@@ -820,6 +830,74 @@ mod tests {
         let c2_style = ctx.tree.style(c2_taffy).unwrap();
         assert_eq!(c1_style.min_size.width, auto());
         assert_eq!(c2_style.min_size.width, auto());
+    }
+
+    // ================================================================
+    // Edge case: settings applied before children are attached
+    // ================================================================
+
+    #[test]
+    fn test_ratio_applied_when_second_child_attached() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+
+        // Set ratio BEFORE attaching children
+        set_ratio(&mut ctx, sp, 300).unwrap();
+        set_min_sizes(&mut ctx, sp, 10, 20).unwrap();
+
+        // Now attach children
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        // Verify that the pre-set ratio was applied to Taffy child styles
+        let c1_taffy = ctx.nodes[&c1].taffy_node;
+        let c1_style = ctx.tree.style(c1_taffy).unwrap();
+        // ratio=300 → 30% → flex_basis should be percent(0.3)
+        assert_eq!(c1_style.flex_basis, percent(0.30));
+        // min_primary=10 should be applied (horizontal default)
+        assert_eq!(c1_style.min_size.width, length(10.0));
+
+        let c2_taffy = ctx.nodes[&c2].taffy_node;
+        let c2_style = ctx.tree.style(c2_taffy).unwrap();
+        assert_eq!(c2_style.min_size.width, length(20.0));
+    }
+
+    // ================================================================
+    // Edge case: divider gap reserved in layout
+    // ================================================================
+
+    #[test]
+    fn test_divider_gap_horizontal() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        let sp_taffy = ctx.nodes[&sp].taffy_node;
+        let style = ctx.tree.style(sp_taffy).unwrap();
+        // Horizontal axis → column_gap = 1 cell for the divider
+        assert_eq!(style.gap.width, length(1.0));
+    }
+
+    #[test]
+    fn test_divider_gap_vertical() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_axis(&mut ctx, sp, 1).unwrap(); // Vertical
+
+        let sp_taffy = ctx.nodes[&sp].taffy_node;
+        let style = ctx.tree.style(sp_taffy).unwrap();
+        // Vertical axis → row_gap = 1 cell for the divider
+        assert_eq!(style.gap.height, length(1.0));
     }
 
     // ================================================================
