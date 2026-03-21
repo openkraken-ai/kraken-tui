@@ -3242,6 +3242,9 @@ describe("FFI integration", () => {
 			expect(ffi.tui_splitpane_set_axis(box1, 0)).toBe(-1);
 			expect(ffi.tui_splitpane_get_ratio(box1)).toBe(-1);
 			expect(ffi.tui_splitpane_set_ratio(box1, 500)).toBe(-1);
+			expect(ffi.tui_splitpane_set_min_sizes(box1, 0, 0)).toBe(-1);
+			expect(ffi.tui_splitpane_set_resize_step(box1, 1)).toBe(-1);
+			expect(ffi.tui_splitpane_set_resizable(box1, 1)).toBe(-1);
 			ffi.tui_destroy_node(box1);
 		});
 

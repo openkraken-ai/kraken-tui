@@ -187,6 +187,33 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     }
                 }
 
+                // Left-click on SplitPane: reposition divider (ADR-T35)
+                if button == 0 {
+                    if let Some(sp_handle) = find_splitpane_ancestor(ctx, target) {
+                        if let Some(sp_node) = ctx.nodes.get(&sp_handle) {
+                            if let Some(ref state) = sp_node.split_pane_state {
+                                let sp_taffy = sp_node.taffy_node;
+                                let axis = state.axis;
+                                // Compute the absolute position of the SplitPane
+                                if let Ok(layout) = ctx.tree.layout(sp_taffy) {
+                                    let abs = compute_absolute_position(ctx, sp_handle);
+                                    let (click_pos, size) = match axis {
+                                        crate::types::SplitAxis::Horizontal => {
+                                            let rel_x = (x as f32) - abs.0;
+                                            (rel_x.max(0.0) as u16, layout.size.width as u16)
+                                        }
+                                        crate::types::SplitAxis::Vertical => {
+                                            let rel_y = (y as f32) - abs.1;
+                                            (rel_y.max(0.0) as u16, layout.size.height as u16)
+                                        }
+                                    };
+                                    crate::splitpane::handle_mouse(ctx, sp_handle, click_pos, size);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Scroll events (buttons 3-4) on Transcript or ScrollBox
                 if button == 3 || button == 4 {
                     let dy = if button == 3 { -1 } else { 1 };
@@ -929,6 +956,43 @@ fn find_transcript_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
             return None;
         }
     }
+}
+
+/// Walk up the parent chain looking for a SplitPane node.
+fn find_splitpane_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let mut current = handle;
+    loop {
+        if let Some(node) = ctx.nodes.get(&current) {
+            if node.node_type == crate::types::NodeType::SplitPane {
+                return Some(current);
+            }
+            match node.parent {
+                Some(parent) => current = parent,
+                None => return None,
+            }
+        } else {
+            return None;
+        }
+    }
+}
+
+/// Compute the absolute screen position of a node by walking up the parent chain
+/// and accumulating Taffy layout offsets plus render offsets.
+fn compute_absolute_position(ctx: &TuiContext, handle: u32) -> (f32, f32) {
+    let mut x = 0.0_f32;
+    let mut y = 0.0_f32;
+    let mut current = handle;
+    while let Some(node) = ctx.nodes.get(&current) {
+        if let Ok(layout) = ctx.tree.layout(node.taffy_node) {
+            x += layout.location.x + node.render_offset.0;
+            y += layout.location.y + node.render_offset.1;
+        }
+        match node.parent {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    (x, y)
 }
 
 /// Find the nearest ScrollBox ancestor above a given handle (exclusive of the

@@ -183,6 +183,45 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
     true
 }
 
+/// Handle mouse click on a SplitPane to reposition the divider.
+/// `click_pos` is the coordinate along the split axis (x for horizontal, y for vertical)
+/// relative to the SplitPane's content area origin.
+/// `size` is the content dimension along the split axis.
+/// Returns true if the click was consumed (i.e., the ratio changed).
+pub(crate) fn handle_mouse(ctx: &mut TuiContext, handle: u32, click_pos: u16, size: u16) -> bool {
+    let (resizable, children_len) = {
+        let node = match ctx.nodes.get(&handle) {
+            Some(n) => n,
+            None => return false,
+        };
+        let state = match node.split_pane_state.as_ref() {
+            Some(s) => s,
+            None => return false,
+        };
+        (state.resizable, node.children.len())
+    };
+
+    if !resizable || children_len < 2 || size == 0 {
+        return false;
+    }
+
+    let new_ratio = ((click_pos as u32) * 1000 / (size as u32)).min(1000) as u16;
+
+    if set_ratio(ctx, handle, new_ratio).is_ok() {
+        let actual_ratio = ctx
+            .nodes
+            .get(&handle)
+            .and_then(|n| n.split_pane_state.as_ref())
+            .map(|s| s.primary_ratio_permille as u32)
+            .unwrap_or(0);
+        ctx.event_buffer
+            .push(TuiEvent::change(handle, actual_ratio));
+        true
+    } else {
+        false
+    }
+}
+
 /// Synchronize Taffy layout properties for SplitPane children.
 ///
 /// Sets the SplitPane's flex_direction based on axis, then configures each
@@ -563,6 +602,369 @@ mod tests {
         let mut ctx = test_ctx();
         let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
         assert!(get_ratio(&ctx, bx).is_err());
+    }
+
+    // ================================================================
+    // Edge case: invalid handle / non-SplitPane for all functions
+    // ================================================================
+
+    #[test]
+    fn test_set_ratio_non_splitpane_rejected() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(set_ratio(&mut ctx, bx, 500).is_err());
+    }
+
+    #[test]
+    fn test_set_ratio_invalid_handle_rejected() {
+        let mut ctx = test_ctx();
+        assert!(set_ratio(&mut ctx, 99999, 500).is_err());
+    }
+
+    #[test]
+    fn test_set_min_sizes_non_splitpane_rejected() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(set_min_sizes(&mut ctx, bx, 5, 5).is_err());
+    }
+
+    #[test]
+    fn test_set_min_sizes_invalid_handle_rejected() {
+        let mut ctx = test_ctx();
+        assert!(set_min_sizes(&mut ctx, 99999, 5, 5).is_err());
+    }
+
+    #[test]
+    fn test_set_resize_step_non_splitpane_rejected() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(set_resize_step(&mut ctx, bx, 5).is_err());
+    }
+
+    #[test]
+    fn test_set_resize_step_invalid_handle_rejected() {
+        let mut ctx = test_ctx();
+        assert!(set_resize_step(&mut ctx, 99999, 5).is_err());
+    }
+
+    #[test]
+    fn test_set_resizable_non_splitpane_rejected() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(set_resizable(&mut ctx, bx, true).is_err());
+    }
+
+    #[test]
+    fn test_set_resizable_invalid_handle_rejected() {
+        let mut ctx = test_ctx();
+        assert!(set_resizable(&mut ctx, 99999, true).is_err());
+    }
+
+    #[test]
+    fn test_get_ratio_invalid_handle_rejected() {
+        let mut ctx = test_ctx();
+        assert!(get_ratio(&ctx, 99999).is_err());
+    }
+
+    #[test]
+    fn test_handle_key_non_splitpane_returns_false() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(!handle_key(&mut ctx, bx, key::RIGHT));
+    }
+
+    #[test]
+    fn test_handle_key_invalid_handle_returns_false() {
+        let mut ctx = test_ctx();
+        assert!(!handle_key(&mut ctx, 99999, key::RIGHT));
+    }
+
+    // ================================================================
+    // Edge case: one-child behavior
+    // ================================================================
+
+    #[test]
+    fn test_sync_one_child_is_noop() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        // Sync with 1 child should succeed without panic
+        assert!(sync_children_layout(&mut ctx, sp).is_ok());
+    }
+
+    #[test]
+    fn test_handle_key_one_child_returns_false() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        // handle_key requires 2 children
+        assert!(!handle_key(&mut ctx, sp, key::RIGHT));
+    }
+
+    // ================================================================
+    // Edge case: large step near boundaries
+    // ================================================================
+
+    #[test]
+    fn test_large_step_saturates_at_lower_boundary() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_ratio(&mut ctx, sp, 50).unwrap();
+        set_resize_step(&mut ctx, sp, 20).unwrap(); // step_permille = 200
+        ctx.event_buffer.clear();
+
+        // LEFT with step=20 (200 permille) from ratio=50 → saturates to 0
+        handle_key(&mut ctx, sp, key::LEFT);
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_large_step_saturates_at_upper_boundary() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_ratio(&mut ctx, sp, 950).unwrap();
+        set_resize_step(&mut ctx, sp, 20).unwrap(); // step_permille = 200
+        ctx.event_buffer.clear();
+
+        // RIGHT with step=20 (200 permille) from ratio=950 → clamps to 1000
+        handle_key(&mut ctx, sp, key::RIGHT);
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 1000);
+    }
+
+    // ================================================================
+    // Edge case: min-size Taffy verification
+    // ================================================================
+
+    #[test]
+    fn test_min_sizes_applied_to_taffy() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_min_sizes(&mut ctx, sp, 15, 25).unwrap();
+
+        // Verify Taffy styles were applied for horizontal axis (default)
+        let c1_taffy = ctx.nodes[&c1].taffy_node;
+        let c2_taffy = ctx.nodes[&c2].taffy_node;
+        let c1_style = ctx.tree.style(c1_taffy).unwrap();
+        let c2_style = ctx.tree.style(c2_taffy).unwrap();
+        assert_eq!(c1_style.min_size.width, length(15.0));
+        assert_eq!(c2_style.min_size.width, length(25.0));
+    }
+
+    #[test]
+    fn test_min_sizes_applied_to_taffy_vertical() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_axis(&mut ctx, sp, 1).unwrap(); // Vertical
+        set_min_sizes(&mut ctx, sp, 10, 20).unwrap();
+
+        let c1_taffy = ctx.nodes[&c1].taffy_node;
+        let c2_taffy = ctx.nodes[&c2].taffy_node;
+        let c1_style = ctx.tree.style(c1_taffy).unwrap();
+        let c2_style = ctx.tree.style(c2_taffy).unwrap();
+        assert_eq!(c1_style.min_size.height, length(10.0));
+        assert_eq!(c2_style.min_size.height, length(20.0));
+    }
+
+    #[test]
+    fn test_zero_min_sizes_use_auto() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_min_sizes(&mut ctx, sp, 0, 0).unwrap();
+
+        let c1_taffy = ctx.nodes[&c1].taffy_node;
+        let c2_taffy = ctx.nodes[&c2].taffy_node;
+        let c1_style = ctx.tree.style(c1_taffy).unwrap();
+        let c2_style = ctx.tree.style(c2_taffy).unwrap();
+        assert_eq!(c1_style.min_size.width, auto());
+        assert_eq!(c2_style.min_size.width, auto());
+    }
+
+    // ================================================================
+    // Edge case: mouse click resize
+    // ================================================================
+
+    #[test]
+    fn test_mouse_click_repositions_divider() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        ctx.event_buffer.clear();
+
+        // Click at position 30 of 100 → ratio = 300
+        assert!(handle_mouse(&mut ctx, sp, 30, 100));
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 300);
+        assert_eq!(ctx.event_buffer.len(), 1);
+        assert_eq!(ctx.event_buffer[0].data[0], 300);
+    }
+
+    #[test]
+    fn test_mouse_click_at_zero() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+        ctx.event_buffer.clear();
+
+        assert!(handle_mouse(&mut ctx, sp, 0, 100));
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_mouse_click_at_max() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+        ctx.event_buffer.clear();
+
+        assert!(handle_mouse(&mut ctx, sp, 100, 100));
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 1000);
+    }
+
+    #[test]
+    fn test_mouse_click_not_resizable() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+        set_resizable(&mut ctx, sp, false).unwrap();
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        ctx.event_buffer.clear();
+
+        assert!(!handle_mouse(&mut ctx, sp, 30, 100));
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 500); // Unchanged
+    }
+
+    #[test]
+    fn test_mouse_click_zero_size_returns_false() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+        ctx.event_buffer.clear();
+
+        assert!(!handle_mouse(&mut ctx, sp, 10, 0)); // size=0 → no-op
+    }
+
+    #[test]
+    fn test_mouse_click_no_children_returns_false() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        assert!(!handle_mouse(&mut ctx, sp, 30, 100));
+    }
+
+    #[test]
+    fn test_mouse_click_non_splitpane_returns_false() {
+        let mut ctx = test_ctx();
+        let bx = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        assert!(!handle_mouse(&mut ctx, bx, 30, 100));
+    }
+
+    #[test]
+    fn test_mouse_click_invalid_handle_returns_false() {
+        let mut ctx = test_ctx();
+        assert!(!handle_mouse(&mut ctx, 99999, 30, 100));
+    }
+
+    // ================================================================
+    // Edge case: ratio preservation semantics (terminal resize)
+    // ================================================================
+
+    #[test]
+    fn test_ratio_is_permille_not_pixel() {
+        // The ratio is stored as permille (0-1000), not absolute pixels.
+        // This means it inherently survives terminal resize without adjustment.
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_ratio(&mut ctx, sp, 333).unwrap();
+        // Simulate a "terminal resize" by re-syncing layout
+        sync_children_layout(&mut ctx, sp).unwrap();
+        // Ratio remains unchanged
+        assert_eq!(get_ratio(&ctx, sp).unwrap(), 333);
+    }
+
+    // ================================================================
+    // Edge case: key consumed but no ratio change
+    // ================================================================
+
+    #[test]
+    fn test_key_at_zero_left_consumed_no_event() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_ratio(&mut ctx, sp, 0).unwrap();
+        set_resize_step(&mut ctx, sp, 1).unwrap();
+        ctx.event_buffer.clear();
+
+        // LEFT at ratio=0 → consumed (true) but no event emitted
+        assert!(handle_key(&mut ctx, sp, key::LEFT));
+        assert!(ctx.event_buffer.is_empty());
+    }
+
+    #[test]
+    fn test_key_at_1000_right_consumed_no_event() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_ratio(&mut ctx, sp, 1000).unwrap();
+        set_resize_step(&mut ctx, sp, 1).unwrap();
+        ctx.event_buffer.clear();
+
+        // RIGHT at ratio=1000 → consumed (true) but no event emitted
+        assert!(handle_key(&mut ctx, sp, key::RIGHT));
+        assert!(ctx.event_buffer.is_empty());
     }
 
     #[test]
