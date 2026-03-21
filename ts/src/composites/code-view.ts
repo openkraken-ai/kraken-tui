@@ -164,6 +164,7 @@ export class DiffView {
 				height: options.height ?? "100%",
 				fg: options.fg,
 				bg: options.bg,
+				border: options.border,
 			});
 
 			this.leftView = new CodeView({

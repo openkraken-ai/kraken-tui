@@ -195,6 +195,16 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                         find_splitpane_divider_hit(ctx, x, y)
                     {
                         if pane_size > 0 {
+                            // Compute click position relative to the content
+                            // area (inside border) so the ratio matches the
+                            // rendered divider position.
+                            let resolved_sp = crate::style::resolve_style(sp_handle, ctx);
+                            let sp_border: f32 =
+                                if resolved_sp.border_style != crate::types::BorderStyle::None {
+                                    1.0
+                                } else {
+                                    0.0
+                                };
                             let click_along_axis = match ctx
                                 .nodes
                                 .get(&sp_handle)
@@ -203,11 +213,11 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                             {
                                 Some(crate::types::SplitAxis::Horizontal) => {
                                     let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((x as f32) - abs.0).max(0.0) as u16
+                                    ((x as f32) - abs.0 - sp_border).max(0.0) as u16
                                 }
                                 Some(crate::types::SplitAxis::Vertical) => {
                                     let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((y as f32) - abs.1).max(0.0) as u16
+                                    ((y as f32) - abs.1 - sp_border).max(0.0) as u16
                                 }
                                 None => 0,
                             };
@@ -986,6 +996,17 @@ fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, 
                     let rel_x = x - sp_abs.0;
                     let rel_y = y - sp_abs.1;
 
+                    // Account for border: the divider is rendered in content
+                    // coordinates (inset by 1 cell per side when bordered),
+                    // but Taffy layouts don't know about borders.
+                    let resolved = crate::style::resolve_style(handle, ctx);
+                    let border_offset: f32 =
+                        if resolved.border_style != crate::types::BorderStyle::None {
+                            1.0
+                        } else {
+                            0.0
+                        };
+
                     // Check if the click is within the SplitPane bounds
                     if rel_x >= 0.0
                         && rel_y >= 0.0
@@ -998,25 +1019,31 @@ fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, 
 
                         match state.axis {
                             crate::types::SplitAxis::Horizontal => {
-                                let divider_x =
-                                    primary_layout.location.x + primary_layout.size.width;
+                                // Divider is rendered at content_x + primary_width,
+                                // i.e. border_offset + primary_width from outer edge.
+                                let divider_x = border_offset
+                                    + primary_layout.location.x
+                                    + primary_layout.size.width;
+                                let content_w = (layout.size.width - 2.0 * border_offset).max(0.0);
                                 // ±1 cell tolerance around the divider
                                 if (rel_x - divider_x).abs() <= 1.0 {
                                     return Some((
                                         handle,
-                                        divider_x as u16,
-                                        layout.size.width as u16,
+                                        (divider_x - border_offset) as u16,
+                                        content_w as u16,
                                     ));
                                 }
                             }
                             crate::types::SplitAxis::Vertical => {
-                                let divider_y =
-                                    primary_layout.location.y + primary_layout.size.height;
+                                let divider_y = border_offset
+                                    + primary_layout.location.y
+                                    + primary_layout.size.height;
+                                let content_h = (layout.size.height - 2.0 * border_offset).max(0.0);
                                 if (rel_y - divider_y).abs() <= 1.0 {
                                     return Some((
                                         handle,
-                                        divider_y as u16,
-                                        layout.size.height as u16,
+                                        (divider_y - border_offset) as u16,
+                                        content_h as u16,
                                     ));
                                 }
                             }

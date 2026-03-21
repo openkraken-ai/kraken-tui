@@ -76,7 +76,7 @@ export class CommandPalette {
 		this.syncListItems();
 	}
 
-	/** Open the palette. Clears filter and resets selection. */
+	/** Open the palette. Clears filter, resets selection, and focuses input. */
 	open(): void {
 		this.overlay.setOpen(true);
 		this.filteredCommands = [...this.commands];
@@ -86,6 +86,7 @@ export class CommandPalette {
 		checkResult(
 			ffi.tui_set_content(this.input.handle, Buffer.from(encoded), 0),
 		);
+		this.input.focus();
 	}
 
 	/** Close the palette. */
