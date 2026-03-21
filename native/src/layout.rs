@@ -301,7 +301,12 @@ fn resync_splitpane_if_needed(ctx: &mut TuiContext, handle: u32) -> Result<bool,
             Some(s) => s,
             None => return Ok(false),
         };
-        (state.axis, state.min_primary, state.min_secondary, node.taffy_node)
+        (
+            state.axis,
+            state.min_primary,
+            state.min_secondary,
+            node.taffy_node,
+        )
     };
 
     let available = ctx
