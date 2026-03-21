@@ -565,6 +565,32 @@ const symbols = {
 		returns: "i32" as const,
 	},
 
+	// SplitPane Widget (ADR-T35)
+	tui_splitpane_set_axis: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_splitpane_set_ratio: {
+		args: ["u32", "u16"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_splitpane_get_ratio: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_splitpane_set_min_sizes: {
+		args: ["u32", "u16", "u16"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_splitpane_set_resize_step: {
+		args: ["u32", "u16"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_splitpane_set_resizable: {
+		args: ["u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+
 	// Debug and Devtools (ADR-T34, TechSpec §4.3.3)
 	tui_debug_set_overlay: {
 		args: ["u32"] as FFIType[],

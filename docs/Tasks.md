@@ -347,9 +347,11 @@ And bounded trace buffers never exceed their configured retention limits
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-I4]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Add `NodeType::SplitPane`, ratio/min-size state, and keyboard/mouse resize behavior as defined in the TechSpec.
+- **Implementation Notes:** Created `native/src/splitpane.rs` with 8 module functions (set_axis, set_ratio, get_ratio, set_min_sizes, set_resize_step, set_resizable, handle_key, sync_children_layout). Added 6 FFI entry points in `lib.rs`. Added two-child constraint in `tree.rs` (like ScrollBox single-child). Added divider rendering in `render.rs` (│ for horizontal, ─ for vertical). Added keyboard resize dispatch in `event.rs`. SplitPane is focusable for keyboard resize. Created `ts/src/widgets/splitpane.ts` TS widget, added to JSX reconciler. 23 Rust unit tests, 17 FFI integration tests.
 - **Out of Scope:** Command palette, code/diff viewer composites, or repo inspector example assembly
 - **Acceptance Criteria (Gherkin):**
 
@@ -364,9 +366,11 @@ And terminal resize preserves a valid ratio and visible divider state
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
+- **Status:** Done
 - **Dependencies:** [TASK-K1]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Build `CommandPalette` as a host composite over `Overlay`, `Input`, and `List`, with dense filtering behavior suitable for flagship examples.
+- **Implementation Notes:** Created `ts/src/composites/command-palette.ts` as a pure TS composite. Uses Overlay (modal, dismiss-on-escape) → Box (column layout) → Input (filter) + List (commands). Provides open/close, setCommands, applyFilter, executeSelected, selectPrevious/selectNext APIs. Case-insensitive substring filtering. 2 FFI integration tests validating the widget composition pattern.
 - **Out of Scope:** Native palette widget work or repo inspector metadata panes
 - **Acceptance Criteria (Gherkin):**
 
@@ -381,9 +385,11 @@ And the palette can be reused in multiple examples without new native APIs
 
 - **Type:** Feature
 - **Effort:** Story Points: 3
+- **Status:** Done
 - **Dependencies:** [TASK-I5]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Build trace and structured-log surfaces as host composites on top of `TranscriptView`, including filtering hooks required by MVP examples.
+- **Implementation Notes:** Created `ts/src/composites/trace-panel.ts` with two composites. `TracePanel` wraps TranscriptView with trace-kind filtering (event/focus/dirty/viewport/all), follow/unfollow mode, and appendTrace API. `StructuredLogView` wraps TranscriptView for structured JSON log display with level/source/predicate filtering, appendLog API, and follow mode. 3 FFI integration tests validating transcript-backed composition.
 - **Out of Scope:** Code/diff surfaces or native log-view widgets
 - **Acceptance Criteria (Gherkin):**
 
@@ -398,9 +404,11 @@ And the same composite surfaces work in both agent and ops examples
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-K1]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Build initial code and diff viewer composites from existing text, scroll, and syntax-highlight primitives, then capture the measurements needed to decide whether native promotion is justified.
+- **Implementation Notes:** Created `ts/src/composites/code-view.ts` with two composites. `CodeView` wraps ScrollBox → Box → optional gutter Text + code Text (format=code, syntect highlighting). Provides setContent, setLineNumbers, getContent APIs. `DiffView` supports side-by-side (via SplitPane) and unified modes. Includes generateUnifiedDiff helper. Written measurement document at `docs/code-diff-native-measurement.md` — recommendation: native promotion NOT warranted for v4. 4 FFI integration tests validating code/diff widget composition.
 - **Out of Scope:** Immediate native code/diff widgets or packaging work
 - **Acceptance Criteria (Gherkin):**
 
