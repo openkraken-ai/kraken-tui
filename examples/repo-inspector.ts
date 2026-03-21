@@ -177,18 +177,18 @@ function readFileSafe(path: string, maxSize: number = 512 * 1024): string {
 // ── Theme Colors ─────────────────────────────────────────────────────
 
 const COLORS = {
-	bg: 0x282a36,
-	fg: 0xf8f8f2,
-	headerBg: 0x44475a,
-	headerFg: 0xbd93f9,
-	statusBg: 0x21222c,
-	statusFg: 0x6272a4,
-	accent: 0xbd93f9,
-	border: 0x44475a,
-	treeBg: 0x282a36,
-	codeBg: 0x282a36,
-	metaBg: 0x21222c,
-	metaFg: 0x6272a4,
+	bg: "#282a36",
+	fg: "#f8f8f2",
+	headerBg: "#44475a",
+	headerFg: "#bd93f9",
+	statusBg: "#21222c",
+	statusFg: "#6272a4",
+	accent: "#bd93f9",
+	border: "#44475a",
+	treeBg: "#282a36",
+	codeBg: "#282a36",
+	metaBg: "#21222c",
+	metaFg: "#6272a4",
 };
 
 // ── Application ──────────────────────────────────────────────────────

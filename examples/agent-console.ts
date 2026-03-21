@@ -189,17 +189,17 @@ function createReplayState(events: TranscriptReplayEvent[]): ReplayState {
 // ── Theme Colors ─────────────────────────────────────────────────────
 
 const COLORS = {
-	bg: 0x1a1b26,
-	fg: 0xc0caf5,
-	headerBg: 0x24283b,
-	headerFg: 0x7aa2f7,
-	statusBg: 0x1f2335,
-	statusFg: 0x565f89,
-	accent: 0x7aa2f7,
-	border: 0x3b4261,
-	panelBg: 0x1a1b26,
-	sideBg: 0x16161e,
-	highlight: 0xbb9af7,
+	bg: "#1a1b26",
+	fg: "#c0caf5",
+	headerBg: "#24283b",
+	headerFg: "#7aa2f7",
+	statusBg: "#1f2335",
+	statusFg: "#565f89",
+	accent: "#7aa2f7",
+	border: "#3b4261",
+	panelBg: "#1a1b26",
+	sideBg: "#16161e",
+	highlight: "#bb9af7",
 };
 
 // ── Application ──────────────────────────────────────────────────────

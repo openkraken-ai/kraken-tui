@@ -105,17 +105,17 @@ function generateLogEntry(): StructuredLogEntry {
 // ── Theme Colors ─────────────────────────────────────────────────────
 
 const COLORS = {
-	bg: 0x1e1e2e,
-	fg: 0xcdd6f4,
-	headerBg: 0x313244,
-	headerFg: 0x89b4fa,
-	statusBg: 0x181825,
-	statusFg: 0x6c7086,
-	accent: 0x89b4fa,
-	border: 0x45475a,
-	controlBg: 0x1e1e2e,
-	warnFg: 0xf9e2af,
-	errorFg: 0xf38ba8,
+	bg: "#1e1e2e",
+	fg: "#cdd6f4",
+	headerBg: "#313244",
+	headerFg: "#89b4fa",
+	statusBg: "#181825",
+	statusFg: "#6c7086",
+	accent: "#89b4fa",
+	border: "#45475a",
+	controlBg: "#1e1e2e",
+	warnFg: "#f9e2af",
+	errorFg: "#f38ba8",
 };
 
 // ── Application ──────────────────────────────────────────────────────
