@@ -218,9 +218,9 @@ root.setLabel("Agent Console");
 const header = new Box({ width: "100%", height: 1, bg: COLORS.headerBg, fg: COLORS.headerFg });
 header.setFlexDirection("row");
 
-const headerTitle = new Text({ content: " Agent Console", width: "30%", height: 1, fg: COLORS.accent, bold: true });
-const headerSession = new Text({ content: "session-001", width: "30%", height: 1, fg: COLORS.fg });
-const headerStatus = new Text({ content: "", width: "40%", height: 1, fg: COLORS.statusFg });
+const headerTitle = new Text({ content: " Agent Console", width: "30%", height: 1, fg: COLORS.accent, bg: COLORS.headerBg, bold: true });
+const headerSession = new Text({ content: "session-001", width: "30%", height: 1, fg: COLORS.fg, bg: COLORS.headerBg });
+const headerStatus = new Text({ content: "", width: "40%", height: 1, fg: COLORS.statusFg, bg: COLORS.headerBg });
 
 header.append(headerTitle);
 header.append(headerSession);
@@ -238,6 +238,7 @@ const splitPane = new SplitPane({
 	resizable: true,
 	width: "100%",
 	height: "100%",
+	bg: COLORS.bg,
 });
 splitPane.setRole(AccessibilityRole.Group);
 splitPane.setLabel("Main split pane");
@@ -303,6 +304,7 @@ const infoText = new Text({
 	width: "100%",
 	height: "100%",
 	fg: COLORS.fg,
+	bg: COLORS.sideBg,
 });
 infoPanel.append(infoText);
 
@@ -321,8 +323,8 @@ root.append(splitPane);
 const statusBar = new Box({ width: "100%", height: 1, bg: COLORS.statusBg, fg: COLORS.statusFg });
 statusBar.setFlexDirection("row");
 
-const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
-const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
+const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
+const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);

@@ -49,11 +49,11 @@ export class CommandPalette {
 		});
 		this.overlay.setDismissOnEscape(true);
 
-		this.container = new Box({ width: "100%", height: "100%" });
+		this.container = new Box({ width: "100%", height: "100%", bg: options.bg });
 		this.container.setFlexDirection("column");
 
-		this.input = new Input({ width: "100%", border: "single" });
-		this.list = new List({ width: "100%", height: "100%" });
+		this.input = new Input({ width: "100%", border: "single", fg: options.fg, bg: options.bg });
+		this.list = new List({ width: "100%", height: "100%", fg: options.fg, bg: options.bg });
 
 		this.container.append(this.input);
 		this.container.append(this.list);

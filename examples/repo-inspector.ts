@@ -208,8 +208,8 @@ root.setLabel("Repo Inspector");
 const header = new Box({ width: "100%", height: 1, bg: COLORS.headerBg, fg: COLORS.headerFg });
 header.setFlexDirection("row");
 
-const headerTitle = new Text({ content: ` Repo Inspector: ${repoName}`, width: "50%", height: 1, fg: COLORS.accent, bold: true });
-const headerInfo = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
+const headerTitle = new Text({ content: ` Repo Inspector: ${repoName}`, width: "50%", height: 1, fg: COLORS.accent, bg: COLORS.headerBg, bold: true });
+const headerInfo = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.headerBg });
 
 header.append(headerTitle);
 header.append(headerInfo);
@@ -226,6 +226,7 @@ const mainSplit = new SplitPane({
 	resizable: true,
 	width: "100%",
 	height: "100%",
+	bg: COLORS.bg,
 });
 mainSplit.setRole(AccessibilityRole.Group);
 
@@ -252,6 +253,7 @@ const contentSplit = new SplitPane({
 	resizable: true,
 	width: "100%",
 	height: "100%",
+	bg: COLORS.codeBg,
 });
 
 // Code viewer panel
@@ -288,7 +290,7 @@ const metaPanel = new Box({ width: "100%", height: "100%", bg: COLORS.metaBg, fg
 metaPanel.setFlexDirection("column");
 
 const metaLabel = new Text({ content: " Info", width: "100%", height: 1, fg: COLORS.accent, bold: true, bg: COLORS.headerBg });
-const metaText = new Text({ content: "Select a file to view details.", width: "100%", height: "100%", fg: COLORS.metaFg });
+const metaText = new Text({ content: "Select a file to view details.", width: "100%", height: "100%", fg: COLORS.metaFg, bg: COLORS.metaBg });
 
 metaPanel.append(metaLabel);
 metaPanel.append(metaText);
@@ -307,8 +309,8 @@ root.append(mainSplit);
 const statusBar = new Box({ width: "100%", height: 1, bg: COLORS.statusBg, fg: COLORS.statusFg });
 statusBar.setFlexDirection("row");
 
-const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
-const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
+const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
+const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);

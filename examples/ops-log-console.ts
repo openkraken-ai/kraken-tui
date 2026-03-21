@@ -133,9 +133,9 @@ root.setLabel("Ops Log Console");
 const header = new Box({ width: "100%", height: 1, bg: COLORS.headerBg, fg: COLORS.headerFg });
 header.setFlexDirection("row");
 
-const headerTitle = new Text({ content: " Ops Log Console", width: "30%", height: 1, fg: COLORS.accent, bold: true });
-const headerRate = new Text({ content: "", width: "30%", height: 1, fg: COLORS.fg });
-const headerFollow = new Text({ content: "", width: "40%", height: 1, fg: COLORS.statusFg });
+const headerTitle = new Text({ content: " Ops Log Console", width: "30%", height: 1, fg: COLORS.accent, bg: COLORS.headerBg, bold: true });
+const headerRate = new Text({ content: "", width: "30%", height: 1, fg: COLORS.fg, bg: COLORS.headerBg });
+const headerFollow = new Text({ content: "", width: "40%", height: 1, fg: COLORS.statusFg, bg: COLORS.headerBg });
 
 header.append(headerTitle);
 header.append(headerRate);
@@ -165,7 +165,7 @@ controlBar.setRole(AccessibilityRole.Toolbar);
 controlBar.setLabel("Log filters");
 
 // Level filter select
-const levelLabel = new Text({ content: " Level: ", width: 9, height: 1, fg: COLORS.fg });
+const levelLabel = new Text({ content: " Level: ", width: 9, height: 1, fg: COLORS.fg, bg: COLORS.controlBg });
 const levelSelect = new Select({
 	options: ["all", "debug", "info", "warn", "error", "fatal"],
 	width: 12,
@@ -178,14 +178,14 @@ levelSelect.setRole(AccessibilityRole.ListBox);
 levelSelect.setLabel("Log level filter");
 
 // Search input
-const searchLabel = new Text({ content: " Search: ", width: 10, height: 1, fg: COLORS.fg });
+const searchLabel = new Text({ content: " Search: ", width: 10, height: 1, fg: COLORS.fg, bg: COLORS.controlBg });
 const searchInput = new Input({ width: 30, height: 1, fg: COLORS.fg, bg: COLORS.bg, border: "single" });
 searchInput.setFocusable(true);
 searchInput.setRole(AccessibilityRole.Input);
 searchInput.setLabel("Search filter");
 
 // Stats display
-const statsText = new Text({ content: "", width: "100%", height: 1, fg: COLORS.statusFg });
+const statsText = new Text({ content: "", width: "100%", height: 1, fg: COLORS.statusFg, bg: COLORS.controlBg });
 
 controlBar.append(levelLabel);
 controlBar.append(levelSelect);
@@ -199,8 +199,8 @@ root.append(controlBar);
 const statusBar = new Box({ width: "100%", height: 1, bg: COLORS.statusBg, fg: COLORS.statusFg });
 statusBar.setFlexDirection("row");
 
-const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
-const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg });
+const statusLeft = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
+const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.statusFg, bg: COLORS.statusBg });
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);
