@@ -50,24 +50,27 @@ export class TracePanel {
 		return this.transcript;
 	}
 
-	/** Append a trace entry. Only visible if it matches the current filter. */
+	/** Append a trace entry. Always appended to transcript; collapsed if filtered out. */
 	appendTrace(kind: TraceKind, content: string): void {
 		const id = this.nextId++;
 		this.entries.push({ id, kind, content });
 
-		if (this.filter === "all" || this.filter === kind) {
-			const blockKind = TRACE_KIND_TO_BLOCK_KIND[kind] ?? "activity";
-			this.transcript.appendBlock({
-				id,
-				kind: blockKind,
-				role: "system",
-				content: `[${kind.toUpperCase()}] ${content}`,
-			});
-			this.transcript.finishBlock(id);
+		const blockKind = TRACE_KIND_TO_BLOCK_KIND[kind] ?? "activity";
+		this.transcript.appendBlock({
+			id,
+			kind: blockKind,
+			role: "system",
+			content: `[${kind.toUpperCase()}] ${content}`,
+		});
+		this.transcript.finishBlock(id);
+
+		// Collapse if it doesn't match the current filter
+		if (this.filter !== "all" && this.filter !== kind) {
+			this.transcript.setCollapsed(id, true);
 		}
 	}
 
-	/** Set the filter. Rebuilds the visible transcript. */
+	/** Set the filter. Updates collapsed state on all existing blocks. */
 	setFilter(kind: TraceKind): void {
 		this.filter = kind;
 		this.rebuild();
@@ -100,18 +103,13 @@ export class TracePanel {
 	}
 
 	private rebuild(): void {
-		// Create a fresh TranscriptView would require destroying the widget.
-		// Instead, we rebuild by appending only matching entries.
-		// The transcript is append-only, so we use a new ID space for the rebuild.
-		const visible =
-			this.filter === "all"
-				? this.entries
-				: this.entries.filter((e) => e.kind === this.filter);
-
-		// Transcript blocks are append-only. To "filter", we collapse non-matching blocks.
-		// For simplicity in the composite layer, we track visible count and
-		// leave the underlying transcript intact — real filtering happens at the host level.
-		// This preserves transcript anchor correctness per acceptance criteria.
+		// Update collapsed state for every block based on the new filter.
+		// Blocks that match the filter are uncollapsed; non-matching blocks are collapsed.
+		// This preserves transcript anchor correctness (no blocks are deleted/recreated).
+		for (const entry of this.entries) {
+			const shouldShow = this.filter === "all" || this.filter === entry.kind;
+			this.transcript.setCollapsed(entry.id, !shouldShow);
+		}
 	}
 }
 
@@ -149,11 +147,16 @@ const LOG_LEVEL_KIND: Record<LogLevel, BlockKind> = {
 	fatal: "toolResult",
 };
 
+interface TrackedLogEntry {
+	blockId: number;
+	entry: StructuredLogEntry;
+}
+
 export class StructuredLogView {
 	private transcript: TranscriptView;
 	private filter: LogLevel | ((entry: StructuredLogEntry) => boolean) | null = null;
 	private nextId = 1;
-	private entries: StructuredLogEntry[] = [];
+	private trackedEntries: TrackedLogEntry[] = [];
 
 	constructor(options: StructuredLogViewOptions = {}) {
 		this.transcript = new TranscriptView({
@@ -174,13 +177,11 @@ export class StructuredLogView {
 		return this.transcript;
 	}
 
-	/** Append a structured log entry. */
+	/** Append a structured log entry. Always appended; collapsed if filtered out. */
 	appendLog(entry: StructuredLogEntry): void {
-		this.entries.push(entry);
-
-		if (!this.matchesFilter(entry)) return;
-
 		const id = this.nextId++;
+		this.trackedEntries.push({ blockId: id, entry });
+
 		const ts = entry.timestamp ?? new Date().toISOString();
 		const src = entry.source ? `[${entry.source}] ` : "";
 		const dataStr =
@@ -194,16 +195,23 @@ export class StructuredLogView {
 
 		this.transcript.appendBlock({ id, kind, role, content });
 		this.transcript.finishBlock(id);
+
+		// Collapse if it doesn't match the current filter
+		if (!this.matchesFilter(entry)) {
+			this.transcript.setCollapsed(id, true);
+		}
 	}
 
-	/** Set a filter by log level or custom predicate. */
+	/** Set a filter by log level or custom predicate. Rebuilds visibility of all blocks. */
 	setFilter(filter: LogLevel | ((entry: StructuredLogEntry) => boolean) | null): void {
 		this.filter = filter;
+		this.rebuildVisibility();
 	}
 
-	/** Clear the filter (show all entries). */
+	/** Clear the filter (show all entries). Rebuilds visibility of all blocks. */
 	clearFilter(): void {
 		this.filter = null;
+		this.rebuildVisibility();
 	}
 
 	/** Enable tail-lock follow mode. */
@@ -218,12 +226,20 @@ export class StructuredLogView {
 
 	/** Get the total number of log entries. */
 	getEntryCount(): number {
-		return this.entries.length;
+		return this.trackedEntries.length;
 	}
 
 	private matchesFilter(entry: StructuredLogEntry): boolean {
 		if (this.filter === null) return true;
 		if (typeof this.filter === "string") return entry.level === this.filter;
 		return this.filter(entry);
+	}
+
+	private rebuildVisibility(): void {
+		// Update collapsed state for every block based on the new filter.
+		for (const tracked of this.trackedEntries) {
+			const shouldShow = this.matchesFilter(tracked.entry);
+			this.transcript.setCollapsed(tracked.blockId, !shouldShow);
+		}
 	}
 }

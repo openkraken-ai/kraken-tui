@@ -127,7 +127,7 @@ pub(crate) fn set_resizable(
 /// Handle keyboard resize events for a focused SplitPane.
 /// Returns true if the key was consumed.
 pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
-    let (axis, ratio, step, resizable, children_len) = {
+    let (axis, ratio, step, resizable, children_len, taffy_node) = {
         let node = match ctx.nodes.get(&handle) {
             Some(n) => n,
             None => return false,
@@ -142,6 +142,7 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
             state.resize_step,
             state.resizable,
             node.children.len(),
+            node.taffy_node,
         )
     };
 
@@ -149,7 +150,22 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
         return false;
     }
 
-    let step_permille = step.max(1) * 10; // Convert cell-step to rough permille
+    // Convert cell-step to permille using the actual pane size along the split axis.
+    // This ensures step_cells moves the divider by the documented number of cells
+    // regardless of terminal width.
+    let pane_size = ctx
+        .tree
+        .layout(taffy_node)
+        .map(|l| match axis {
+            SplitAxis::Horizontal => l.size.width as u16,
+            SplitAxis::Vertical => l.size.height as u16,
+        })
+        .unwrap_or(0);
+    let step_permille = if pane_size > 0 {
+        ((step.max(1) as u32) * 1000 / (pane_size as u32)).max(1) as u16
+    } else {
+        step.max(1) * 10 // fallback before first layout
+    };
 
     let new_ratio = match axis {
         SplitAxis::Horizontal => match code {
@@ -903,6 +919,103 @@ mod tests {
     fn test_mouse_click_invalid_handle_returns_false() {
         let mut ctx = test_ctx();
         assert!(!handle_mouse(&mut ctx, 99999, 30, 100));
+    }
+
+    // ================================================================
+    // Edge case: width-aware step conversion with layout
+    // ================================================================
+
+    #[test]
+    fn test_step_cells_uses_actual_pane_width() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+
+        // Set the root and do a layout so the SplitPane gets a computed size
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        // Give the root a known size
+        {
+            let node = ctx.nodes.get(&sp).unwrap();
+            let tn = node.taffy_node;
+            let mut style = ctx.tree.style(tn).unwrap().clone();
+            style.size.width = length(100.0);
+            style.size.height = length(24.0);
+            ctx.tree.set_style(tn, style).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        set_resize_step(&mut ctx, sp, 5).unwrap(); // 5 cells
+
+        // Compute layout so the size is known
+        crate::layout::compute_layout(&mut ctx);
+
+        ctx.event_buffer.clear();
+        handle_key(&mut ctx, sp, key::RIGHT);
+        let ratio = get_ratio(&ctx, sp).unwrap();
+
+        // step=5, pane_width=100 → step_permille = 5*1000/100 = 50
+        // ratio was 500, should now be 550
+        assert_eq!(ratio, 550);
+    }
+
+    #[test]
+    fn test_step_cells_deterministic_across_widths() {
+        // Verify that the same step_cells produces different permille deltas
+        // at different pane widths (i.e., it's NOT a fixed permille like the old step*10)
+        let mut ctx = test_ctx();
+
+        // --- 100-cell-wide pane ---
+        let sp1 = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1a = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c1b = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp1);
+        tree::append_child(&mut ctx, sp1, c1a).unwrap();
+        tree::append_child(&mut ctx, sp1, c1b).unwrap();
+        {
+            let tn = ctx.nodes[&sp1].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(100.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+        set_ratio(&mut ctx, sp1, 500).unwrap();
+        set_resize_step(&mut ctx, sp1, 10).unwrap();
+        crate::layout::compute_layout(&mut ctx);
+        ctx.event_buffer.clear();
+        handle_key(&mut ctx, sp1, key::RIGHT);
+        let delta_100 = get_ratio(&ctx, sp1).unwrap() - 500;
+
+        // --- 200-cell-wide pane ---
+        let sp2 = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c2a = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2b = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp2);
+        tree::append_child(&mut ctx, sp2, c2a).unwrap();
+        tree::append_child(&mut ctx, sp2, c2b).unwrap();
+        {
+            let tn = ctx.nodes[&sp2].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(200.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+        set_ratio(&mut ctx, sp2, 500).unwrap();
+        set_resize_step(&mut ctx, sp2, 10).unwrap();
+        crate::layout::compute_layout(&mut ctx);
+        ctx.event_buffer.clear();
+        handle_key(&mut ctx, sp2, key::RIGHT);
+        let delta_200 = get_ratio(&ctx, sp2).unwrap() - 500;
+
+        // 10 cells at 100 width → 100 permille
+        assert_eq!(delta_100, 100);
+        // 10 cells at 200 width → 50 permille
+        assert_eq!(delta_200, 50);
+        // Different widths produce different permille deltas
+        assert_ne!(delta_100, delta_200);
     }
 
     // ================================================================

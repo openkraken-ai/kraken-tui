@@ -55,9 +55,9 @@ export class CommandPalette {
 		this.input = new Input({ width: "100%", border: "single" });
 		this.list = new List({ width: "100%", height: "100%" });
 
-		this.container.appendChild(this.input);
-		this.container.appendChild(this.list);
-		this.overlay.appendChild(this.container);
+		this.container.append(this.input);
+		this.container.append(this.list);
+		this.overlay.append(this.container);
 
 		if (options.commands) {
 			this.setCommands(options.commands);

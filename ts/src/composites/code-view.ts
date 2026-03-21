@@ -52,7 +52,7 @@ export class CodeView {
 		if (this.showLineNumbers) {
 			this.gutterText = new Text({ fg: options.fg ?? "#888888" });
 			this.gutterText.setWidth(4);
-			this.container.appendChild(this.gutterText);
+			this.container.append(this.gutterText);
 		}
 
 		this.codeText = new Text({
@@ -61,8 +61,8 @@ export class CodeView {
 			fg: options.fg,
 		});
 		this.codeText.setWidth("100%");
-		this.container.appendChild(this.codeText);
-		this.scrollBox.appendChild(this.container);
+		this.container.append(this.codeText);
+		this.scrollBox.append(this.container);
 
 		if (options.content) {
 			this.setContent(options.content, options.language ?? "");
@@ -184,8 +184,8 @@ export class DiffView {
 				bg: options.bg,
 			});
 
-			this.splitPane.appendChild(this.leftView.getWidget());
-			this.splitPane.appendChild(this.rightView.getWidget());
+			this.splitPane.append(this.leftView.getWidget());
+			this.splitPane.append(this.rightView.getWidget());
 			this.root = this.splitPane;
 		} else {
 			// Unified mode: single code view with diff markers

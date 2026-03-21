@@ -187,29 +187,36 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     }
                 }
 
-                // Left-click on SplitPane: reposition divider (ADR-T35)
+                // Left-click on SplitPane divider: reposition divider (ADR-T35)
+                // Only triggers when the click lands on or adjacent to the divider strip,
+                // not on arbitrary descendant widgets inside the panes.
                 if button == 0 {
-                    if let Some(sp_handle) = find_splitpane_ancestor(ctx, target) {
-                        if let Some(sp_node) = ctx.nodes.get(&sp_handle) {
-                            if let Some(ref state) = sp_node.split_pane_state {
-                                let sp_taffy = sp_node.taffy_node;
-                                let axis = state.axis;
-                                // Compute the absolute position of the SplitPane
-                                if let Ok(layout) = ctx.tree.layout(sp_taffy) {
+                    if let Some((sp_handle, _divider_pos, pane_size)) =
+                        find_splitpane_divider_hit(ctx, x, y)
+                    {
+                        if pane_size > 0 {
+                            let click_along_axis = match ctx
+                                .nodes
+                                .get(&sp_handle)
+                                .and_then(|n| n.split_pane_state.as_ref())
+                                .map(|s| s.axis)
+                            {
+                                Some(crate::types::SplitAxis::Horizontal) => {
                                     let abs = compute_absolute_position(ctx, sp_handle);
-                                    let (click_pos, size) = match axis {
-                                        crate::types::SplitAxis::Horizontal => {
-                                            let rel_x = (x as f32) - abs.0;
-                                            (rel_x.max(0.0) as u16, layout.size.width as u16)
-                                        }
-                                        crate::types::SplitAxis::Vertical => {
-                                            let rel_y = (y as f32) - abs.1;
-                                            (rel_y.max(0.0) as u16, layout.size.height as u16)
-                                        }
-                                    };
-                                    crate::splitpane::handle_mouse(ctx, sp_handle, click_pos, size);
+                                    ((x as f32) - abs.0).max(0.0) as u16
                                 }
-                            }
+                                Some(crate::types::SplitAxis::Vertical) => {
+                                    let abs = compute_absolute_position(ctx, sp_handle);
+                                    ((y as f32) - abs.1).max(0.0) as u16
+                                }
+                                None => 0,
+                            };
+                            crate::splitpane::handle_mouse(
+                                ctx,
+                                sp_handle,
+                                click_along_axis,
+                                pane_size,
+                            );
                         }
                     }
                 }
@@ -958,22 +965,78 @@ fn find_transcript_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
     }
 }
 
-/// Walk up the parent chain looking for a SplitPane node.
-fn find_splitpane_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
-    let mut current = handle;
-    loop {
-        if let Some(node) = ctx.nodes.get(&current) {
-            if node.node_type == crate::types::NodeType::SplitPane {
-                return Some(current);
-            }
-            match node.parent {
-                Some(parent) => current = parent,
-                None => return None,
-            }
-        } else {
+/// Check if a click at (x, y) hits the divider strip of a SplitPane ancestor.
+/// Returns (splitpane_handle, divider_position, pane_size_along_axis) if the click
+/// is on or within ±1 cell of the divider line. Returns None otherwise, so that
+/// clicks on child widgets inside the panes are not intercepted.
+fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, u16, u16)> {
+    // Walk the tree looking for SplitPane nodes where the click is near the divider.
+    // We check from root down so we find the outermost matching SplitPane first.
+    fn check_node(ctx: &TuiContext, handle: u32, x: f32, y: f32) -> Option<(u32, u16, u16)> {
+        let node = ctx.nodes.get(&handle)?;
+        if !node.visible {
             return None;
         }
+
+        if node.node_type == crate::types::NodeType::SplitPane {
+            if let Some(ref state) = node.split_pane_state {
+                if state.resizable && node.children.len() >= 2 {
+                    let sp_abs = compute_absolute_position(ctx, handle);
+                    let layout = ctx.tree.layout(node.taffy_node).ok()?;
+                    let rel_x = x - sp_abs.0;
+                    let rel_y = y - sp_abs.1;
+
+                    // Check if the click is within the SplitPane bounds
+                    if rel_x >= 0.0
+                        && rel_y >= 0.0
+                        && rel_x < layout.size.width
+                        && rel_y < layout.size.height
+                    {
+                        // Find divider position from the primary child's layout
+                        let primary = ctx.nodes.get(&node.children[0])?;
+                        let primary_layout = ctx.tree.layout(primary.taffy_node).ok()?;
+
+                        match state.axis {
+                            crate::types::SplitAxis::Horizontal => {
+                                let divider_x =
+                                    primary_layout.location.x + primary_layout.size.width;
+                                // ±1 cell tolerance around the divider
+                                if (rel_x - divider_x).abs() <= 1.0 {
+                                    return Some((
+                                        handle,
+                                        divider_x as u16,
+                                        layout.size.width as u16,
+                                    ));
+                                }
+                            }
+                            crate::types::SplitAxis::Vertical => {
+                                let divider_y =
+                                    primary_layout.location.y + primary_layout.size.height;
+                                if (rel_y - divider_y).abs() <= 1.0 {
+                                    return Some((
+                                        handle,
+                                        divider_y as u16,
+                                        layout.size.height as u16,
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check children (nested SplitPanes)
+        for &child in &node.children {
+            if let Some(hit) = check_node(ctx, child, x, y) {
+                return Some(hit);
+            }
+        }
+        None
     }
+
+    let root = ctx.root?;
+    check_node(ctx, root, x as f32, y as f32)
 }
 
 /// Compute the absolute screen position of a node by walking up the parent chain
