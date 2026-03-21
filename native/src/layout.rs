@@ -251,20 +251,77 @@ pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
 
     let start = std::time::Instant::now();
 
+    let avail = Size {
+        width: AvailableSpace::Definite(w as f32),
+        height: AvailableSpace::Definite(h as f32),
+    };
+
     ctx.tree
-        .compute_layout(
-            root_taffy,
-            Size {
-                width: AvailableSpace::Definite(w as f32),
-                height: AvailableSpace::Definite(h as f32),
-            },
-        )
+        .compute_layout(root_taffy, avail)
         .map_err(|e| format!("Layout computation failed: {e:?}"))?;
+
+    // After the first layout pass, re-sync SplitPane children whose min-size
+    // constraints may now exceed their computed container size (e.g. after a
+    // terminal resize).  If any SplitPane was adjusted, run a second layout
+    // pass so Taffy sees the clamped min values.
+    let splitpane_handles: Vec<u32> = ctx
+        .nodes
+        .iter()
+        .filter(|(_, n)| n.split_pane_state.is_some() && n.children.len() >= 2)
+        .map(|(h, _)| *h)
+        .collect();
+
+    let mut needs_relayout = false;
+    for sp_handle in &splitpane_handles {
+        if resync_splitpane_if_needed(ctx, *sp_handle)? {
+            needs_relayout = true;
+        }
+    }
+    if needs_relayout {
+        ctx.tree
+            .compute_layout(root_taffy, avail)
+            .map_err(|e| format!("Layout re-computation failed: {e:?}"))?;
+    }
 
     ctx.perf_layout_us = start.elapsed().as_micros() as u64;
     ctx.debug_log(&format!("compute_layout: {}μs", ctx.perf_layout_us));
 
     Ok(())
+}
+
+/// Check whether a SplitPane's min-size constraints overflow its computed size.
+/// If so, re-sync its children (which clamps the effective mins) and return true.
+fn resync_splitpane_if_needed(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
+    let (axis, min_p, min_s, taffy_node) = {
+        let node = match ctx.nodes.get(&handle) {
+            Some(n) => n,
+            None => return Ok(false),
+        };
+        let state = match node.split_pane_state.as_ref() {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+        (state.axis, state.min_primary, state.min_secondary, node.taffy_node)
+    };
+
+    let available = ctx
+        .tree
+        .layout(taffy_node)
+        .map(|l| match axis {
+            crate::types::SplitAxis::Horizontal => l.size.width,
+            crate::types::SplitAxis::Vertical => l.size.height,
+        })
+        .unwrap_or(0.0);
+
+    let usable = (available - 1.0).max(0.0);
+    let total_min = (min_p as f32) + (min_s as f32);
+
+    if usable > 0.0 && total_min > usable {
+        crate::splitpane::sync_children_layout(ctx, handle)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Get the computed layout for a node (x, y, width, height).

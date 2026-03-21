@@ -3605,6 +3605,37 @@ describe("FFI integration", () => {
 			palette.getWidget().destroySubtree();
 		});
 
+		test("CommandPalette.handleInput() reads Input value and filters", async () => {
+			const { CommandPalette } = await import("./src/composites/command-palette");
+			const palette = new CommandPalette({
+				commands: [
+					{ id: "a", label: "Open File", action: () => {} },
+					{ id: "b", label: "Close Tab", action: () => {} },
+					{ id: "c", label: "Open Terminal", action: () => {} },
+				],
+			});
+			palette.open();
+			expect(palette.getFilteredCount()).toBe(3);
+
+			// Expose getInput() / getQuery() / handleInput()
+			const input = palette.getInput();
+			expect(input).toBeDefined();
+
+			// Simulate typing "open" by setting content on the native Input
+			const encoded = new TextEncoder().encode("open");
+			ffi.tui_set_content(input.handle, Buffer.from(encoded), encoded.length);
+
+			// Before handleInput, filter is still showing all
+			expect(palette.getFilteredCount()).toBe(3);
+
+			// handleInput reads the Input value and applies the filter
+			palette.handleInput();
+			expect(palette.getQuery()).toBe("open");
+			expect(palette.getFilteredCount()).toBe(2); // "Open File" + "Open Terminal"
+
+			palette.getWidget().destroySubtree();
+		});
+
 		test("TracePanel constructs, appends, and filters", async () => {
 			const { TracePanel } = await import("./src/composites/trace-panel");
 			const tp = new TracePanel({ filter: "all" });

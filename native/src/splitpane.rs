@@ -285,7 +285,35 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
     if children.len() >= 2 {
         let ratio_pct = state.primary_ratio_permille as f32 / 10.0;
 
-        // Primary child: fixed percentage
+        // Read the SplitPane's last computed layout to get available space.
+        // When min_primary + min_secondary + divider_gap exceeds the pane,
+        // we must clamp the effective mins proportionally so children never
+        // overflow the container (ADR-T35 terminal-resize invariant).
+        let available = ctx
+            .tree
+            .layout(taffy_node)
+            .map(|l| match state.axis {
+                SplitAxis::Horizontal => l.size.width,
+                SplitAxis::Vertical => l.size.height,
+            })
+            .unwrap_or(0.0);
+        // Usable space after the 1-cell divider gap
+        let usable = (available - 1.0).max(0.0);
+
+        let (eff_min_primary, eff_min_secondary) = {
+            let mp = state.min_primary as f32;
+            let ms = state.min_secondary as f32;
+            let total_min = mp + ms;
+            if usable > 0.0 && total_min > usable && total_min > 0.0 {
+                // Proportionally reduce both mins to fit
+                let scale = usable / total_min;
+                ((mp * scale).floor(), (ms * scale).floor())
+            } else {
+                (mp, ms)
+            }
+        };
+
+        // Primary child: fixed percentage, shrinkable under pressure
         if let Some(primary) = ctx.nodes.get(&children[0]) {
             let primary_taffy = primary.taffy_node;
             let mut style = ctx
@@ -295,20 +323,20 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .clone();
             style.flex_basis = percent(ratio_pct / 100.0);
             style.flex_grow = 0.0;
-            style.flex_shrink = 0.0;
+            style.flex_shrink = 1.0;
 
             // Set min size based on axis
             match state.axis {
                 SplitAxis::Horizontal => {
-                    style.min_size.width = if state.min_primary > 0 {
-                        length(state.min_primary as f32)
+                    style.min_size.width = if eff_min_primary > 0.0 {
+                        length(eff_min_primary)
                     } else {
                         auto()
                     };
                 }
                 SplitAxis::Vertical => {
-                    style.min_size.height = if state.min_primary > 0 {
-                        length(state.min_primary as f32)
+                    style.min_size.height = if eff_min_primary > 0.0 {
+                        length(eff_min_primary)
                     } else {
                         auto()
                     };
@@ -320,7 +348,7 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .map_err(|e| format!("Taffy set_style failed: {e:?}"))?;
         }
 
-        // Secondary child: takes remaining space
+        // Secondary child: takes remaining space, shrinkable under pressure
         if let Some(secondary) = ctx.nodes.get(&children[1]) {
             let secondary_taffy = secondary.taffy_node;
             let mut style = ctx
@@ -330,20 +358,20 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .clone();
             style.flex_basis = auto();
             style.flex_grow = 1.0;
-            style.flex_shrink = 0.0;
+            style.flex_shrink = 1.0;
 
             // Set min size based on axis
             match state.axis {
                 SplitAxis::Horizontal => {
-                    style.min_size.width = if state.min_secondary > 0 {
-                        length(state.min_secondary as f32)
+                    style.min_size.width = if eff_min_secondary > 0.0 {
+                        length(eff_min_secondary)
                     } else {
                         auto()
                     };
                 }
                 SplitAxis::Vertical => {
-                    style.min_size.height = if state.min_secondary > 0 {
-                        length(state.min_secondary as f32)
+                    style.min_size.height = if eff_min_secondary > 0.0 {
+                        length(eff_min_secondary)
                     } else {
                         auto()
                     };
@@ -1179,5 +1207,144 @@ mod tests {
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp, key::RIGHT);
         assert_eq!(get_ratio(&ctx, sp).unwrap(), 1000);
+    }
+
+    // ================================================================
+    // Min-size clamping when container shrinks (ADR-T35)
+    // ================================================================
+
+    #[test]
+    fn test_min_sizes_clamped_when_container_shrinks() {
+        // Setup: 100-wide pane, min_primary=60, min_secondary=30 → fits (60+30+1 = 91 ≤ 100)
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(100.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        set_min_sizes(&mut ctx, sp, 60, 30).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        // Both children should fit within the 100-wide container
+        let c1_layout = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let c2_layout = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        let total_width = c1_layout.size.width + c2_layout.size.width + 1.0; // +1 for gap
+        assert!(
+            total_width <= 100.0 + 0.5,
+            "Initial: children should fit in 100-wide pane, got {total_width}"
+        );
+
+        // Shrink to 80: min_primary(60) + min_secondary(30) + gap(1) = 91 > 80
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(80.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        let c1_layout = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let c2_layout = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        let total_width = c1_layout.size.width + c2_layout.size.width + 1.0;
+        assert!(
+            total_width <= 80.0 + 0.5,
+            "After shrink: children must fit in 80-wide pane, got {total_width}"
+        );
+
+        // Neither child extends past the container
+        let c2_end = c2_layout.location.x + c2_layout.size.width;
+        assert!(
+            c2_end <= 80.0 + 0.5,
+            "Second pane end ({c2_end}) must not exceed container width (80)"
+        );
+    }
+
+    #[test]
+    fn test_min_sizes_not_clamped_when_they_fit() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(200.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        set_min_sizes(&mut ctx, sp, 20, 20).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        // Both children should respect original min sizes (they fit easily)
+        let c1_layout = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let c2_layout = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        assert!(
+            c1_layout.size.width >= 20.0,
+            "Primary should respect min_primary=20, got {}",
+            c1_layout.size.width
+        );
+        assert!(
+            c2_layout.size.width >= 20.0,
+            "Secondary should respect min_secondary=20, got {}",
+            c2_layout.size.width
+        );
+    }
+
+    #[test]
+    fn test_vertical_min_sizes_clamped_on_shrink() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        set_axis(&mut ctx, sp, 1).unwrap(); // Vertical
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(80.0);
+            s.size.height = length(40.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 500).unwrap();
+        set_min_sizes(&mut ctx, sp, 25, 25).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        // Shrink height to 30: 25+25+1 = 51 > 30
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.height = length(30.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        let c1_layout = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let c2_layout = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        let total_height = c1_layout.size.height + c2_layout.size.height + 1.0;
+        assert!(
+            total_height <= 30.0 + 0.5,
+            "Vertical: children must fit in 30-tall pane, got {total_height}"
+        );
     }
 }

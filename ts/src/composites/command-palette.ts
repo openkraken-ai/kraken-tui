@@ -99,8 +99,29 @@ export class CommandPalette {
 	}
 
 	/**
+	 * Read the current value of the embedded Input widget and apply it as
+	 * the filter query.  Call this from your event loop after the Input
+	 * receives keystrokes so visible commands update automatically.
+	 */
+	handleInput(): void {
+		const query = this.input.getValue();
+		this.applyFilter(query);
+	}
+
+	/** Return the current filter query string. */
+	getQuery(): string {
+		return this.input.getValue();
+	}
+
+	/** Return the embedded Input widget for focus/event wiring. */
+	getInput(): Input {
+		return this.input;
+	}
+
+	/**
 	 * Apply a text filter to the command list.
-	 * Call this from your event loop when the input content changes.
+	 * Can be called directly with an explicit query string, or use
+	 * handleInput() to read the embedded Input widget automatically.
 	 */
 	applyFilter(query: string): void {
 		const q = query.toLowerCase();
