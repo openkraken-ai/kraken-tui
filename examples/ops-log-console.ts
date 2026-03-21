@@ -140,7 +140,6 @@ const headerFollow = new Text({ content: "", width: "40%", height: 1, fg: COLORS
 header.append(headerTitle);
 header.append(headerRate);
 header.append(headerFollow);
-root.append(header);
 
 // ── Main Log View ────────────────────────────────────────────────────
 
@@ -155,7 +154,10 @@ logView.getWidget().setFocusable(true);
 logView.getWidget().setRole(AccessibilityRole.Log);
 logView.getWidget().setLabel("Structured log stream");
 
-root.append(logView.getWidget());
+// Content area wrapper — prevents logView from pushing controls off-screen
+const contentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+contentArea.setFlexDirection("column");
+contentArea.append(logView.getWidget());
 
 // ── Control Bar ──────────────────────────────────────────────────────
 
@@ -192,7 +194,6 @@ controlBar.append(levelSelect);
 controlBar.append(searchLabel);
 controlBar.append(searchInput);
 controlBar.append(statsText);
-root.append(controlBar);
 
 // ── Status Bar ───────────────────────────────────────────────────────
 
@@ -204,6 +205,11 @@ const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);
+
+// Assemble root: header → content → controls → status
+root.append(header);
+root.append(contentArea);
+root.append(controlBar);
 root.append(statusBar);
 
 // ── State ────────────────────────────────────────────────────────────

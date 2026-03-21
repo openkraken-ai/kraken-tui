@@ -225,7 +225,6 @@ const headerStatus = new Text({ content: "", width: "40%", height: 1, fg: COLORS
 header.append(headerTitle);
 header.append(headerSession);
 header.append(headerStatus);
-root.append(header);
 
 // ── Main Area: SplitPane ─────────────────────────────────────────────
 
@@ -316,7 +315,11 @@ sidePanel.append(infoPanel);
 // Assemble split pane
 splitPane.append(transcript);
 splitPane.append(sidePanel);
-root.append(splitPane);
+
+// Content area wrapper — prevents splitPane from pushing header/status off-screen
+const contentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+contentArea.setFlexDirection("column");
+contentArea.append(splitPane);
 
 // ── Status Bar ───────────────────────────────────────────────────────
 
@@ -328,6 +331,10 @@ const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);
+
+// Assemble root: header → content → status → palette overlay
+root.append(header);
+root.append(contentArea);
 root.append(statusBar);
 
 // ── Command Palette ──────────────────────────────────────────────────
@@ -402,6 +409,9 @@ const palette = new CommandPalette({
 	bg: COLORS.headerBg,
 });
 root.append(palette.getWidget());
+palette.getWidget().setMargin(
+	Math.floor(termH * 0.25), 0, 0, Math.floor(termW * 0.20),
+);
 
 // ── Set Root ─────────────────────────────────────────────────────────
 

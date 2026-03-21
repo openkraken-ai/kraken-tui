@@ -213,7 +213,6 @@ const headerInfo = new Text({ content: "", width: "50%", height: 1, fg: COLORS.s
 
 header.append(headerTitle);
 header.append(headerInfo);
-root.append(header);
 
 // ── Main SplitPane: File Tree + Content ──────────────────────────────
 
@@ -302,7 +301,11 @@ contentSplit.append(metaPanel);
 // Assemble main split
 mainSplit.append(treePanel);
 mainSplit.append(contentSplit);
-root.append(mainSplit);
+
+// Content area wrapper — prevents mainSplit from pushing header/status off-screen
+const mainContentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+mainContentArea.setFlexDirection("column");
+mainContentArea.append(mainSplit);
 
 // ── Status Bar ───────────────────────────────────────────────────────
 
@@ -314,7 +317,6 @@ const statusRight = new Text({ content: "", width: "50%", height: 1, fg: COLORS.
 
 statusBar.append(statusLeft);
 statusBar.append(statusRight);
-root.append(statusBar);
 
 // ── Command Palette ──────────────────────────────────────────────────
 
@@ -396,7 +398,15 @@ const palette = new CommandPalette({
 	fg: COLORS.fg,
 	bg: COLORS.headerBg,
 });
+// Assemble root: header → content → status → palette overlay
+root.append(header);
+root.append(mainContentArea);
+root.append(statusBar);
 root.append(palette.getWidget());
+palette.getWidget().setMargin(
+	Math.floor(app.getTerminalSize().height * 0.25), 0, 0,
+	Math.floor(app.getTerminalSize().width * 0.20),
+);
 
 // ── Set Root ─────────────────────────────────────────────────────────
 

@@ -48,6 +48,7 @@ export class CommandPalette {
 			border: "rounded",
 		});
 		this.overlay.setDismissOnEscape(true);
+		this.overlay.setPositionType("absolute");
 
 		this.container = new Box({ width: "100%", height: "100%", bg: options.bg });
 		this.container.setFlexDirection("column");
