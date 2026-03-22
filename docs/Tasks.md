@@ -3,7 +3,7 @@
 ## Kraken TUI
 
 **Version**: 6.0
-**Status**: In Progress (Epics I and J complete)
+**Status**: Complete (Epics I, J, K, L all done)
 **Date**: March 2026
 **Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
 
@@ -425,9 +425,11 @@ And a written measurement exists describing whether native promotion is warrante
 
 - **Type:** Feature
 - **Effort:** Story Points: 8
+- **Status:** Done
 - **Dependencies:** [TASK-J4, TASK-K2, TASK-K3]
 - **Priority Area:** Flagship examples as proof
 - **Description:** Build `agent-console` around transcript streaming, tool-call traces, split panes, command palette actions, and dev-mode inspection.
+- **Implementation Notes:** Created `examples/agent-console.ts` (~380 lines). Demonstrates TranscriptView with 57 AG-UI replay events (2-turn agent session with reasoning, tool calls, tool results), SplitPane (70/30 transcript + side panel), TracePanel with filter cycling, CommandPalette with 15 commands, Tabs for side panel switching, follow mode cycling, unread tracking, dev overlay toggling. Replay engine drives events at configurable speed in onTick.
 - **Out of Scope:** Repo inspector workflows or packaging demos
 - **Acceptance Criteria (Gherkin):**
 
@@ -442,9 +444,11 @@ And the command palette and devtools surfaces are usable in the same session
 
 - **Type:** Feature
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-J3, TASK-K3]
 - **Priority Area:** Flagship examples as proof
 - **Description:** Build `ops-log-console` with follow mode, filtering, folding, and inspector overlays using transcript-backed log surfaces.
+- **Implementation Notes:** Created `examples/ops-log-console.ts` (~310 lines). Demonstrates StructuredLogView with continuous log generation from 18 realistic templates (HTTP, DB, cache, worker, auth, deploy sources), Select widget for level filtering (all/debug/info/warn/error/fatal), Input for text search, custom predicate filters, 3-mode follow cycling, 4-mode dev overlay cycling, configurable log rate, pause/resume.
 - **Out of Scope:** Repo navigation, code/diff viewing, or packaging polish
 - **Acceptance Criteria (Gherkin):**
 
@@ -459,9 +463,11 @@ And dev overlays expose the viewport and dirty-region behavior during the sessio
 
 - **Type:** Chore
 - **Effort:** Story Points: 5
+- **Status:** Done
 - **Dependencies:** [TASK-L1, TASK-L2]
 - **Priority Area:** Flagship examples as proof
 - **Description:** Convert the MVP examples into blocking proof artifacts with replay fixtures, goldens, and benchmark thresholds.
+- **Implementation Notes:** Created `ts/test-examples.test.ts` (16 tests) with JSON fixtures at `examples/fixtures/agent-console-replay.json` (57 events, 4 checkpoints) and `examples/fixtures/ops-log-replay.json` (20 entries, 2 checkpoints). Agent console tests: block count at checkpoints, streaming patch deduplication, tool call parenting, unread after detach, follow mode transitions, golden final state, trace panel mirroring, composite composition. Ops log tests: entry count, level filter, follow detach/reattach, structured data rendering, custom predicate filter. Performance budgets: 500 replay events under 500ms, 1000 log entries under 300ms, 200 traces with filter change under 100ms. All 16 tests pass in headless mode.
 - **Out of Scope:** New feature invention or repo inspector implementation
 - **Acceptance Criteria (Gherkin):**
 
@@ -476,9 +482,11 @@ And benchmark thresholds fail the pipeline when real-tool behavior drifts outsid
 
 - **Type:** Feature
 - **Effort:** Story Points: 8
+- **Status:** Done
 - **Dependencies:** [TASK-K4, TASK-K2, TASK-J3]
 - **Priority Area:** Flagship examples as proof
 - **Description:** Build `repo-inspector` with file tree navigation, code/diff viewing, metadata pane, and command palette actions once the MVP stack is stable.
+- **Implementation Notes:** Created `examples/repo-inspector.ts` (~410 lines). Demonstrates nested SplitPane (file tree 25/75 + code/metadata 75/25), CodeView with syntax highlighting and togglable line numbers, DiffView with side-by-side comparison, List widget for directory tree with expand/collapse, CommandPalette with 8 commands, file content reading from local filesystem (depth=4, max 500 entries), language detection from extension, dev overlay toggling. Supports diff comparison workflow: set left file with 'c', show diff with 'v', close with 'x'.
 - **Out of Scope:** Native code/diff promotion beyond the measurements captured in TASK-K4
 - **Acceptance Criteria (Gherkin):**
 

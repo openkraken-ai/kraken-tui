@@ -838,10 +838,11 @@ helpOverlay.append(helpContent);
 
 const contentArea = new Box({
 	width: "100%",
-	height: "100%",
 	flexDirection: "column",
 	bg: pal.bg,
 });
+contentArea.setFlexGrow(1);
+contentArea.setFlexShrink(1);
 contentArea.append(overviewPanel);
 
 root.append(headerBar);

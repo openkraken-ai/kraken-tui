@@ -1,0 +1,97 @@
+{
+  "name": "agent-console-replay",
+  "description": "Canonical AG-UI replay fixture for agent console example. Two-turn session: user asks about auth module, assistant reasons, calls tools (readFile, searchCode, editFile), streams responses.",
+  "terminalWidth": 120,
+  "terminalHeight": 40,
+  "events": [
+    { "type": "SESSION_STARTED", "sessionId": "session-001" },
+    { "type": "MESSAGE_START", "messageId": "msg-user-1", "role": "user" },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-user-1", "delta": "Analyze the authentication module and find any " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-user-1", "delta": "security vulnerabilities. Focus on token validation " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-user-1", "delta": "and session management." },
+    { "type": "MESSAGE_END", "messageId": "msg-user-1" },
+
+    { "type": "MESSAGE_START", "messageId": "msg-asst-1", "role": "assistant" },
+    { "type": "REASONING_START", "messageId": "msg-asst-1" },
+    { "type": "REASONING_CHUNK", "messageId": "msg-asst-1", "delta": "The user wants me to analyze the auth module. " },
+    { "type": "REASONING_CHUNK", "messageId": "msg-asst-1", "delta": "I should start by reading the main auth file " },
+    { "type": "REASONING_CHUNK", "messageId": "msg-asst-1", "delta": "to understand the token validation logic, " },
+    { "type": "REASONING_CHUNK", "messageId": "msg-asst-1", "delta": "then check session management patterns. " },
+    { "type": "REASONING_CHUNK", "messageId": "msg-asst-1", "delta": "Let me also search for any hardcoded secrets." },
+    { "type": "REASONING_END", "messageId": "msg-asst-1" },
+
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "I'll analyze the authentication module for " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "security vulnerabilities. Let me start by " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "reading the main auth implementation." },
+
+    { "type": "TOOL_CALL_START", "toolCallId": "tc-read-1", "parentMessageId": "msg-asst-1", "toolName": "readFile" },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-read-1", "delta": "{\"path\": \"src/auth/" },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-read-1", "delta": "middleware.ts\"}" },
+    { "type": "TOOL_CALL_END", "toolCallId": "tc-read-1" },
+    { "type": "TOOL_RESULT", "toolCallId": "tc-read-1", "content": "export function validateToken(token: string) {\n  const decoded = jwt.verify(token, SECRET_KEY);\n  if (decoded.exp < Date.now() / 1000) {\n    throw new AuthError('Token expired');\n  }\n  return decoded;\n}" },
+
+    { "type": "TOOL_CALL_START", "toolCallId": "tc-search-1", "parentMessageId": "msg-asst-1", "toolName": "searchCode" },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-search-1", "delta": "{\"query\": \"hardcoded secret\", " },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-search-1", "delta": "\"include\": \"*.ts\"}" },
+    { "type": "TOOL_CALL_END", "toolCallId": "tc-search-1" },
+    { "type": "TOOL_RESULT", "toolCallId": "tc-search-1", "content": "Found 2 matches:\n  src/auth/config.ts:3  const SECRET_KEY = 'dev-secret-key-change-me';\n  src/auth/config.ts:7  const REFRESH_SECRET = process.env.REFRESH_SECRET;" },
+
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "\n\nI found several issues in the auth module:\n\n" },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "1. **Hardcoded secret key** in `src/auth/config.ts` " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "on line 3. The `SECRET_KEY` is a static string " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "rather than an environment variable.\n\n" },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "2. **Token expiration check** uses `Date.now() / 1000` " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-1", "delta": "which is correct, but there's no clock skew tolerance." },
+    { "type": "MESSAGE_END", "messageId": "msg-asst-1" },
+
+    { "type": "ACTIVITY", "messageId": "msg-asst-1", "content": "Analyzing results..." },
+    { "type": "DIVIDER", "label": "Turn 2" },
+
+    { "type": "MESSAGE_START", "messageId": "msg-user-2", "role": "user" },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-user-2", "delta": "Fix the hardcoded secret key issue. " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-user-2", "delta": "Use environment variables instead." },
+    { "type": "MESSAGE_END", "messageId": "msg-user-2" },
+
+    { "type": "MESSAGE_START", "messageId": "msg-asst-2", "role": "assistant" },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "I'll fix the hardcoded secret by replacing it " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "with an environment variable lookup. This ensures " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "the secret is never committed to source control.\n\n" },
+
+    { "type": "TOOL_CALL_START", "toolCallId": "tc-edit-1", "parentMessageId": "msg-asst-2", "toolName": "editFile" },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-edit-1", "delta": "{\"path\": \"src/auth/config.ts\", " },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-edit-1", "delta": "\"old\": \"const SECRET_KEY = 'dev-secret-key-change-me'\", " },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-edit-1", "delta": "\"new\": \"const SECRET_KEY = process.env.JWT_SECRET ?? " },
+    { "type": "TOOL_CALL_CHUNK", "toolCallId": "tc-edit-1", "delta": "(() => { throw new Error('JWT_SECRET not set') })()\"}" },
+    { "type": "TOOL_CALL_END", "toolCallId": "tc-edit-1" },
+    { "type": "TOOL_RESULT", "toolCallId": "tc-edit-1", "content": "File updated successfully: src/auth/config.ts" },
+
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "Done. The secret key now reads from the `JWT_SECRET` " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "environment variable and throws at startup if missing. " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "You should also add `JWT_SECRET` to your `.env.example` " },
+    { "type": "MESSAGE_CHUNK", "messageId": "msg-asst-2", "delta": "file to document the required configuration." },
+    { "type": "MESSAGE_END", "messageId": "msg-asst-2" },
+    { "type": "SESSION_FINISHED", "sessionId": "session-001" }
+  ],
+  "checkpoints": [
+    {
+      "afterEventIndex": 5,
+      "label": "After user message complete",
+      "expect": { "blockCount": 1 }
+    },
+    {
+      "afterEventIndex": 13,
+      "label": "After reasoning complete",
+      "expect": { "blockCount": 3 }
+    },
+    {
+      "afterEventIndex": 30,
+      "label": "After first tool results",
+      "expect": { "blockCount": 7 }
+    },
+    {
+      "afterEventIndex": 56,
+      "label": "After session finished",
+      "expect": { "blockCount": 13 }
+    }
+  ]
+}
