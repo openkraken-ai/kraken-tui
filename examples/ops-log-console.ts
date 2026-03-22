@@ -154,9 +154,11 @@ logView.getWidget().setFocusable(true);
 logView.getWidget().setRole(AccessibilityRole.Log);
 logView.getWidget().setLabel("Structured log stream");
 
-// Content area wrapper — prevents logView from pushing controls off-screen
-const contentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+// Content area wrapper — fills remaining space between header and controls
+const contentArea = new Box({ width: "100%", bg: COLORS.bg });
 contentArea.setFlexDirection("column");
+contentArea.setFlexGrow(1);
+contentArea.setFlexShrink(1);
 contentArea.append(logView.getWidget());
 
 // ── Control Bar ──────────────────────────────────────────────────────
@@ -333,7 +335,7 @@ const loop = createLoop({
 
 		// Track search input changes
 		if (event.type === "change" && event.target === searchInput.handle) {
-			searchQuery = searchInput.getContent();
+			searchQuery = searchInput.getValue();
 			applyFilter();
 		}
 

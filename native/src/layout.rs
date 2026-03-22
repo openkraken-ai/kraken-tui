@@ -238,6 +238,40 @@ pub(crate) fn set_gap(
     Ok(())
 }
 
+/// Set flex_grow or flex_shrink on a node.
+/// prop: 0 = flex_grow, 1 = flex_shrink.
+pub(crate) fn set_flex_factor(
+    ctx: &mut TuiContext,
+    handle: u32,
+    prop: u32,
+    value: f32,
+) -> Result<(), String> {
+    let taffy_node = ctx
+        .nodes
+        .get(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?
+        .taffy_node;
+
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
+        .map_err(|e| format!("Failed to read style: {e:?}"))?
+        .clone();
+
+    match prop {
+        0 => style.flex_grow = value,
+        1 => style.flex_shrink = value,
+        _ => return Err(format!("Invalid flex_factor property: {prop}")),
+    }
+
+    ctx.tree
+        .set_style(taffy_node, style)
+        .map_err(|e| format!("Failed to set style: {e:?}"))?;
+
+    crate::tree::mark_dirty(ctx, handle);
+    Ok(())
+}
+
 /// Compute layout from root with the given available space.
 pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
     let root_handle = ctx.root.ok_or("No root set. Call tui_set_root() first.")?;

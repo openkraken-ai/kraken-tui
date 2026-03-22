@@ -102,6 +102,14 @@ export abstract class Widget {
 		);
 	}
 
+	setFlexGrow(value: number): void {
+		checkResult(ffi.tui_set_layout_flex_factor(this.handle, 0, value));
+	}
+
+	setFlexShrink(value: number): void {
+		checkResult(ffi.tui_set_layout_flex_factor(this.handle, 1, value));
+	}
+
 	setGap(rowGap: number, columnGap: number): void {
 		checkResult(ffi.tui_set_layout_gap(this.handle, rowGap, columnGap));
 	}

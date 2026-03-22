@@ -1756,6 +1756,16 @@ pub extern "C" fn tui_set_layout_flex(handle: u32, prop: u32, value: u32) -> i32
 }
 
 #[no_mangle]
+pub extern "C" fn tui_set_layout_flex_factor(handle: u32, prop: u32, value: f32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        layout::set_flex_factor(&mut ctx, handle, prop, value)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_set_layout_edges(
     handle: u32,
     prop: u32,

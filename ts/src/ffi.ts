@@ -199,6 +199,10 @@ const symbols = {
 		args: ["u32", "u32", "u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_set_layout_flex_factor: {
+		args: ["u32", "u32", "f32"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_set_layout_edges: {
 		args: ["u32", "u32", "f32", "f32", "f32", "f32"] as FFIType[],
 		returns: "i32" as const,

@@ -302,9 +302,11 @@ contentSplit.append(metaPanel);
 mainSplit.append(treePanel);
 mainSplit.append(contentSplit);
 
-// Content area wrapper — prevents mainSplit from pushing header/status off-screen
-const mainContentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+// Content area wrapper — fills remaining space between header and status bar
+const mainContentArea = new Box({ width: "100%", bg: COLORS.bg });
 mainContentArea.setFlexDirection("column");
+mainContentArea.setFlexGrow(1);
+mainContentArea.setFlexShrink(1);
 mainContentArea.append(mainSplit);
 
 // ── Status Bar ───────────────────────────────────────────────────────

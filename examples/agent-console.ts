@@ -316,9 +316,11 @@ sidePanel.append(infoPanel);
 splitPane.append(transcript);
 splitPane.append(sidePanel);
 
-// Content area wrapper — prevents splitPane from pushing header/status off-screen
-const contentArea = new Box({ width: "100%", height: "100%", bg: COLORS.bg });
+// Content area wrapper — fills remaining space between header and status bar
+const contentArea = new Box({ width: "100%", bg: COLORS.bg });
 contentArea.setFlexDirection("column");
+contentArea.setFlexGrow(1);
+contentArea.setFlexShrink(1);
 contentArea.append(splitPane);
 
 // ── Status Bar ───────────────────────────────────────────────────────
