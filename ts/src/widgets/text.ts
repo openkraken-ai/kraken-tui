@@ -6,6 +6,8 @@ import { Buffer } from "buffer";
 
 export interface TextOptions {
 	content?: string;
+	width?: string | number;
+	height?: string | number;
 	format?: "plain" | "markdown" | "code";
 	language?: string;
 	fg?: string | number;
@@ -21,6 +23,8 @@ export class Text extends Widget {
 		if (handle === 0) throw new Error("Failed to create Text node");
 		super(handle);
 
+		if (options.width) this.setWidth(options.width);
+		if (options.height) this.setHeight(options.height);
 		if (options.content) this.setContent(options.content);
 		if (options.format) {
 			const formatMap: Record<string, number> = {
