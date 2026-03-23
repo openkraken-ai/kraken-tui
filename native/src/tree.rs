@@ -17,18 +17,27 @@ pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u
     let handle = ctx.next_handle;
     ctx.next_handle += 1;
 
+    let mut style = Style::DEFAULT;
+
     // ScrollBox uses Overflow::Scroll so Taffy measures children at their
     // natural size instead of constraining them to the parent's bounds.
-    let style = if node_type == NodeType::ScrollBox {
-        let mut s = Style::DEFAULT;
-        s.overflow = taffy::Point {
+    if node_type == NodeType::ScrollBox {
+        style.overflow = taffy::Point {
             x: taffy::Overflow::Scroll,
             y: taffy::Overflow::Scroll,
         };
-        s
-    } else {
-        Style::DEFAULT
-    };
+    }
+
+    // Override Taffy's default min_size (Auto) with zero for container nodes.
+    // Without this, a flex item's min-content-height propagates tall children
+    // (e.g. a 200-line code view inside a ScrollBox) upward, causing overflow.
+    // This matches the common CSS reset `min-height: 0` / `min-width: 0`.
+    if !node_type.is_leaf() {
+        style.min_size = taffy::Size {
+            width: taffy::Dimension::length(0.0),
+            height: taffy::Dimension::length(0.0),
+        };
+    }
 
     let taffy_result = if node_type.is_leaf() {
         ctx.tree.new_leaf(style)

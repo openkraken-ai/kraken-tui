@@ -106,7 +106,7 @@ pub(crate) fn compute_total_visible_rows(state: &TranscriptState) -> u32 {
         .blocks
         .iter()
         .filter(|b| !is_block_hidden(state, b))
-        .map(|b| if b.collapsed { 1 } else { b.rendered_rows })
+        .map(|b| if b.collapsed { 0 } else { b.rendered_rows })
         .sum()
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn block_start_row(state: &TranscriptState, block_id: u64) -> Option<
             return Some(row);
         }
         row += if block.collapsed {
-            1
+            0
         } else {
             block.rendered_rows
         };
@@ -168,7 +168,7 @@ pub(crate) fn compute_visible_range(state: &TranscriptState) -> (usize, usize) {
             continue;
         }
         let block_rows = if block.collapsed {
-            1
+            0
         } else {
             block.rendered_rows
         };
@@ -242,6 +242,30 @@ fn recompute_anchor_after_collapse(state: &mut TranscriptState, toggled_block_id
 // ============================================================================
 // Block Operations
 // ============================================================================
+
+/// Clear all blocks from a Transcript widget, resetting it to empty state.
+pub(crate) fn clear_blocks(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    if node.node_type != NodeType::Transcript {
+        return Err(format!("Handle {handle} is not a Transcript widget"));
+    }
+    let state = node
+        .transcript_state
+        .as_mut()
+        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+
+    state.blocks.clear();
+    state.block_index.clear();
+    state.anchor_kind = ViewportAnchorKind::Tail;
+    state.tail_attached = true;
+    state.unread_anchor = None;
+    state.unread_count = 0;
+    node.dirty = true;
+    Ok(())
+}
 
 pub(crate) fn append_block(
     ctx: &mut TuiContext,
@@ -662,7 +686,7 @@ fn set_anchor_to_row(state: &mut TranscriptState, target_row: u32) {
             continue;
         }
         let block_rows = if block.collapsed {
-            1
+            0
         } else {
             block.rendered_rows
         };
@@ -1548,7 +1572,7 @@ mod tests {
         };
 
         // Children should be hidden, reducing total visible rows
-        // Parent collapsed = 1 row instead of rendered_rows
+        // Parent collapsed = 0 rows (invisible)
         assert!(total_after < total_before);
     }
 
@@ -1754,8 +1778,8 @@ mod tests {
             compute_total_visible_rows(state)
         };
 
-        // Only root (collapsed=1 row) should remain visible
-        assert_eq!(total_after, 1);
+        // Collapsed root takes 0 visible rows; all descendants hidden
+        assert_eq!(total_after, 0);
         assert!(total_after < total_before);
     }
 
@@ -1786,7 +1810,7 @@ mod tests {
         set_parent(&mut ctx, handle, 2, 1).unwrap();
         set_parent(&mut ctx, handle, 3, 2).unwrap();
 
-        // Collapse middle — leaf should be hidden, root visible, middle collapsed to 1 row
+        // Collapse middle — leaf should be hidden, root visible, middle collapsed to 0 rows
         set_collapsed(&mut ctx, handle, 2, true).unwrap();
 
         let state = validate_transcript(&ctx, handle).unwrap();

@@ -34,9 +34,11 @@ export class CodeView {
 	private showLineNumbers: boolean;
 	private currentContent: string = "";
 	private currentLanguage: string = "";
+	private bgColor: string | number | undefined;
 
 	constructor(options: CodeViewOptions = {}) {
 		this.showLineNumbers = options.lineNumbers ?? false;
+		this.bgColor = options.bg;
 
 		this.scrollBox = new ScrollBox({
 			width: options.width ?? "100%",
@@ -46,11 +48,11 @@ export class CodeView {
 			bg: options.bg,
 		});
 
-		this.container = new Box({ width: "100%", height: "100%" });
+		this.container = new Box({ width: "100%", height: "100%", bg: options.bg });
 		this.container.setFlexDirection("row");
 
 		if (this.showLineNumbers) {
-			this.gutterText = new Text({ fg: options.fg ?? "#888888" });
+			this.gutterText = new Text({ fg: options.fg ?? "#888888", bg: options.bg });
 			this.gutterText.setWidth(4);
 			this.container.append(this.gutterText);
 		}
@@ -59,6 +61,7 @@ export class CodeView {
 			format: "code",
 			language: options.language,
 			fg: options.fg,
+			bg: options.bg,
 		});
 		this.codeText.setWidth("100%");
 		this.container.append(this.codeText);
@@ -83,10 +86,16 @@ export class CodeView {
 		}
 		this.codeText.setContent(code);
 
+		// Set container and text height to actual line count so the
+		// ScrollBox can scroll through all content.
+		const lineCount = code.split("\n").length;
+		this.container.setHeight(lineCount);
+		this.codeText.setHeight(lineCount);
+
 		if (this.showLineNumbers && this.gutterText) {
-			const lineCount = code.split("\n").length;
 			const width = Math.max(3, String(lineCount).length + 1);
 			this.gutterText.setWidth(width);
+			this.gutterText.setHeight(lineCount);
 			const gutter = Array.from({ length: lineCount }, (_, i) =>
 				String(i + 1).padStart(width - 1),
 			).join("\n");
@@ -100,7 +109,7 @@ export class CodeView {
 		this.showLineNumbers = show;
 
 		if (show && !this.gutterText) {
-			this.gutterText = new Text({ fg: "#888888" });
+			this.gutterText = new Text({ fg: "#888888", bg: this.bgColor });
 			this.gutterText.setWidth(4);
 			// Insert gutter before code text
 			this.container.insertChild(this.gutterText, 0);

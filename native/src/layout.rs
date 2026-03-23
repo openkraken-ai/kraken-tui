@@ -145,6 +145,15 @@ pub(crate) fn set_flex(
                 _ => return Err(format!("Invalid position: {value}")),
             };
         }
+        7 => {
+            let ov = match value {
+                0 => taffy::Overflow::Visible,
+                1 => taffy::Overflow::Hidden,
+                2 => taffy::Overflow::Scroll,
+                _ => return Err(format!("Invalid overflow: {value}")),
+            };
+            style.overflow = taffy::Point { x: ov, y: ov };
+        }
         _ => return Err(format!("Invalid flex property: {prop}")),
     }
 
@@ -229,6 +238,41 @@ pub(crate) fn set_gap(
         width: length(column_gap),
         height: length(row_gap),
     };
+
+    ctx.tree
+        .set_style(taffy_node, style)
+        .map_err(|e| format!("Failed to set style: {e:?}"))?;
+
+    crate::tree::mark_dirty(ctx, handle);
+    Ok(())
+}
+
+/// Set flex_grow or flex_shrink on a node.
+/// prop: 0 = flex_grow, 1 = flex_shrink.
+pub(crate) fn set_flex_factor(
+    ctx: &mut TuiContext,
+    handle: u32,
+    prop: u32,
+    value: f32,
+) -> Result<(), String> {
+    let taffy_node = ctx
+        .nodes
+        .get(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?
+        .taffy_node;
+
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
+        .map_err(|e| format!("Failed to read style: {e:?}"))?
+        .clone();
+
+    match prop {
+        0 => style.flex_grow = value,
+        1 => style.flex_shrink = value,
+        2 => style.flex_basis = taffy::Dimension::length(value),
+        _ => return Err(format!("Invalid flex_factor property: {prop}")),
+    }
 
     ctx.tree
         .set_style(taffy_node, style)

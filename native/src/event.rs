@@ -187,49 +187,10 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     }
                 }
 
-                // Left-click on SplitPane divider: reposition divider (ADR-T35)
-                // Only triggers when the click lands on or adjacent to the divider strip,
-                // not on arbitrary descendant widgets inside the panes.
-                if button == 0 {
-                    if let Some((sp_handle, _divider_pos, pane_size)) =
-                        find_splitpane_divider_hit(ctx, x, y)
-                    {
-                        if pane_size > 0 {
-                            // Compute click position relative to the content
-                            // area (inside border) so the ratio matches the
-                            // rendered divider position.
-                            let resolved_sp = crate::style::resolve_style(sp_handle, ctx);
-                            let sp_border: f32 =
-                                if resolved_sp.border_style != crate::types::BorderStyle::None {
-                                    1.0
-                                } else {
-                                    0.0
-                                };
-                            let click_along_axis = match ctx
-                                .nodes
-                                .get(&sp_handle)
-                                .and_then(|n| n.split_pane_state.as_ref())
-                                .map(|s| s.axis)
-                            {
-                                Some(crate::types::SplitAxis::Horizontal) => {
-                                    let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((x as f32) - abs.0 - sp_border).max(0.0) as u16
-                                }
-                                Some(crate::types::SplitAxis::Vertical) => {
-                                    let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((y as f32) - abs.1 - sp_border).max(0.0) as u16
-                                }
-                                None => 0,
-                            };
-                            crate::splitpane::handle_mouse(
-                                ctx,
-                                sp_handle,
-                                click_along_axis,
-                                pane_size,
-                            );
-                        }
-                    }
-                }
+                // Left-click on SplitPane divider: disabled.
+                // Terminal mouse events don't distinguish click from drag,
+                // so single clicks were jumping the divider. Use keyboard
+                // resize instead (Shift+Arrow when SplitPane is focused).
 
                 // Scroll events (buttons 3-4) on Transcript or ScrollBox
                 if button == 3 || button == 4 {
@@ -979,6 +940,7 @@ fn find_transcript_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
 /// Returns (splitpane_handle, divider_position, pane_size_along_axis) if the click
 /// is on or within ±1 cell of the divider line. Returns None otherwise, so that
 /// clicks on child widgets inside the panes are not intercepted.
+#[allow(dead_code)]
 fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, u16, u16)> {
     // Walk the tree looking for SplitPane nodes where the click is near the divider.
     // We check from root down so we find the outermost matching SplitPane first.
@@ -1068,6 +1030,7 @@ fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, 
 
 /// Compute the absolute screen position of a node by walking up the parent chain
 /// and accumulating Taffy layout offsets plus render offsets.
+#[allow(dead_code)]
 fn compute_absolute_position(ctx: &TuiContext, handle: u32) -> (f32, f32) {
     let mut x = 0.0_f32;
     let mut y = 0.0_f32;

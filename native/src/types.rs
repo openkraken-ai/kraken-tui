@@ -793,6 +793,10 @@ pub struct TranscriptState {
     pub viewport_rows: u32,
     /// Width of the viewport in columns, used for line-wrapping estimates.
     pub viewport_width: u32,
+    /// Per-role foreground colors. Index = role (0=system, 1=user, 2=assistant,
+    /// 3=tool, 4=reasoning). Value 0 means "inherit node default fg".
+    /// Encoded as 0x01RRGGBB (RGB tag).
+    pub role_colors: [u32; 5],
 }
 
 impl Default for TranscriptState {
@@ -808,6 +812,7 @@ impl Default for TranscriptState {
             tail_attached: true,
             viewport_rows: 0,
             viewport_width: 80,
+            role_colors: [0; 5], // all inherit from node fg by default
         }
     }
 }

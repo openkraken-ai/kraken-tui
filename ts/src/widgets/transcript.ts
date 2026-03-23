@@ -1,6 +1,7 @@
 import { ffi } from "../ffi";
 import { NodeType } from "../ffi/structs";
 import { checkResult } from "../errors";
+import { parseColor } from "../style";
 import { Widget } from "../widget";
 import { Buffer } from "buffer";
 
@@ -73,6 +74,13 @@ export class TranscriptView extends Widget {
 		if (options.bg) this.setBackground(options.bg);
 		if (options.border) this.setBorderStyle(options.border);
 		if (options.followMode) this.setFollowMode(options.followMode);
+	}
+
+	/** Clear all blocks and reset ID mapping. */
+	clear(): void {
+		checkResult(ffi.tui_transcript_clear(this.handle));
+		this.idMap.clear();
+		this.nextId = 1n;
 	}
 
 	/**
@@ -182,5 +190,16 @@ export class TranscriptView extends Widget {
 		const result = ffi.tui_transcript_get_unread_count(this.handle);
 		checkResult(result);
 		return result;
+	}
+
+	/**
+	 * Set the foreground color for a specific transcript role.
+	 * @param role - "system" | "user" | "assistant" | "tool" | "reasoning"
+	 * @param color - Color as hex string (e.g. "#ff0000") or number
+	 */
+	setRoleColor(role: string, color: string | number): void {
+		const roleNum = ROLE_MAP[role] ?? 0;
+		const c = parseColor(color);
+		checkResult(ffi.tui_transcript_set_role_color(this.handle, roleNum, c));
 	}
 }

@@ -303,7 +303,15 @@ fn render_node(
 
     // Render content area (inside border if present)
     let (content_x, content_y, content_w, content_h) = if border_style != BorderStyle::None {
-        (abs_x + 1, abs_y + 1, (w - 2).max(0), (h - 2).max(0))
+        let ch = (h - 2).max(0);
+        let cw = (w - 2).max(0);
+        // For single-line Input widgets with border, if content_h would be 0,
+        // render text overlapping the top border row to remain visible.
+        if ch == 0 && h >= 1 && node_type == NodeType::Input {
+            (abs_x + 1, abs_y, cw, 1)
+        } else {
+            (abs_x + 1, abs_y + 1, cw, ch)
+        }
     } else {
         (abs_x, abs_y, w, h)
     };
@@ -1944,12 +1952,17 @@ fn render_transcript(
     let skip_rows = viewport_start_row.saturating_sub(first_block_start_row) as usize;
 
     struct RenderBlock {
+        #[allow(dead_code)]
         id: u64,
         kind: crate::types::TranscriptBlockKind,
+        role: u8,
         content: String,
         collapsed: bool,
         hidden: bool,
     }
+
+    // Capture role color mapping before releasing the borrow on state
+    let role_colors = state.role_colors;
 
     let visible_blocks: Vec<RenderBlock> = (start_idx..end_idx)
         .map(|i| {
@@ -1957,6 +1970,7 @@ fn render_transcript(
             RenderBlock {
                 id: block.id,
                 kind: block.kind,
+                role: block.role,
                 content: block.content.clone(),
                 collapsed: block.collapsed,
                 hidden: crate::transcript::is_block_hidden(state, block),
@@ -1978,24 +1992,25 @@ fn render_transcript(
             continue;
         }
 
+        // Resolve per-block foreground color from the role_colors table.
+        // Roles: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning.
+        // A value of 0 means "inherit the node's default fg".
+        let block_fg = if (block.role as usize) < role_colors.len() {
+            let c = role_colors[block.role as usize];
+            if c != 0 { c } else { fg }
+        } else {
+            fg
+        };
+
         if block.collapsed {
-            // Render collapsed indicator
-            let indicator = format!("\u{25B8} [collapsed] ({})", block.id);
-            for (ci, ch) in indicator.chars().enumerate() {
-                let sx = content_x + ci as i32;
-                if sx >= content_x + content_w {
-                    break;
-                }
-                let cell = Cell { ch, fg, bg, attrs };
-                clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
-            }
-            y += 1;
+            // Collapsed blocks are hidden (used for filtering). Skip entirely.
+            continue;
         } else if block.kind == crate::types::TranscriptBlockKind::Divider {
             // Render horizontal divider
             for dx in 0..content_w {
                 let cell = Cell {
                     ch: '\u{2500}', // ─
-                    fg,
+                    fg: block_fg,
                     bg,
                     attrs,
                 };
@@ -2049,7 +2064,7 @@ fn render_transcript(
                         }
                     }
                     if sub_row >= skip_sub_rows {
-                        let cell = Cell { ch, fg, bg, attrs };
+                        let cell = Cell { ch, fg: block_fg, bg, attrs };
                         clip_set(&mut ctx.front_buffer, x, y, cell, clip);
                     }
                     x += w;

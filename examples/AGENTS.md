@@ -19,6 +19,9 @@ bun run examples/<example>.ts
 | `accessibility-demo.tsx` | JSX | Roles, labels, descriptions, accessibility events |
 | `showcase.ts` | JSX | Signals, animations, choreography, runtime tree ops, TextArea, themes |
 | `system-monitor.ts` | Imperative | All 10 widgets, tabs, overlay, table, list, animations, 4 themes |
+| `agent-console.ts` | Imperative | TranscriptView, SplitPane, TracePanel, CommandPalette, AG-UI replay, devtools |
+| `ops-log-console.ts` | Imperative | StructuredLogView, follow mode, level/search filtering, dev overlays |
+| `repo-inspector.ts` | Imperative | CodeView, DiffView, nested SplitPane, List, CommandPalette, filesystem |
 
 ## Core Invariants
 
