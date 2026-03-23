@@ -2806,6 +2806,17 @@ pub extern "C" fn tui_transcript_set_role_color(handle: u32, role: u8, color: u3
 }
 
 #[no_mangle]
+/// Clear all blocks from a Transcript widget.
+pub extern "C" fn tui_transcript_clear(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::clear_blocks(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_transcript_mark_read(handle: u32) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;

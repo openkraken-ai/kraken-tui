@@ -328,6 +328,7 @@ const contentArea = new Box({ width: "100%", bg: COLORS.bg });
 contentArea.setFlexDirection("column");
 contentArea.setFlexGrow(1);
 contentArea.setFlexShrink(1);
+contentArea.setFlexBasis(0);
 contentArea.append(splitPane);
 
 // ── Status Bar ───────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ let traceFilterIndex = 0;
 
 function restartReplay(): void {
 	replay = createReplayState(REPLAY_EVENTS);
+	transcript.clear();
 }
 
 function setSpeed(ticksPerEvent: number): void {

@@ -76,6 +76,13 @@ export class TranscriptView extends Widget {
 		if (options.followMode) this.setFollowMode(options.followMode);
 	}
 
+	/** Clear all blocks and reset ID mapping. */
+	clear(): void {
+		checkResult(ffi.tui_transcript_clear(this.handle));
+		this.idMap.clear();
+		this.nextId = 1n;
+	}
+
 	/**
 	 * Resolve a string or numeric ID to a bigint block_id.
 	 * String IDs are mapped to auto-incrementing bigint values.

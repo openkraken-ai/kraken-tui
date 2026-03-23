@@ -843,6 +843,7 @@ const contentArea = new Box({
 });
 contentArea.setFlexGrow(1);
 contentArea.setFlexShrink(1);
+contentArea.setFlexBasis(0);
 contentArea.append(overviewPanel);
 
 root.append(headerBar);

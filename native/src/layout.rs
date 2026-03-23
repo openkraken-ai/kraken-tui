@@ -145,6 +145,15 @@ pub(crate) fn set_flex(
                 _ => return Err(format!("Invalid position: {value}")),
             };
         }
+        7 => {
+            let ov = match value {
+                0 => taffy::Overflow::Visible,
+                1 => taffy::Overflow::Hidden,
+                2 => taffy::Overflow::Scroll,
+                _ => return Err(format!("Invalid overflow: {value}")),
+            };
+            style.overflow = taffy::Point { x: ov, y: ov };
+        }
         _ => return Err(format!("Invalid flex property: {prop}")),
     }
 
@@ -261,6 +270,7 @@ pub(crate) fn set_flex_factor(
     match prop {
         0 => style.flex_grow = value,
         1 => style.flex_shrink = value,
+        2 => style.flex_basis = taffy::Dimension::length(value),
         _ => return Err(format!("Invalid flex_factor property: {prop}")),
     }
 

@@ -552,6 +552,10 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_transcript_clear: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_transcript_set_role_color: {
 		args: ["u32", "u8", "u32"] as FFIType[],
 		returns: "i32" as const,

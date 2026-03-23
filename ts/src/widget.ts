@@ -102,12 +102,21 @@ export abstract class Widget {
 		);
 	}
 
+	setOverflow(mode: "visible" | "hidden" | "scroll"): void {
+		const v = mode === "hidden" ? 1 : mode === "scroll" ? 2 : 0;
+		checkResult(ffi.tui_set_layout_flex(this.handle, 7, v));
+	}
+
 	setFlexGrow(value: number): void {
 		checkResult(ffi.tui_set_layout_flex_factor(this.handle, 0, value));
 	}
 
 	setFlexShrink(value: number): void {
 		checkResult(ffi.tui_set_layout_flex_factor(this.handle, 1, value));
+	}
+
+	setFlexBasis(value: number): void {
+		checkResult(ffi.tui_set_layout_flex_factor(this.handle, 2, value));
 	}
 
 	setGap(rowGap: number, columnGap: number): void {

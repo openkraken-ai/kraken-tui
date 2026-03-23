@@ -166,6 +166,7 @@ const contentArea = new Box({ width: "100%", bg: COLORS.bg });
 contentArea.setFlexDirection("column");
 contentArea.setFlexGrow(1);
 contentArea.setFlexShrink(1);
+contentArea.setFlexBasis(0);
 contentArea.append(logView.getWidget());
 
 // ── Control Bar ──────────────────────────────────────────────────────

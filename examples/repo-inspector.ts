@@ -307,6 +307,7 @@ const mainContentArea = new Box({ width: "100%", bg: COLORS.bg });
 mainContentArea.setFlexDirection("column");
 mainContentArea.setFlexGrow(1);
 mainContentArea.setFlexShrink(1);
+mainContentArea.setFlexBasis(0);
 mainContentArea.append(mainSplit);
 
 // ── Status Bar ───────────────────────────────────────────────────────
@@ -509,10 +510,15 @@ const loop = createLoop({
 			return;
 		}
 
+		// List widget submit (Enter key on focused list)
+		if (event.type === "submit" && event.target === fileList.handle) {
+			openSelectedEntry();
+			return;
+		}
+
 		// Global key handling
 		if (event.type === "key") {
 			if (event.keyCode === KeyCode.Escape) { loop.stop(); return; }
-			if (event.keyCode === KeyCode.Enter) { openSelectedEntry(); return; }
 			if (event.keyCode === KeyCode.Backspace) {
 				// Go up: collapse current directory or navigate to parent
 				const idx = fileList.getSelected();

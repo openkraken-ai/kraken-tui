@@ -243,6 +243,30 @@ fn recompute_anchor_after_collapse(state: &mut TranscriptState, toggled_block_id
 // Block Operations
 // ============================================================================
 
+/// Clear all blocks from a Transcript widget, resetting it to empty state.
+pub(crate) fn clear_blocks(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    if node.node_type != NodeType::Transcript {
+        return Err(format!("Handle {handle} is not a Transcript widget"));
+    }
+    let state = node
+        .transcript_state
+        .as_mut()
+        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+
+    state.blocks.clear();
+    state.block_index.clear();
+    state.anchor_kind = ViewportAnchorKind::Tail;
+    state.tail_attached = true;
+    state.unread_anchor = None;
+    state.unread_count = 0;
+    node.dirty = true;
+    Ok(())
+}
+
 pub(crate) fn append_block(
     ctx: &mut TuiContext,
     handle: u32,
