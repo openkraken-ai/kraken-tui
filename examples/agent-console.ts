@@ -254,6 +254,13 @@ transcript.setFocusable(true);
 transcript.setRole(AccessibilityRole.Log);
 transcript.setLabel("Agent transcript");
 
+// Per-role colors for conversation differentiation
+transcript.setRoleColor("system", "#565f89");    // system: dim
+transcript.setRoleColor("user", "#73daca");      // user: teal/green
+transcript.setRoleColor("assistant", COLORS.fg); // assistant: default fg
+transcript.setRoleColor("tool", "#ff9e64");      // tool calls: orange
+transcript.setRoleColor("reasoning", "#bb9af7"); // reasoning: purple
+
 // Secondary: Side panel
 const sidePanel = new Box({ width: "100%", height: "100%", bg: COLORS.sideBg, fg: COLORS.fg });
 sidePanel.setFlexDirection("column");

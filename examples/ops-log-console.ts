@@ -154,6 +154,13 @@ logView.getWidget().setFocusable(true);
 logView.getWidget().setRole(AccessibilityRole.Log);
 logView.getWidget().setLabel("Structured log stream");
 
+// Set per-role colors for log level differentiation:
+// system(0)=debug, user(1)=warn, assistant(2)=info, tool(3)=error/fatal
+logView.getWidget().setRoleColor("system", "#6c7086");     // debug: dim gray
+logView.getWidget().setRoleColor("user", "#f9e2af");       // warn: yellow
+logView.getWidget().setRoleColor("assistant", COLORS.fg);  // info: default fg
+logView.getWidget().setRoleColor("tool", "#f38ba8");       // error/fatal: red
+
 // Content area wrapper — fills remaining space between header and controls
 const contentArea = new Box({ width: "100%", bg: COLORS.bg });
 contentArea.setFlexDirection("column");

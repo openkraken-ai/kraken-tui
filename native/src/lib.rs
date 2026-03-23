@@ -2777,6 +2777,34 @@ pub extern "C" fn tui_transcript_get_follow_mode(handle: u32) -> i32 {
     })
 }
 
+/// Set the foreground color for a specific transcript role.
+/// role: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning.
+/// color: 0 = inherit node default, or 0x01RRGGBB for RGB color.
+#[no_mangle]
+pub extern "C" fn tui_transcript_set_role_color(handle: u32, role: u8, color: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx
+            .nodes
+            .get_mut(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        if node.node_type != types::NodeType::Transcript {
+            return Err(format!("Handle {handle} is not a Transcript widget"));
+        }
+        let state = node
+            .transcript_state
+            .as_mut()
+            .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+        if (role as usize) >= state.role_colors.len() {
+            return Err(format!("Invalid role index: {role}"));
+        }
+        state.role_colors[role as usize] = color;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn tui_transcript_mark_read(handle: u32) -> i32 {
     ffi_wrap(|| {

@@ -1946,10 +1946,14 @@ fn render_transcript(
     struct RenderBlock {
         id: u64,
         kind: crate::types::TranscriptBlockKind,
+        role: u8,
         content: String,
         collapsed: bool,
         hidden: bool,
     }
+
+    // Capture role color mapping before releasing the borrow on state
+    let role_colors = state.role_colors;
 
     let visible_blocks: Vec<RenderBlock> = (start_idx..end_idx)
         .map(|i| {
@@ -1957,6 +1961,7 @@ fn render_transcript(
             RenderBlock {
                 id: block.id,
                 kind: block.kind,
+                role: block.role,
                 content: block.content.clone(),
                 collapsed: block.collapsed,
                 hidden: crate::transcript::is_block_hidden(state, block),
@@ -1978,6 +1983,16 @@ fn render_transcript(
             continue;
         }
 
+        // Resolve per-block foreground color from the role_colors table.
+        // Roles: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning.
+        // A value of 0 means "inherit the node's default fg".
+        let block_fg = if (block.role as usize) < role_colors.len() {
+            let c = role_colors[block.role as usize];
+            if c != 0 { c } else { fg }
+        } else {
+            fg
+        };
+
         if block.collapsed {
             // Render collapsed indicator
             let indicator = format!("\u{25B8} [collapsed] ({})", block.id);
@@ -1986,7 +2001,7 @@ fn render_transcript(
                 if sx >= content_x + content_w {
                     break;
                 }
-                let cell = Cell { ch, fg, bg, attrs };
+                let cell = Cell { ch, fg: block_fg, bg, attrs };
                 clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
             }
             y += 1;
@@ -1995,7 +2010,7 @@ fn render_transcript(
             for dx in 0..content_w {
                 let cell = Cell {
                     ch: '\u{2500}', // ─
-                    fg,
+                    fg: block_fg,
                     bg,
                     attrs,
                 };
@@ -2049,7 +2064,7 @@ fn render_transcript(
                         }
                     }
                     if sub_row >= skip_sub_rows {
-                        let cell = Cell { ch, fg, bg, attrs };
+                        let cell = Cell { ch, fg: block_fg, bg, attrs };
                         clip_set(&mut ctx.front_buffer, x, y, cell, clip);
                     }
                     x += w;
