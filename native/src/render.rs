@@ -303,7 +303,15 @@ fn render_node(
 
     // Render content area (inside border if present)
     let (content_x, content_y, content_w, content_h) = if border_style != BorderStyle::None {
-        (abs_x + 1, abs_y + 1, (w - 2).max(0), (h - 2).max(0))
+        let ch = (h - 2).max(0);
+        let cw = (w - 2).max(0);
+        // For single-line Input widgets with border, if content_h would be 0,
+        // render text overlapping the top border row to remain visible.
+        if ch == 0 && h >= 1 && node_type == NodeType::Input {
+            (abs_x + 1, abs_y, cw, 1)
+        } else {
+            (abs_x + 1, abs_y + 1, cw, ch)
+        }
     } else {
         (abs_x, abs_y, w, h)
     };
@@ -1944,6 +1952,7 @@ fn render_transcript(
     let skip_rows = viewport_start_row.saturating_sub(first_block_start_row) as usize;
 
     struct RenderBlock {
+        #[allow(dead_code)]
         id: u64,
         kind: crate::types::TranscriptBlockKind,
         role: u8,
@@ -1994,17 +2003,8 @@ fn render_transcript(
         };
 
         if block.collapsed {
-            // Render collapsed indicator
-            let indicator = format!("\u{25B8} [collapsed] ({})", block.id);
-            for (ci, ch) in indicator.chars().enumerate() {
-                let sx = content_x + ci as i32;
-                if sx >= content_x + content_w {
-                    break;
-                }
-                let cell = Cell { ch, fg: block_fg, bg, attrs };
-                clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
-            }
-            y += 1;
+            // Collapsed blocks are hidden (used for filtering). Skip entirely.
+            continue;
         } else if block.kind == crate::types::TranscriptBlockKind::Divider {
             // Render horizontal divider
             for dx in 0..content_w {

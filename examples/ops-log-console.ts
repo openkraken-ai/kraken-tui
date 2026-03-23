@@ -190,7 +190,7 @@ levelSelect.setLabel("Log level filter");
 
 // Search input
 const searchLabel = new Text({ content: " Search: ", width: 10, height: 1, fg: COLORS.fg, bg: COLORS.controlBg });
-const searchInput = new Input({ width: 30, height: 1, fg: COLORS.fg, bg: COLORS.bg, border: "single" });
+const searchInput = new Input({ width: 30, height: 1, fg: COLORS.fg, bg: COLORS.controlBg });
 searchInput.setFocusable(true);
 searchInput.setRole(AccessibilityRole.Input);
 searchInput.setLabel("Search filter");

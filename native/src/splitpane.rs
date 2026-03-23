@@ -204,6 +204,7 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
 /// relative to the SplitPane's content area origin.
 /// `size` is the content dimension along the split axis.
 /// Returns true if the click was consumed (i.e., the ratio changed).
+#[allow(dead_code)]
 pub(crate) fn handle_mouse(ctx: &mut TuiContext, handle: u32, click_pos: u16, size: u16) -> bool {
     let (resizable, children_len) = {
         let node = match ctx.nodes.get(&handle) {

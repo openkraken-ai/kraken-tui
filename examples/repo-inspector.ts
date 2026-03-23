@@ -497,9 +497,9 @@ const loop = createLoop({
 	onEvent(event: KrakenEvent) {
 		// Palette handling
 		if (palette.isOpen()) {
+			if (event.type === "submit") { palette.executeSelected(); return; }
 			if (event.type === "key") {
 				if (event.keyCode === KeyCode.Escape) { palette.close(); return; }
-				if (event.keyCode === KeyCode.Enter) { palette.executeSelected(); return; }
 				if (event.keyCode === KeyCode.Up) { palette.selectPrevious(); return; }
 				if (event.keyCode === KeyCode.Down) { palette.selectNext(); return; }
 			}

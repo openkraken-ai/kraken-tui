@@ -86,10 +86,16 @@ export class CodeView {
 		}
 		this.codeText.setContent(code);
 
+		// Set container and text height to actual line count so the
+		// ScrollBox can scroll through all content.
+		const lineCount = code.split("\n").length;
+		this.container.setHeight(lineCount);
+		this.codeText.setHeight(lineCount);
+
 		if (this.showLineNumbers && this.gutterText) {
-			const lineCount = code.split("\n").length;
 			const width = Math.max(3, String(lineCount).length + 1);
 			this.gutterText.setWidth(width);
+			this.gutterText.setHeight(lineCount);
 			const gutter = Array.from({ length: lineCount }, (_, i) =>
 				String(i + 1).padStart(width - 1),
 			).join("\n");

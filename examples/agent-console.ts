@@ -507,13 +507,13 @@ const loop = createLoop({
 	onEvent(event: KrakenEvent) {
 		// Palette input handling
 		if (palette.isOpen()) {
+			if (event.type === "submit") {
+				palette.executeSelected();
+				return;
+			}
 			if (event.type === "key") {
 				if (event.keyCode === KeyCode.Escape) {
 					palette.close();
-					return;
-				}
-				if (event.keyCode === KeyCode.Enter) {
-					palette.executeSelected();
 					return;
 				}
 				if (event.keyCode === KeyCode.Up) {
