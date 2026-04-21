@@ -61,6 +61,9 @@ export interface CommonProps extends EventHandlerProps {
 	padding?: MaybeSignal<number | [number, number, number, number]>;
 	margin?: MaybeSignal<number | [number, number, number, number]>;
 	gap?: MaybeSignal<number>;
+	flexGrow?: MaybeSignal<number>;
+	flexShrink?: MaybeSignal<number>;
+	flexBasis?: MaybeSignal<number>;
 	fg?: MaybeSignal<string | number>;
 	bg?: MaybeSignal<string | number>;
 	bold?: MaybeSignal<boolean>;
