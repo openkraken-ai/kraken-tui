@@ -201,6 +201,7 @@ const lib = dlopen(LIB_PATH, {
 	tui_transcript_finish_block:  { args: ["u32", "u64"] as FFIType[],                           returns: "i32" as const },
 	tui_transcript_set_parent:    { args: ["u32", "u64", "u64"] as FFIType[],                    returns: "i32" as const },
 	tui_transcript_set_collapsed: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
+	tui_transcript_set_hidden:    { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_jump_to_block: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_jump_to_unread:{ args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_set_follow_mode:{ args: ["u32", "u8"] as FFIType[],                           returns: "i32" as const },
@@ -2715,14 +2716,23 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(h);
 		});
 
-		test("collapse and expand", () => {
-			const h = ffi.tui_create_node(10);
-			const c = new TextEncoder().encode("content");
-			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
-			expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
-			expect(ffi.tui_transcript_set_collapsed(h, 1n, 0)).toBe(0);
-			ffi.tui_destroy_node(h);
-		});
+			test("collapse and expand", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_set_collapsed(h, 1n, 0)).toBe(0);
+				ffi.tui_destroy_node(h);
+			});
+
+			test("hide and show block", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 0)).toBe(0);
+				ffi.tui_destroy_node(h);
+			});
 
 		test("follow mode get/set", () => {
 			const h = ffi.tui_create_node(10);
@@ -2865,11 +2875,17 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(h);
 		});
 
-		test("collapse unknown block returns error", () => {
-			const h = ffi.tui_create_node(10);
-			expect(ffi.tui_transcript_set_collapsed(h, 999n, 1)).toBe(-1);
-			ffi.tui_destroy_node(h);
-		});
+			test("collapse unknown block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				expect(ffi.tui_transcript_set_collapsed(h, 999n, 1)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
+
+			test("hide unknown block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				expect(ffi.tui_transcript_set_hidden(h, 999n, 1)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
 
 		test("many blocks lifecycle stress test", () => {
 			const h = ffi.tui_create_node(10);
@@ -3590,15 +3606,115 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(root);
 		});
 
-		test("CodeView toggles line numbers after creation", async () => {
-			const { CodeView } = await import("./src/composites/code-view");
-			const cv = new CodeView({ lineNumbers: false });
-			cv.setContent("a\nb\nc");
-			cv.setLineNumbers(true);
-			cv.setLineNumbers(false);
-			expect(cv.getContent()).toBe("a\nb\nc");
-			cv.getWidget().destroySubtree();
-		});
+			test("CodeView toggles line numbers after creation", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const cv = new CodeView({ lineNumbers: false });
+				cv.setContent("a\nb\nc");
+				cv.setLineNumbers(true);
+				cv.setLineNumbers(false);
+				expect(cv.getContent()).toBe("a\nb\nc");
+				cv.getWidget().destroySubtree();
+			});
+
+			test("CodeView recomputes width when line numbers are turned off", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const root = ffi.tui_create_node(0); // Box
+				ffi.tui_set_layout_dimension(root, 0, 80, 1);
+				ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+				const cv = new CodeView({ lineNumbers: true, width: "100%", height: "100%" });
+				cv.setContent("alpha\nbeta");
+				ffi.tui_append_child(root, cv.getWidget().handle);
+				ffi.tui_set_root(root);
+				ffi.tui_render();
+
+				const container = (cv as unknown as { container: { handle: number } }).container;
+				const beforeWidth = new Int32Array(1);
+				expect(
+					ffi.tui_get_layout(
+						container.handle,
+						new Int32Array(1),
+						new Int32Array(1),
+						beforeWidth,
+						new Int32Array(1),
+					),
+				).toBe(0);
+				expect(beforeWidth[0]).toBe(8);
+
+				cv.setLineNumbers(false);
+				ffi.tui_render();
+
+				const afterWidth = new Int32Array(1);
+				expect(
+					ffi.tui_get_layout(
+						container.handle,
+						new Int32Array(1),
+						new Int32Array(1),
+						afterWidth,
+						new Int32Array(1),
+					),
+				).toBe(0);
+				expect(afterWidth[0]).toBe(5);
+
+				cv.getWidget().destroySubtree();
+				ffi.tui_destroy_node(root);
+			});
+
+			test("CommandPalette restores focus after close", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				root.append(input);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				palette.close();
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+
+				root.destroySubtree();
+			});
+
+			test("CommandPalette restores focus after native/external close", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				root.append(input);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
+				expect(ffi.tui_get_focused()).toBe(0);
+				expect(palette.isOpen()).toBe(false);
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+
+				root.destroySubtree();
+			});
 
 		test("DiffView side-by-side constructs without throwing", async () => {
 			const { DiffView } = await import("./src/composites/code-view");

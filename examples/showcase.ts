@@ -796,10 +796,11 @@ const loop = createLoop({
   onEvent(event: KrakenEvent) {
     if (event.type === "key") {
       const focused = ffi.tui_get_focused();
+      const editingText =
+        focused === commandInputHandle || focused === notesHandle;
       if (event.keyCode === KeyCode.Escape) {
         if (
-          (focused === commandInputHandle || focused === notesHandle) &&
-          themeSelectHandle !== 0
+          editingText && themeSelectHandle !== 0
         ) {
           ffi.tui_focus(themeSelectHandle);
           pushLog("left text-edit mode");
@@ -811,6 +812,7 @@ const loop = createLoop({
 
       const cp = event.codepoint ?? 0;
       if (cp === 0) return;
+      if (editingText) return;
       const key = String.fromCodePoint(cp).toLowerCase();
       if (key === "q") {
         loop.stop();

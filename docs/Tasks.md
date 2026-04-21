@@ -233,7 +233,7 @@ Then the focused visual region remains stable after render
 - **Dependencies:** [TASK-I4]
 - **Priority Area:** Transcript / viewport architecture
 - **Description:** Add headless replay tests, golden snapshots, and transcript benchmark gates aligned to the TechSpec quality targets.
-- **Implementation Notes:** Added `render_transcript` in render.rs with block-based viewport rendering (collapsed indicators, divider lines, content rendering with clip_set). Added `test_append_1000_blocks_no_drift` and `test_streaming_no_viewport_shift` performance tests. 19 FFI integration tests in test-ffi.test.ts. Bundle budget verified at 47.3KB/50KB (95%). Total: 297 Rust tests, 179 FFI tests, 49 JSX tests passing.
+- **Implementation Notes:** Added `render_transcript` in render.rs with block-based viewport rendering (collapsed indicators, divider lines, content rendering with clip_set). Added `test_append_1000_blocks_no_drift` and `test_streaming_no_viewport_shift` performance tests. Validation covered transcript-specific FFI integration checks plus the relevant Rust, JSX, and bundle-budget gates that existed when the task landed.
 - **Out of Scope:** Devtools UI surfaces or flagship example assembly
 - **Acceptance Criteria (Gherkin):**
 

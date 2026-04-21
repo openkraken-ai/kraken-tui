@@ -775,6 +775,7 @@ pub struct TranscriptBlock {
     pub code_language: Option<String>,
     pub streaming: bool,
     pub collapsed: bool,
+    pub hidden: bool,
     pub unread: bool,
     pub rendered_rows: u32,
     pub version: u64,

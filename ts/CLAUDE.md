@@ -14,12 +14,12 @@ cargo build --manifest-path native/Cargo.toml --release
 cd ts && bun install
 
 # Tests
-bun test ts/test-ffi.test.ts           # FFI integration (160 tests)
-bun test ts/test-jsx.test.ts           # JSX reconciler (49 tests)
+bun test ts/test-ffi.test.ts           # FFI integration
+bun test ts/test-jsx.test.ts           # JSX reconciler
 
 # Benchmarks and quality
 bun run ts/bench-ffi.ts                # FFI benchmarks
-bun run ts/check-bundle.ts             # Bundle budget (<50KB)
+bun run ts/check-bundle.ts             # Bundle budget (<75KB)
 
 # Examples
 bun run examples/demo.ts               # Imperative API
@@ -34,7 +34,7 @@ bun run examples/accessibility-demo.tsx  # Accessibility features
 
 | File | Responsibility |
 |------|----------------|
-| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so`. Symbol definitions for all 142 FFI functions. |
+| `ffi.ts` | `dlopen` bindings — loads `libkraken_tui.so`. Symbol definitions for the supported FFI surface. |
 | `ffi/structs.ts` | Custom struct pack/unpack for `TuiEvent` (24 bytes). Manual byte layout (ADR-T06). |
 | `app.ts` | `Kraken` class — lifecycle: `init()`, `shutdown()`, `setRoot()`, `readInput()`, `drainEvents()`, `render()`, `run()`. |
 | `widget.ts` | Base `Widget` class — layout/style setters, child management, `animate()`, `destroySubtree()`, accessibility. |
@@ -94,6 +94,6 @@ const bits = new Uint32Array(f32.buffer)[0];
 ## Constraints
 
 - **Zero runtime dependencies** beyond `bun:ffi`. `@preact/signals-core` is the one allowed exception (for JSX reconciler).
-- **Bundle budget:** < 50KB (currently 42.9KB, 86% of budget).
+- **Bundle budget:** < 75KB.
 - **`strict: true`** TypeScript.
 - `FinalizationRegistry` / `WeakRef` — allowed as **safety net only**. `destroy()` remains the primary lifecycle API.

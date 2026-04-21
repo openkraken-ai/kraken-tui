@@ -30,13 +30,13 @@ cargo build --manifest-path native/Cargo.toml --release   # Required before any 
 cargo check --manifest-path native/Cargo.toml              # Fast type-check
 
 # Test
-cargo test --manifest-path native/Cargo.toml               # Rust unit tests (267 tests)
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration (160 tests)
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler (49 tests)
+cargo test --manifest-path native/Cargo.toml               # Rust unit tests
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration
+cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler
 
 # Quality
 cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
-bun run ts/check-bundle.ts                                 # Bundle budget (<50KB)
+bun run ts/check-bundle.ts                                 # Bundle budget (<75KB)
 
 # Demo
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
@@ -52,14 +52,14 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/syst
 
 ```
 TypeScript/Bun (thin command client)
-  ↓ 142 public C ABI functions via bun:ffi dlopen
+  ↓ C ABI functions via bun:ffi dlopen
 Rust cdylib (native performance engine)
   ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal
   ├─ Theme — named style defaults, subtree binding, built-in dark/light, per-NodeType defaults
   ├─ Animation — timed property transitions, 8 easing functions, chaining, choreography, position animation
   ├─ Safe state via OnceLock<RwLock> (ADR-T16)
   ├─ Subtree destroy + indexed insert (ADR-T17/T18)
-  ├─ 10 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay
+  ├─ Widgets: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay, Transcript, SplitPane
   ├─ Writer — run compaction, stateful cursor/style tracking (ADR-T24)
   ├─ Text cache — bounded LRU, 8 MiB default (ADR-T25)
   ├─ Runner API — app.run() with onChange/continuous modes (ADR-T26)

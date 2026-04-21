@@ -20,7 +20,7 @@
 
 ### 1.1 Product Constraint Summary
 
-- Kraken already has the foundation: 142 public C ABI functions, 10 shipped widget types, writer compaction, text cache, `app.run()`, JSX/signals, headless golden tests, and a completed threaded-render no-go report.
+- Kraken already has the foundation: a broad C ABI surface, shipped transcript/split-pane-era widgets, writer compaction, text cache, `app.run()`, JSX/signals, headless golden tests, and a completed threaded-render no-go report.
 - The next phase is not another generic widget or packaging pass. It is a product-shaping pass for long-lived agent consoles, developer inspectors, streaming logs, and dense pane-based workflows.
 - New dependencies are blocked unless they directly improve transcript behavior, devtools, or flagship examples.
 
@@ -347,6 +347,7 @@ pub struct TranscriptBlock {
     pub code_language: Option<String>,
     pub streaming: bool,
     pub collapsed: bool,
+    pub hidden: bool,
     pub unread: bool,
     pub rendered_rows: u32,
     pub version: u64,
@@ -447,7 +448,7 @@ All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and deb
 
 ### 4.3 v4 Additions (New Symbols)
 
-#### 4.3.1 Transcript Surface (+11)
+#### 4.3.1 Transcript Surface (+12)
 
 | Function | Signature | Returns | Description |
 | -------- | --------- | ------- | ----------- |
@@ -456,6 +457,7 @@ All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and deb
 | `tui_transcript_finish_block` | `(u32 handle, u64 block_id) -> i32` | 0 / -1 | Mark a streaming block as complete |
 | `tui_transcript_set_parent` | `(u32 handle, u64 block_id, u64 parent_id) -> i32` | 0 / -1 | Assign a group parent |
 | `tui_transcript_set_collapsed` | `(u32 handle, u64 block_id, u8 collapsed) -> i32` | 0 / -1 | Collapse or expand a block group |
+| `tui_transcript_set_hidden` | `(u32 handle, u64 block_id, u8 hidden) -> i32` | 0 / -1 | Hide or show a block for filtering without changing collapse semantics |
 | `tui_transcript_jump_to_block` | `(u32 handle, u64 block_id, u8 align) -> i32` | 0 / -1 | Jump viewport to block; `align`: 0=start, 1=center, 2=end |
 | `tui_transcript_jump_to_unread` | `(u32 handle) -> i32` | 0 / -1 | Jump to the earliest unread anchor |
 | `tui_transcript_set_follow_mode` | `(u32 handle, u8 mode) -> i32` | 0 / -1 | Set `FollowMode` |
@@ -508,12 +510,12 @@ Counters `0..13` remain unchanged from the v3 baseline. v4 adds:
 ### 4.6 Symbol Count
 
 - Current implemented baseline at end of v3: **142**
-- v4 additions in this spec: **+24**
-- Projected total after v4 MVP: **166**
+- v4 additions in this spec: **+25**
+- Projected total after v4 MVP: **167**
 
 Breakdown of v4 additions:
 
-- Transcript: +11
+- Transcript: +12
 - SplitPane: +6
 - Debug/devtools: +7
 
@@ -538,6 +540,7 @@ class TranscriptView extends Widget {
   finishBlock(id: bigint | number): void;
   setParent(id: bigint | number, parentId: bigint | number): void;
   setCollapsed(id: bigint | number, collapsed: boolean): void;
+  setHidden(id: bigint | number, hidden: boolean): void;
   setFollowMode(mode: "manual" | "tailLocked" | "tailWhileNearBottom"): void;
   jumpToUnread(): void;
 }

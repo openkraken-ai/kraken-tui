@@ -2007,8 +2007,26 @@ fn render_transcript(
         };
 
         if block.collapsed {
-            // Collapsed blocks are hidden (used for filtering). Skip entirely.
-            continue;
+            let first_line = block.content.lines().next().unwrap_or("");
+            let indicator = if first_line.is_empty() {
+                format!("\u{25B8} [collapsed] ({})", block.id)
+            } else {
+                format!("\u{25B8} {first_line}")
+            };
+            for (ci, ch) in indicator.chars().enumerate() {
+                let sx = content_x + ci as i32;
+                if sx >= content_x + content_w {
+                    break;
+                }
+                let cell = Cell {
+                    ch,
+                    fg: block_fg,
+                    bg,
+                    attrs,
+                };
+                clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
+            }
+            y += 1;
         } else if block.kind == crate::types::TranscriptBlockKind::Divider {
             // Render horizontal divider
             for dx in 0..content_w {
@@ -2705,6 +2723,45 @@ mod tests {
         assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, ' ');
         assert_eq!(ctx.back_buffer.get(1, 0).unwrap().ch, ' ');
         assert_eq!(ctx.back_buffer.get(5, 0).unwrap().ch, ' ');
+    }
+
+    #[test]
+    fn test_render_collapsed_transcript_parent_stays_visible() {
+        use crate::{layout, transcript, tree};
+
+        let mut ctx = integration_ctx(40, 6);
+        let transcript_handle = tree::create_node(&mut ctx, NodeType::Transcript).unwrap();
+        ctx.root = Some(transcript_handle);
+
+        layout::set_dimension(&mut ctx, transcript_handle, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, transcript_handle, 1, 6.0, 1).unwrap();
+
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            1,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "Parent",
+        )
+        .unwrap();
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            2,
+            crate::types::TranscriptBlockKind::ToolCall,
+            3,
+            "Child",
+        )
+        .unwrap();
+        transcript::set_parent(&mut ctx, transcript_handle, 2, 1).unwrap();
+        transcript::set_collapsed(&mut ctx, transcript_handle, 1, true).unwrap();
+
+        render(&mut ctx).unwrap();
+
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, '▸');
+        assert_eq!(ctx.back_buffer.get(2, 0).unwrap().ch, 'P');
+        assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, ' ');
     }
 
     #[test]

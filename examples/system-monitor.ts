@@ -1094,6 +1094,9 @@ const loop = createLoop({
 
 	onEvent(event: KrakenEvent) {
 		if (event.type === "key") {
+			const focused = ffi.tui_get_focused();
+			const editingText =
+				focused === filterInput.handle || focused === notesArea.handle;
 			if (event.keyCode === KeyCode.Escape) {
 				if (helpVisible) {
 					helpOverlay.setOpen(false);
@@ -1113,6 +1116,9 @@ const loop = createLoop({
 					helpVisible = false;
 					if (focusBeforeHelp !== 0) ffi.tui_focus(focusBeforeHelp);
 				}
+				return;
+			}
+			if (editingText) {
 				return;
 			}
 			if (key === "q") { loop.stop(); return; }

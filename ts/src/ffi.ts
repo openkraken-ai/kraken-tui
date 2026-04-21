@@ -544,6 +544,10 @@ const symbols = {
 		args: ["u32", "u64", "u8"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_transcript_set_hidden: {
+		args: ["u32", "u64", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_transcript_jump_to_block: {
 		args: ["u32", "u64", "u8"] as FFIType[],
 		returns: "i32" as const,

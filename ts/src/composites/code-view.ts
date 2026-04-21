@@ -98,8 +98,39 @@ export class CodeView {
 			this.codeText.setCodeLanguage(language);
 		}
 		this.codeText.setContent(code);
+		this.updateMeasuredLayout();
+	}
 
-		const lines = code.split("\n");
+	/** Toggle line number display. */
+	setLineNumbers(show: boolean): void {
+		if (show === this.showLineNumbers) return;
+		this.showLineNumbers = show;
+
+		if (show && !this.gutterText) {
+			this.gutterText = new Text({ fg: "#888888", bg: this.bgColor });
+			this.gutterText.setWidth(4);
+			this.container.insertChild(this.gutterText, 0);
+		} else if (!show && this.gutterText) {
+			this.container.removeChild(this.gutterText);
+			this.gutterText.destroySubtree();
+			this.gutterText = null;
+		}
+
+		this.updateMeasuredLayout();
+	}
+
+	/** Get the current content. */
+	getContent(): string {
+		return this.currentContent;
+	}
+
+	/** Get the current language. */
+	getLanguage(): string {
+		return this.currentLanguage;
+	}
+
+	private updateMeasuredLayout(): void {
+		const lines = this.currentContent.split("\n");
 		const lineCount = lines.length;
 		// Use the longest line width so text never wraps; the ScrollBox
 		// provides horizontal scrolling for lines that exceed viewport width.
@@ -122,37 +153,6 @@ export class CodeView {
 			).join("\n");
 			this.gutterText.setContent(gutter);
 		}
-	}
-
-	/** Toggle line number display. */
-	setLineNumbers(show: boolean): void {
-		if (show === this.showLineNumbers) return;
-		this.showLineNumbers = show;
-
-		if (show && !this.gutterText) {
-			this.gutterText = new Text({ fg: "#888888", bg: this.bgColor });
-			this.gutterText.setWidth(4);
-			// Insert gutter before code text
-			this.container.insertChild(this.gutterText, 0);
-			// Re-apply content to generate gutter
-			if (this.currentContent) {
-				this.setContent(this.currentContent, this.currentLanguage);
-			}
-		} else if (!show && this.gutterText) {
-			this.container.removeChild(this.gutterText);
-			this.gutterText.destroySubtree();
-			this.gutterText = null;
-		}
-	}
-
-	/** Get the current content. */
-	getContent(): string {
-		return this.currentContent;
-	}
-
-	/** Get the current language. */
-	getLanguage(): string {
-		return this.currentLanguage;
 	}
 }
 

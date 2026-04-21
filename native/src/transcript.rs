@@ -78,14 +78,21 @@ fn estimate_rendered_rows(content: &str, viewport_width: u32) -> u32 {
     rows.max(1)
 }
 
-/// Check if a block is effectively hidden (collapsed by a collapsed ancestor).
+/// Check if a block is effectively hidden.
+/// Hidden blocks are excluded entirely, while collapsed blocks remain visible
+/// and only hide their descendants.
 pub(crate) fn is_block_hidden(state: &TranscriptState, block: &TranscriptBlock) -> bool {
-    // Walk up parent chain; if any ancestor is collapsed, this block is hidden
+    if block.hidden {
+        return true;
+    }
+
+    // Walk up parent chain; if any ancestor is collapsed or hidden, this block
+    // is hidden from the viewport.
     let mut current_parent = block.parent_id;
     while let Some(pid) = current_parent {
         if let Some(&idx) = state.block_index.get(&pid) {
             let parent = &state.blocks[idx];
-            if parent.collapsed {
+            if parent.hidden || parent.collapsed {
                 return true;
             }
             current_parent = parent.parent_id;
@@ -106,7 +113,7 @@ pub(crate) fn compute_total_visible_rows(state: &TranscriptState) -> u32 {
         .blocks
         .iter()
         .filter(|b| !is_block_hidden(state, b))
-        .map(|b| if b.collapsed { 0 } else { b.rendered_rows })
+        .map(|b| if b.collapsed { 1 } else { b.rendered_rows })
         .sum()
 }
 
@@ -121,7 +128,7 @@ pub(crate) fn block_start_row(state: &TranscriptState, block_id: u64) -> Option<
             return Some(row);
         }
         row += if block.collapsed {
-            0
+            1
         } else {
             block.rendered_rows
         };
@@ -168,7 +175,7 @@ pub(crate) fn compute_visible_range(state: &TranscriptState) -> (usize, usize) {
             continue;
         }
         let block_rows = if block.collapsed {
-            0
+            1
         } else {
             block.rendered_rows
         };
@@ -239,6 +246,32 @@ fn recompute_anchor_after_collapse(state: &mut TranscriptState, toggled_block_id
     }
 }
 
+/// Recompute anchor after a block is hidden or shown for filtering.
+fn recompute_anchor_after_hidden_change(
+    state: &mut TranscriptState,
+    target_row: u32,
+    was_tail_attached: bool,
+) {
+    let total = compute_total_visible_rows(state);
+    if total == 0 {
+        state.anchor_kind = ViewportAnchorKind::Tail;
+        state.tail_attached = true;
+        return;
+    }
+
+    if state.follow_mode == FollowMode::TailLocked
+        || (state.follow_mode == FollowMode::TailWhileNearBottom && was_tail_attached)
+    {
+        state.anchor_kind = ViewportAnchorKind::Tail;
+        state.tail_attached = true;
+        return;
+    }
+
+    let max_row = total.saturating_sub(state.viewport_rows);
+    state.tail_attached = false;
+    set_anchor_to_row(state, target_row.min(max_row));
+}
+
 // ============================================================================
 // Block Operations
 // ============================================================================
@@ -304,6 +337,7 @@ pub(crate) fn append_block(
         code_language: None,
         streaming: true,
         collapsed: false,
+        hidden: false,
         unread,
         rendered_rows,
         version: 0,
@@ -459,6 +493,38 @@ pub(crate) fn set_collapsed(
     state.blocks[idx].collapsed = collapsed;
 
     recompute_anchor_after_collapse(state, block_id);
+
+    node.dirty = true;
+    Ok(())
+}
+
+pub(crate) fn set_hidden(
+    ctx: &mut TuiContext,
+    handle: u32,
+    block_id: u64,
+    hidden: bool,
+) -> Result<(), String> {
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    if node.node_type != NodeType::Transcript {
+        return Err(format!("Handle {handle} is not a Transcript widget"));
+    }
+    let state = node
+        .transcript_state
+        .as_mut()
+        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+
+    let &idx = state
+        .block_index
+        .get(&block_id)
+        .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
+    let target_row = anchor_to_row(state);
+    let was_tail_attached = state.tail_attached;
+    state.blocks[idx].hidden = hidden;
+
+    recompute_anchor_after_hidden_change(state, target_row, was_tail_attached);
 
     node.dirty = true;
     Ok(())
@@ -686,7 +752,7 @@ fn set_anchor_to_row(state: &mut TranscriptState, target_row: u32) {
             continue;
         }
         let block_rows = if block.collapsed {
-            0
+            1
         } else {
             block.rendered_rows
         };
@@ -1573,9 +1639,9 @@ mod tests {
             compute_total_visible_rows(state)
         };
 
-        // Children should be hidden, reducing total visible rows
-        // Parent collapsed = 0 rows (invisible)
+        // Children should be hidden, but the collapsed parent remains visible.
         assert!(total_after < total_before);
+        assert_eq!(total_after, 1);
     }
 
     // ====================================================================
@@ -1780,8 +1846,8 @@ mod tests {
             compute_total_visible_rows(state)
         };
 
-        // Collapsed root takes 0 visible rows; all descendants hidden
-        assert_eq!(total_after, 0);
+        // Collapsed root keeps a one-row group header; descendants stay hidden.
+        assert_eq!(total_after, 1);
         assert!(total_after < total_before);
     }
 
@@ -1812,7 +1878,7 @@ mod tests {
         set_parent(&mut ctx, handle, 2, 1).unwrap();
         set_parent(&mut ctx, handle, 3, 2).unwrap();
 
-        // Collapse middle — leaf should be hidden, root visible, middle collapsed to 0 rows
+        // Collapse middle — leaf should be hidden, root visible, middle visible as a collapsed header
         set_collapsed(&mut ctx, handle, 2, true).unwrap();
 
         let state = validate_transcript(&ctx, handle).unwrap();
@@ -1852,6 +1918,46 @@ mod tests {
         // Block 2 should now be hidden (parent is collapsed)
         let state = validate_transcript(&ctx, handle).unwrap();
         assert!(is_block_hidden(state, &state.blocks[1]));
+    }
+
+    #[test]
+    fn test_hidden_block_contributes_zero_rows() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(
+            &mut ctx,
+            handle,
+            1,
+            TranscriptBlockKind::Message,
+            2,
+            "Visible",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            2,
+            TranscriptBlockKind::Message,
+            2,
+            "Hidden",
+        )
+        .unwrap();
+
+        let total_before = {
+            let state = validate_transcript(&ctx, handle).unwrap();
+            compute_total_visible_rows(state)
+        };
+
+        set_hidden(&mut ctx, handle, 2, true).unwrap();
+
+        let total_after = {
+            let state = validate_transcript(&ctx, handle).unwrap();
+            compute_total_visible_rows(state)
+        };
+
+        assert_eq!(total_before, 2);
+        assert_eq!(total_after, 1);
     }
 
     #[test]

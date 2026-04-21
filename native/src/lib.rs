@@ -2785,6 +2785,16 @@ pub extern "C" fn tui_transcript_set_collapsed(handle: u32, block_id: u64, colla
 }
 
 #[no_mangle]
+pub extern "C" fn tui_transcript_set_hidden(handle: u32, block_id: u64, hidden: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::set_hidden(&mut ctx, handle, block_id, hidden != 0)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_transcript_jump_to_block(handle: u32, block_id: u64, align: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;

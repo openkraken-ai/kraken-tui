@@ -6,7 +6,6 @@
  */
 
 import { ffi } from "../ffi";
-import { NodeType } from "../ffi/structs";
 import { checkResult } from "../errors";
 import { Widget } from "../widget";
 import { Overlay } from "../widgets/overlay";
@@ -36,6 +35,8 @@ export class CommandPalette {
 	private list: List;
 	private commands: Command[] = [];
 	private filteredCommands: Command[] = [];
+	private restoreFocusHandle = 0;
+	private wasOpen = false;
 
 	constructor(options: CommandPaletteOptions = {}) {
 		this.overlay = new Overlay({
@@ -79,7 +80,11 @@ export class CommandPalette {
 
 	/** Open the palette. Clears filter, resets selection, and focuses input. */
 	open(): void {
+		if (!this.overlay.isOpen()) {
+			this.restoreFocusHandle = ffi.tui_get_focused();
+		}
 		this.overlay.setOpen(true);
+		this.wasOpen = true;
 		this.filteredCommands = [...this.commands];
 		this.syncListItems();
 		// Clear filter input
@@ -92,12 +97,15 @@ export class CommandPalette {
 
 	/** Close the palette. */
 	close(): void {
-		this.overlay.setOpen(false);
+		if (this.overlay.isOpen()) {
+			this.overlay.setOpen(false);
+		}
+		this.syncClosedState(false);
 	}
 
 	/** Check if the palette is currently open. */
 	isOpen(): boolean {
-		return this.overlay.isOpen();
+		return this.syncClosedState(this.overlay.isOpen());
 	}
 
 	/**
@@ -184,5 +192,16 @@ export class CommandPalette {
 		if (this.filteredCommands.length > 0) {
 			this.list.setSelected(0);
 		}
+	}
+
+	private syncClosedState(open: boolean): boolean {
+		if (!open && this.wasOpen) {
+			this.wasOpen = false;
+			if (this.restoreFocusHandle !== 0) {
+				ffi.tui_focus(this.restoreFocusHandle);
+				this.restoreFocusHandle = 0;
+			}
+		}
+		return open;
 	}
 }

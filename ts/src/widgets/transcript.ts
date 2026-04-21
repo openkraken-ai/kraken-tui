@@ -159,6 +159,17 @@ export class TranscriptView extends Widget {
 		);
 	}
 
+	/**
+	 * Hide or show a block without changing collapsed-group semantics.
+	 * Used by host composites for filtering while preserving group headers.
+	 */
+	setHidden(id: string | bigint | number, hidden: boolean): void {
+		const blockId = this.resolveId(id);
+		checkResult(
+			ffi.tui_transcript_set_hidden(this.handle, blockId, hidden ? 1 : 0),
+		);
+	}
+
 	setFollowMode(mode: FollowModeStr): void {
 		const modeNum = FOLLOW_MODE_MAP[mode] ?? 2;
 		checkResult(ffi.tui_transcript_set_follow_mode(this.handle, modeNum));
