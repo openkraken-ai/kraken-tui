@@ -520,7 +520,7 @@ const loop = createLoop({
 		if (event.type === "key") {
 			if (event.keyCode === KeyCode.Escape) { loop.stop(); return; }
 			if (event.keyCode === KeyCode.Backspace) {
-				// Go up: collapse current directory or navigate to parent
+				// Go up: collapse expanded dir, or select parent directory
 				const idx = fileList.getSelected();
 				if (idx >= 0 && idx < flatEntries.length) {
 					const entry = flatEntries[idx]!;
@@ -528,6 +528,13 @@ const loop = createLoop({
 						collapseEntry(entry);
 						refreshTree();
 						fileList.setSelected(idx);
+					} else if (entry.depth > 0) {
+						for (let i = idx - 1; i >= 0; i--) {
+							if (flatEntries[i]!.isDir && flatEntries[i]!.depth === entry.depth - 1) {
+								fileList.setSelected(i);
+								break;
+							}
+						}
 					}
 				}
 				return;

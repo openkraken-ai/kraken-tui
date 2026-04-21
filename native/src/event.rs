@@ -43,13 +43,23 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                         if let Some(overlay_handle) =
                             find_dismissable_overlay_ancestor(ctx, focused_handle)
                         {
-                            if let Some(node) = ctx.nodes.get_mut(&overlay_handle) {
+                            let taffy_node = if let Some(node) = ctx.nodes.get_mut(&overlay_handle)
+                            {
                                 if let Some(ref mut ov) = node.overlay_state {
                                     ov.open = false;
                                     node.dirty = true;
                                 }
+                                Some(node.taffy_node)
+                            } else {
+                                None
+                            };
+                            if let Some(tn) = taffy_node {
+                                if let Ok(s) = ctx.tree.style(tn) {
+                                    let mut style = s.clone();
+                                    style.display = taffy::Display::None;
+                                    let _ = ctx.tree.set_style(tn, style);
+                                }
                             }
-                            // Emit change event (data[0] = 0 meaning closed)
                             ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
                             count += 1;
                             continue;

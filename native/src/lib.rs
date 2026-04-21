@@ -238,20 +238,20 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_visible = visible != 0;
-        let taffy_node = {
+        let (taffy_node, should_display) = {
             let node = ctx.nodes.get_mut(&handle).unwrap();
             node.visible = is_visible;
             node.dirty = true;
-            node.taffy_node
+            // For Overlay nodes, display requires BOTH visible AND open.
+            let overlay_open = node.overlay_state.as_ref().is_none_or(|ov| ov.open);
+            (node.taffy_node, is_visible && overlay_open)
         };
-        // Couple visibility with Taffy display so hidden widgets don't
-        // consume layout space (matches natural user expectation in TUI).
         let mut style = ctx
             .tree
             .style(taffy_node)
             .map_err(|e| format!("Failed to read style: {e:?}"))?
             .clone();
-        style.display = if is_visible {
+        style.display = if should_display {
             taffy::Display::Flex
         } else {
             taffy::Display::None
@@ -1284,7 +1284,7 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_open = open != 0;
-        let taffy_node = {
+        let (taffy_node, should_display) = {
             let node = ctx.nodes.get_mut(&handle).unwrap();
             if node.node_type != NodeType::Overlay {
                 return Err(format!("Handle {handle} is not an Overlay widget"));
@@ -1292,14 +1292,15 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
             let overlay = node.overlay_state.as_mut().unwrap();
             overlay.open = is_open;
             node.dirty = true;
-            node.taffy_node
+            // Display requires BOTH visible AND open.
+            (node.taffy_node, node.visible && is_open)
         };
         let mut style = ctx
             .tree
             .style(taffy_node)
             .map_err(|e| format!("Failed to read style: {e:?}"))?
             .clone();
-        style.display = if is_open {
+        style.display = if should_display {
             taffy::Display::Flex
         } else {
             taffy::Display::None

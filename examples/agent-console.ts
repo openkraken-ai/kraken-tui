@@ -362,6 +362,7 @@ let traceFilterIndex = 0;
 function restartReplay(): void {
 	replay = createReplayState(REPLAY_EVENTS);
 	transcript.clear();
+	tracePanel.clear();
 }
 
 function setSpeed(ticksPerEvent: number): void {
@@ -531,6 +532,12 @@ const loop = createLoop({
 			if (event.type === "key" || event.type === "change") {
 				palette.handleInput();
 			}
+			return;
+		}
+
+		// Side tabs change event (arrow key navigation on focused Tabs widget)
+		if (event.type === "change" && event.target === sideTabs.handle) {
+			switchSideTab(sideTabs.getActive());
 			return;
 		}
 

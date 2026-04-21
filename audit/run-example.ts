@@ -13,14 +13,18 @@ import { ffi } from "../ts/src/ffi";
 
 process.env.KRAKEN_AUDIT_RENDER_ONCE = "1";
 
-const examplePath = process.argv[2];
+const rawPath = process.argv[2];
 const cols = parseInt(process.argv[3] ?? "100", 10);
 const rows = parseInt(process.argv[4] ?? "30", 10);
 
-if (!examplePath) {
+if (!rawPath) {
 	console.error("Usage: bun run audit/run-example.ts <example-path> [cols] [rows]");
 	process.exit(1);
 }
+
+// Resolve relative paths against CWD, not this script's directory.
+import { resolve, isAbsolute } from "path";
+const examplePath = isAbsolute(rawPath) ? rawPath : resolve(process.cwd(), rawPath);
 
 let activeApp: Kraken | null = null;
 (Kraken as any).init = () => {

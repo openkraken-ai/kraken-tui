@@ -91,6 +91,13 @@ export class TracePanel {
 		this.transcript.setFollowMode("manual");
 	}
 
+	/** Clear all trace entries and the underlying transcript. */
+	clear(): void {
+		this.entries = [];
+		this.nextId = 1;
+		this.transcript.clear();
+	}
+
 	/** Get the total number of trace entries (unfiltered). */
 	getEntryCount(): number {
 		return this.entries.length;
