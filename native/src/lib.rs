@@ -238,6 +238,9 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_visible = visible != 0;
+        if !is_visible {
+            crate::tree::clear_focus_if_under(&mut ctx, handle);
+        }
         let (taffy_node, should_display) = {
             let node = ctx.nodes.get_mut(&handle).unwrap();
             node.visible = is_visible;
@@ -1284,11 +1287,20 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_open = open != 0;
-        let (taffy_node, should_display) = {
-            let node = ctx.nodes.get_mut(&handle).unwrap();
+        {
+            let node = ctx
+                .nodes
+                .get(&handle)
+                .ok_or_else(|| format!("Handle {handle} not found"))?;
             if node.node_type != NodeType::Overlay {
                 return Err(format!("Handle {handle} is not an Overlay widget"));
             }
+        }
+        if !is_open {
+            crate::tree::clear_focus_if_under(&mut ctx, handle);
+        }
+        let (taffy_node, should_display) = {
+            let node = ctx.nodes.get_mut(&handle).unwrap();
             let overlay = node.overlay_state.as_mut().unwrap();
             overlay.open = is_open;
             node.dirty = true;

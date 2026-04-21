@@ -391,6 +391,34 @@ fn would_create_cycle(ctx: &TuiContext, parent: u32, child: u32) -> bool {
     false
 }
 
+/// Check if `child` is `ancestor` itself or a descendant of `ancestor`.
+pub(crate) fn is_self_or_descendant(ctx: &TuiContext, child: u32, ancestor: u32) -> bool {
+    if child == ancestor {
+        return true;
+    }
+    let mut current = child;
+    while let Some(node) = ctx.nodes.get(&current) {
+        if let Some(parent) = node.parent {
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+/// If `ctx.focused` is `handle` or a descendant of `handle`, clear it.
+pub(crate) fn clear_focus_if_under(ctx: &mut TuiContext, handle: u32) {
+    if let Some(focused) = ctx.focused {
+        if is_self_or_descendant(ctx, focused, handle) {
+            ctx.focused = None;
+        }
+    }
+}
+
 /// Mark a node and all its ancestors as dirty.
 pub(crate) fn mark_dirty(ctx: &mut TuiContext, handle: u32) {
     if let Some(node) = ctx.nodes.get_mut(&handle) {

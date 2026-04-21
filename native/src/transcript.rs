@@ -810,6 +810,7 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
+    #[allow(dead_code)]
     enum FixtureOp {
         Append(FixtureBlock),
         PatchAppend {
@@ -940,6 +941,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn tool_block(id: u64, content: &'static str, parent_id: u64) -> FixtureBlock {
         FixtureBlock {
             id,

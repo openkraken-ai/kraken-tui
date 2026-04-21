@@ -176,8 +176,7 @@ pub(crate) fn assert_golden(ctx: &TuiContext, fixture_name: &str) -> Result<(), 
     diff_golden(&expected_body, &golden_body)
 }
 
-/// Assert that the rendered buffer matches a golden fixture with style info.
-/// Like assert_golden but captures full cell style (fg, bg, attrs).
+#[allow(dead_code)]
 pub(crate) fn assert_golden_styled(ctx: &TuiContext, fixture_name: &str) -> Result<(), String> {
     let golden_body = buffer_to_golden_styled(&ctx.back_buffer);
     let width = ctx.back_buffer.width;

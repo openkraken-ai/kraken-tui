@@ -60,6 +60,7 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                     let _ = ctx.tree.set_style(tn, style);
                                 }
                             }
+                            crate::tree::clear_focus_if_under(ctx, overlay_handle);
                             ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
                             count += 1;
                             continue;

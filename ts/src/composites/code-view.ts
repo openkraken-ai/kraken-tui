@@ -86,18 +86,26 @@ export class CodeView {
 		}
 		this.codeText.setContent(code);
 
-		// Set container and text height to actual line count so the
-		// ScrollBox can scroll through all content.
-		const lineCount = code.split("\n").length;
+		const lines = code.split("\n");
+		const lineCount = lines.length;
+		// Use the longest line width so text never wraps; the ScrollBox
+		// provides horizontal scrolling for lines that exceed viewport width.
+		const maxLineWidth = lines.reduce((max, line) => Math.max(max, line.length), 0);
+
+		const gutterWidth = this.showLineNumbers && this.gutterText
+			? Math.max(3, String(lineCount).length + 1)
+			: 0;
+
 		this.container.setHeight(lineCount);
+		this.container.setWidth(gutterWidth + maxLineWidth);
 		this.codeText.setHeight(lineCount);
+		this.codeText.setWidth(maxLineWidth);
 
 		if (this.showLineNumbers && this.gutterText) {
-			const width = Math.max(3, String(lineCount).length + 1);
-			this.gutterText.setWidth(width);
+			this.gutterText.setWidth(gutterWidth);
 			this.gutterText.setHeight(lineCount);
 			const gutter = Array.from({ length: lineCount }, (_, i) =>
-				String(i + 1).padStart(width - 1),
+				String(i + 1).padStart(gutterWidth - 1),
 			).join("\n");
 			this.gutterText.setContent(gutter);
 		}

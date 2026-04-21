@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_get_ratio_invalid_handle_rejected() {
-        let mut ctx = test_ctx();
+        let ctx = test_ctx();
         assert!(get_ratio(&ctx, 99999).is_err());
     }
 
@@ -1058,7 +1058,7 @@ mod tests {
         set_resize_step(&mut ctx, sp, 5).unwrap(); // 5 cells
 
         // Compute layout so the size is known
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
 
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp, key::RIGHT);
@@ -1091,7 +1091,7 @@ mod tests {
         }
         set_ratio(&mut ctx, sp1, 500).unwrap();
         set_resize_step(&mut ctx, sp1, 10).unwrap();
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp1, key::RIGHT);
         let delta_100 = get_ratio(&ctx, sp1).unwrap() - 500;
@@ -1112,7 +1112,7 @@ mod tests {
         }
         set_ratio(&mut ctx, sp2, 500).unwrap();
         set_resize_step(&mut ctx, sp2, 10).unwrap();
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp2, key::RIGHT);
         let delta_200 = get_ratio(&ctx, sp2).unwrap() - 500;

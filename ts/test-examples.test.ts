@@ -115,12 +115,16 @@ describe("Agent Console Replay (TASK-L3)", () => {
 		root.append(transcript);
 		app.setRoot(root);
 
-		// Apply message start + multiple chunks + end
+		// Apply message start → record node count
 		applyReplayEvent(transcript, {
 			type: "MESSAGE_START",
 			messageId: "test-msg",
 			role: "user",
 		});
+		app.render();
+		const countAfterStart = app.getNodeCount();
+
+		// Multiple chunks should NOT create additional nodes
 		applyReplayEvent(transcript, {
 			type: "MESSAGE_CHUNK",
 			messageId: "test-msg",
@@ -142,8 +146,8 @@ describe("Agent Console Replay (TASK-L3)", () => {
 		});
 
 		app.render();
-		// Only one block created despite multiple patches
-		// The patches update the same block, not create new ones
+		// Streaming chunks patch in place — node count unchanged
+		expect(app.getNodeCount()).toBe(countAfterStart);
 	});
 
 	test("tool calls parent correctly", () => {
@@ -183,7 +187,29 @@ describe("Agent Console Replay (TASK-L3)", () => {
 		});
 
 		app.render();
-		// No crash = parent assignment succeeded
+
+		// Verify the transcript rendered successfully with parent-child blocks.
+		// Append another parented tool call to verify the structure stays stable.
+		applyReplayEvent(transcript, {
+			type: "MESSAGE_START",
+			messageId: "parent-msg-2",
+			role: "assistant",
+		});
+		applyReplayEvent(transcript, {
+			type: "TOOL_CALL_START",
+			toolCallId: "tc-2",
+			parentMessageId: "parent-msg-2",
+			toolName: "writeFile",
+		});
+		applyReplayEvent(transcript, {
+			type: "TOOL_RESULT",
+			toolCallId: "tc-2",
+			content: "written successfully",
+		});
+		app.render();
+		// 6 block-creating events total (3 from first batch, 3 from second)
+		// If parent assignment had failed, the render would have errored
+		expect(app.getNodeCount()).toBeGreaterThanOrEqual(2);
 	});
 
 	test("unread count correct after simulated detach", () => {
@@ -446,10 +472,15 @@ describe("Ops Log Replay (TASK-L3)", () => {
 
 		// Total entries still 20 (filter uses collapse, not delete)
 		expect(logView.getEntryCount()).toBe(20);
+		// Visible count should match the error count from the fixture
+		const errorCount = levelCounts["error"] ?? 0;
+		expect(logView.getVisibleCount()).toBe(errorCount);
+		expect(errorCount).toBeGreaterThan(0);
 
-		// Clear filter
+		// Clear filter — all entries visible again
 		logView.clearFilter();
 		app.render();
+		expect(logView.getVisibleCount()).toBe(20);
 	});
 
 	test("follow mode detach/reattach cycle", () => {
@@ -531,9 +562,16 @@ describe("Ops Log Replay (TASK-L3)", () => {
 		logView.setFilter((entry: StructuredLogEntry) => entry.source === "http");
 		app.render();
 
-		// Clear
+		const httpCount = opsLogFixture.entries.filter(
+			(e: StructuredLogEntry) => e.source === "http",
+		).length;
+		expect(logView.getVisibleCount()).toBe(httpCount);
+		expect(httpCount).toBeGreaterThan(0);
+
+		// Clear — all visible again
 		logView.clearFilter();
 		app.render();
+		expect(logView.getVisibleCount()).toBe(20);
 	});
 });
 
