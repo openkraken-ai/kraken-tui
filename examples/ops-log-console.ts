@@ -196,8 +196,11 @@ searchInput.setFocusable(true);
 searchInput.setRole(AccessibilityRole.Input);
 searchInput.setLabel("Search filter");
 
-// Stats display
-const statsText = new Text({ content: "", width: "100%", height: 1, fg: COLORS.statusFg, bg: COLORS.controlBg });
+// Stats display — fills remaining space in the control row
+const statsText = new Text({ content: "", height: 1, fg: COLORS.statusFg, bg: COLORS.controlBg });
+statsText.setFlexGrow(1);
+statsText.setFlexShrink(1);
+statsText.setFlexBasis(0);
 
 controlBar.append(levelLabel);
 controlBar.append(levelSelect);

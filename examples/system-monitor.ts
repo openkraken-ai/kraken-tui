@@ -385,24 +385,27 @@ titleText.setWidth(18);
 titleText.setHeight(1);
 
 const hostText = new Text({ content: ` ${readHostname()}`, fg: pal.fg });
-hostText.setWidth(20);
+hostText.setWidth(18);
 hostText.setHeight(1);
 
 const uptimeText = new Text({ content: "", fg: pal.fgDim });
-uptimeText.setWidth(18);
+uptimeText.setWidth(16);
 uptimeText.setHeight(1);
 
 const loadText = new Text({ content: "", fg: pal.cyan });
-loadText.setWidth(28);
+loadText.setWidth(22);
 loadText.setHeight(1);
 
 const themeText = new Text({ content: ` [t] ${pal.name}`, fg: pal.accent });
-themeText.setWidth(20);
+themeText.setWidth(14);
 themeText.setHeight(1);
 
+// Help hint fills remaining space so wider terminals don't leave a gap.
 const helpHint = new Text({ content: " [h]Help [q]Quit", fg: pal.fgDim });
-helpHint.setWidth(18);
 helpHint.setHeight(1);
+helpHint.setFlexGrow(1);
+helpHint.setFlexShrink(1);
+helpHint.setFlexBasis(0);
 
 headerBar.append(titleText);
 headerBar.append(hostText);

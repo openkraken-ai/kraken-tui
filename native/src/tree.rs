@@ -39,6 +39,11 @@ pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u
         };
     }
 
+    // Overlay defaults to closed; match Taffy layout to prevent phantom space.
+    if node_type == NodeType::Overlay {
+        style.display = taffy::Display::None;
+    }
+
     let taffy_result = if node_type.is_leaf() {
         ctx.tree.new_leaf(style)
     } else {

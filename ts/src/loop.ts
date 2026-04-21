@@ -77,6 +77,13 @@ export function createLoop(options: LoopOptions): Loop {
 	let running = false;
 
 	async function start(): Promise<void> {
+		// Audit mode: render once and exit, so examples can be inspected
+		// headlessly without requiring a real event loop.
+		if (process.env.KRAKEN_AUDIT_RENDER_ONCE === "1") {
+			onTick?.();
+			app.render();
+			return;
+		}
 		running = true;
 		while (running) {
 			const animating =

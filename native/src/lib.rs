@@ -237,9 +237,28 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        let node = ctx.nodes.get_mut(&handle).unwrap();
-        node.visible = visible != 0;
-        node.dirty = true;
+        let is_visible = visible != 0;
+        let taffy_node = {
+            let node = ctx.nodes.get_mut(&handle).unwrap();
+            node.visible = is_visible;
+            node.dirty = true;
+            node.taffy_node
+        };
+        // Couple visibility with Taffy display so hidden widgets don't
+        // consume layout space (matches natural user expectation in TUI).
+        let mut style = ctx
+            .tree
+            .style(taffy_node)
+            .map_err(|e| format!("Failed to read style: {e:?}"))?
+            .clone();
+        style.display = if is_visible {
+            taffy::Display::Flex
+        } else {
+            taffy::Display::None
+        };
+        ctx.tree
+            .set_style(taffy_node, style)
+            .map_err(|e| format!("Failed to set style: {e:?}"))?;
         Ok(0)
     })
 }
@@ -1264,13 +1283,30 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        let node = ctx.nodes.get_mut(&handle).unwrap();
-        if node.node_type != NodeType::Overlay {
-            return Err(format!("Handle {handle} is not an Overlay widget"));
-        }
-        let overlay = node.overlay_state.as_mut().unwrap();
-        overlay.open = open != 0;
-        node.dirty = true;
+        let is_open = open != 0;
+        let taffy_node = {
+            let node = ctx.nodes.get_mut(&handle).unwrap();
+            if node.node_type != NodeType::Overlay {
+                return Err(format!("Handle {handle} is not an Overlay widget"));
+            }
+            let overlay = node.overlay_state.as_mut().unwrap();
+            overlay.open = is_open;
+            node.dirty = true;
+            node.taffy_node
+        };
+        let mut style = ctx
+            .tree
+            .style(taffy_node)
+            .map_err(|e| format!("Failed to read style: {e:?}"))?
+            .clone();
+        style.display = if is_open {
+            taffy::Display::Flex
+        } else {
+            taffy::Display::None
+        };
+        ctx.tree
+            .set_style(taffy_node, style)
+            .map_err(|e| format!("Failed to set style: {e:?}"))?;
         Ok(0)
     })
 }
