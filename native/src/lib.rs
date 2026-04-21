@@ -3427,7 +3427,8 @@ mod tests {
         let content_text = tui_create_node(NodeType::Text as u8);
         tui_set_layout_dimension(content_text, 0, 40.0, 1);
         tui_set_layout_dimension(content_text, 1, 100.0, 2); // 100% height
-        let ct = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12";
+        let ct =
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12";
         tui_set_content(content_text, ct.as_ptr(), ct.len() as u32);
         tui_append_child(content, content_text);
 
@@ -3461,7 +3462,11 @@ mod tests {
                 }
             }
             eprintln!("Row 0: '{}'", row0.trim());
-            assert!(row0.contains("HEADER"), "Row 0 should contain HEADER text, got: '{}'", row0.trim());
+            assert!(
+                row0.contains("HEADER"),
+                "Row 0 should contain HEADER text, got: '{}'",
+                row0.trim()
+            );
 
             // Row 9 should contain "FOOTER"
             let mut row9 = String::new();
@@ -3471,7 +3476,11 @@ mod tests {
                 }
             }
             eprintln!("Row 9: '{}'", row9.trim());
-            assert!(row9.contains("FOOTER"), "Row 9 should contain FOOTER text, got: '{}'", row9.trim());
+            assert!(
+                row9.contains("FOOTER"),
+                "Row 9 should contain FOOTER text, got: '{}'",
+                row9.trim()
+            );
 
             // Print all rows for debugging
             for y in 0..buffer.height {
@@ -3582,16 +3591,28 @@ mod tests {
             // Check header
             let mut row0 = String::new();
             for x in 0..buffer.width {
-                if let Some(cell) = buffer.get(x, 0) { row0.push(cell.ch); }
+                if let Some(cell) = buffer.get(x, 0) {
+                    row0.push(cell.ch);
+                }
             }
-            assert!(row0.contains("HEADER"), "Row 0 should contain HEADER, got: '{}'", row0.trim());
+            assert!(
+                row0.contains("HEADER"),
+                "Row 0 should contain HEADER, got: '{}'",
+                row0.trim()
+            );
 
             // Check footer
             let mut row9 = String::new();
             for x in 0..buffer.width {
-                if let Some(cell) = buffer.get(x, 9) { row9.push(cell.ch); }
+                if let Some(cell) = buffer.get(x, 9) {
+                    row9.push(cell.ch);
+                }
             }
-            assert!(row9.contains("FOOTER"), "Row 9 should contain FOOTER, got: '{}'", row9.trim());
+            assert!(
+                row9.contains("FOOTER"),
+                "Row 9 should contain FOOTER, got: '{}'",
+                row9.trim()
+            );
         }
 
         tui_shutdown();
@@ -3615,19 +3636,19 @@ mod tests {
         // Header: h=1
         let header = tui_create_node(NodeType::Box as u8);
         tui_set_layout_dimension(header, 0, 80.0, 1); // width=80px (100% of root)
-        tui_set_layout_dimension(header, 1, 1.0, 1);  // height=1
+        tui_set_layout_dimension(header, 1, 1.0, 1); // height=1
         tui_append_child(root, header);
 
         // Content: flex_grow=1 (no explicit height)
         let content = tui_create_node(NodeType::Box as u8);
         tui_set_layout_dimension(content, 0, 80.0, 1); // width=80px
-        tui_set_layout_flex_factor(content, 0, 1.0);    // flex_grow=1
+        tui_set_layout_flex_factor(content, 0, 1.0); // flex_grow=1
         tui_append_child(root, content);
 
         // Footer: h=1
         let footer = tui_create_node(NodeType::Box as u8);
         tui_set_layout_dimension(footer, 0, 80.0, 1); // width=80px
-        tui_set_layout_dimension(footer, 1, 1.0, 1);  // height=1
+        tui_set_layout_dimension(footer, 1, 1.0, 1); // height=1
         tui_append_child(root, footer);
 
         // Compute layout
@@ -3646,10 +3667,22 @@ mod tests {
         let footer_layout = get(footer);
 
         eprintln!("=== Layout: header/content(flex_grow=1)/footer ===");
-        eprintln!("root:    x={} y={} w={} h={}", root_layout.0, root_layout.1, root_layout.2, root_layout.3);
-        eprintln!("header:  x={} y={} w={} h={}", header_layout.0, header_layout.1, header_layout.2, header_layout.3);
-        eprintln!("content: x={} y={} w={} h={}", content_layout.0, content_layout.1, content_layout.2, content_layout.3);
-        eprintln!("footer:  x={} y={} w={} h={}", footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3);
+        eprintln!(
+            "root:    x={} y={} w={} h={}",
+            root_layout.0, root_layout.1, root_layout.2, root_layout.3
+        );
+        eprintln!(
+            "header:  x={} y={} w={} h={}",
+            header_layout.0, header_layout.1, header_layout.2, header_layout.3
+        );
+        eprintln!(
+            "content: x={} y={} w={} h={}",
+            content_layout.0, content_layout.1, content_layout.2, content_layout.3
+        );
+        eprintln!(
+            "footer:  x={} y={} w={} h={}",
+            footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3
+        );
 
         // Header should be at y=0, h=1
         assert_eq!(header_layout, (0, 0, 80, 1), "header should be at top");
@@ -3683,8 +3716,8 @@ mod tests {
 
         // Content: height=100%
         let content = tui_create_node(NodeType::Box as u8);
-        tui_set_layout_dimension(content, 0, 80.0, 1);   // width=80px
-        tui_set_layout_dimension(content, 1, 100.0, 2);   // height=100% (unit=2=percent)
+        tui_set_layout_dimension(content, 0, 80.0, 1); // width=80px
+        tui_set_layout_dimension(content, 1, 100.0, 2); // height=100% (unit=2=percent)
         tui_append_child(root, content);
 
         // Footer: h=1
@@ -3706,15 +3739,28 @@ mod tests {
         let footer_layout = get(footer);
 
         eprintln!("=== Layout: header/content(h=100%)/footer ===");
-        eprintln!("header:  x={} y={} w={} h={}", header_layout.0, header_layout.1, header_layout.2, header_layout.3);
-        eprintln!("content: x={} y={} w={} h={}", content_layout.0, content_layout.1, content_layout.2, content_layout.3);
-        eprintln!("footer:  x={} y={} w={} h={}", footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3);
+        eprintln!(
+            "header:  x={} y={} w={} h={}",
+            header_layout.0, header_layout.1, header_layout.2, header_layout.3
+        );
+        eprintln!(
+            "content: x={} y={} w={} h={}",
+            content_layout.0, content_layout.1, content_layout.2, content_layout.3
+        );
+        eprintln!(
+            "footer:  x={} y={} w={} h={}",
+            footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3
+        );
 
         // With height=100%, content wants 24 rows = full parent.
         // flex_shrink defaults to 1 in Taffy, so it should shrink.
         // But let's see what actually happens.
-        eprintln!("footer visible on screen? footer_y({}) + footer_h({}) <= 24: {}",
-            footer_layout.1, footer_layout.3, footer_layout.1 + footer_layout.3 <= 24);
+        eprintln!(
+            "footer visible on screen? footer_y({}) + footer_h({}) <= 24: {}",
+            footer_layout.1,
+            footer_layout.3,
+            footer_layout.1 + footer_layout.3 <= 24
+        );
 
         tui_shutdown();
     }

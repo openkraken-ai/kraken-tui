@@ -1997,7 +1997,11 @@ fn render_transcript(
         // A value of 0 means "inherit the node's default fg".
         let block_fg = if (block.role as usize) < role_colors.len() {
             let c = role_colors[block.role as usize];
-            if c != 0 { c } else { fg }
+            if c != 0 {
+                c
+            } else {
+                fg
+            }
         } else {
             fg
         };
@@ -2064,7 +2068,12 @@ fn render_transcript(
                         }
                     }
                     if sub_row >= skip_sub_rows {
-                        let cell = Cell { ch, fg: block_fg, bg, attrs };
+                        let cell = Cell {
+                            ch,
+                            fg: block_fg,
+                            bg,
+                            attrs,
+                        };
                         clip_set(&mut ctx.front_buffer, x, y, cell, clip);
                     }
                     x += w;
