@@ -495,7 +495,7 @@ function updateStatus(): void {
 
 	const filter = TRACE_FILTERS[traceFilterIndex];
 	const devLabel = devOverlayOn ? " DEV" : "";
-	statusLeft.setContent(` Blocks: ${replay.totalApplied}  Traces: ${tracePanel.getEntryCount()}  Filter: ${filter}${devLabel}`);
+	statusLeft.setContent(` Events: ${replay.totalApplied}  Traces: ${tracePanel.getEntryCount()}  Filter: ${filter}${devLabel}`);
 	statusRight.setContent(`Tab: ${activeSideTab === 0 ? "Traces" : "Info"}  Nodes: ${app.getNodeCount()}  Ctrl+P: palette  q: quit `);
 }
 

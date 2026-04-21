@@ -235,7 +235,6 @@ let paused = false;
 let logRate = 4; // ticks between log generation (~15 logs/sec at 60fps)
 let tickAccum = 0;
 let totalLogs = 0;
-let filteredCount = 0;
 let currentLevel: LogLevel | null = null;
 let searchQuery = "";
 let devOverlayMode = 0; // 0=off, 1=bounds+focus, 2=dirty+anchors, 3=all+perf
@@ -299,7 +298,9 @@ function updateStatus(): void {
 	statusLeft.setContent(` Level: ${levelLabel2}${searchLabel2}${devLabel}`);
 	statusRight.setContent(`Nodes: ${app.getNodeCount()}  f:follow  d:dev  /:search  1-6:filter  q:quit `);
 
-	statsText.setContent(`  showing ${totalLogs} entries  ${ratePerSec}/s`);
+	const visible = logView.getVisibleCount();
+	const filterNote = visible < totalLogs ? ` (${visible} shown)` : "";
+	statsText.setContent(`  ${totalLogs} entries${filterNote}  ${ratePerSec}/s`);
 }
 
 // ── Event Loop ───────────────────────────────────────────────────────
@@ -314,6 +315,13 @@ const loop = createLoop({
 		if (event.type === "key") {
 			if (event.keyCode === KeyCode.Escape) {
 				loop.stop();
+				return;
+			}
+
+			// When the search input is focused, let it handle all printable
+			// keys so typing "query", "debug", "1", "+", etc. updates the
+			// query instead of triggering global shortcuts.
+			if (event.target === searchInput.handle) {
 				return;
 			}
 

@@ -181,5 +181,8 @@ export class CommandPalette {
 		for (const cmd of this.filteredCommands) {
 			this.list.addItem(cmd.label);
 		}
+		if (this.filteredCommands.length > 0) {
+			this.list.setSelected(0);
+		}
 	}
 }

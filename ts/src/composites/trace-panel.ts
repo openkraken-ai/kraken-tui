@@ -236,6 +236,12 @@ export class StructuredLogView {
 		return this.trackedEntries.length;
 	}
 
+	/** Get the number of entries matching the current filter. */
+	getVisibleCount(): number {
+		if (this.filter === null) return this.trackedEntries.length;
+		return this.trackedEntries.filter(t => this.matchesFilter(t.entry)).length;
+	}
+
 	private matchesFilter(entry: StructuredLogEntry): boolean {
 		if (this.filter === null) return true;
 		if (typeof this.filter === "string") return entry.level === this.filter;

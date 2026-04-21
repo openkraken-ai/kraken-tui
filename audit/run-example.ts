@@ -46,9 +46,16 @@ try {
 
 // Example's loop.start() already called render() once.
 // Re-render to capture any final state changes.
-ffi.tui_render();
+if (ffi.tui_render() < 0) {
+	console.error("[audit] tui_render() failed");
+	process.exit(1);
+}
 
 const len = ffi.tui_debug_get_snapshot_len();
+if (len < 0) {
+	console.error("[audit] tui_debug_get_snapshot_len() failed");
+	process.exit(1);
+}
 const buf = Buffer.alloc(len);
 ffi.tui_debug_get_snapshot(ptr(buf), len);
 const snap = JSON.parse(buf.toString("utf-8"));
@@ -90,3 +97,7 @@ if (issues.length === 0) console.log("(none)");
 else for (const i of issues) console.log("! " + i);
 
 ffi.tui_shutdown();
+
+if (issues.length > 0) {
+	process.exit(1);
+}
