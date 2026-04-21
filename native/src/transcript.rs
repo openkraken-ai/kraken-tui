@@ -272,6 +272,14 @@ fn recompute_anchor_after_hidden_change(
     set_anchor_to_row(state, target_row.min(max_row));
 }
 
+fn first_visible_unread_block_id(state: &TranscriptState) -> Option<u64> {
+    state
+        .blocks
+        .iter()
+        .find(|block| block.unread && !is_block_hidden(state, block))
+        .map(|block| block.id)
+}
+
 // ============================================================================
 // Block Operations
 // ============================================================================
@@ -548,8 +556,11 @@ pub(crate) fn jump_to_block(
         .as_mut()
         .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
 
-    if !state.block_index.contains_key(&block_id) {
+    let Some(&idx) = state.block_index.get(&block_id) else {
         return Err(format!("Unknown block_id: {block_id}"));
+    };
+    if is_block_hidden(state, &state.blocks[idx]) {
+        return Err(format!("Block {block_id} is hidden"));
     }
 
     match align {
@@ -592,7 +603,7 @@ pub(crate) fn jump_to_unread(ctx: &mut TuiContext, handle: u32) -> Result<(), St
         .as_mut()
         .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
 
-    if let Some(unread_id) = state.unread_anchor {
+    if let Some(unread_id) = first_visible_unread_block_id(state) {
         state.anchor_kind = ViewportAnchorKind::BlockStart {
             block_id: unread_id,
             row_offset: 0,
@@ -656,10 +667,11 @@ pub(crate) fn get_follow_mode(ctx: &TuiContext, handle: u32) -> Result<u8, Strin
 pub(crate) fn mark_read(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let state = validate_transcript_mut(ctx, handle)?;
 
-    // Clear unread on all visible blocks
-    let (start, end) = compute_visible_range(state);
-    for i in start..end.min(state.blocks.len()) {
-        state.blocks[i].unread = false;
+    // Mark all unread blocks as read. This matches the flagship example
+    // "mark all read" operator behavior, including unread entries hidden by
+    // active filtering.
+    for block in &mut state.blocks {
+        block.unread = false;
     }
 
     recompute_unread_state(state);
@@ -2205,6 +2217,20 @@ mod tests {
     }
 
     #[test]
+    fn test_jump_to_hidden_block_returns_error() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        append_block(&mut ctx, handle, 2, TranscriptBlockKind::Message, 2, "B").unwrap();
+        set_hidden(&mut ctx, handle, 2, true).unwrap();
+
+        let result = jump_to_block(&mut ctx, handle, 2, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("hidden"));
+    }
+
+    #[test]
     fn test_resize_preserves_anchor_block() {
         let mut ctx = test_ctx();
         let handle = create_transcript(&mut ctx);
@@ -2312,6 +2338,92 @@ mod tests {
         let handle = create_transcript(&mut ctx);
 
         append_block(&mut ctx, handle, 1, TranscriptBlockKind::Message, 2, "A").unwrap();
+        mark_read(&mut ctx, handle).unwrap();
+        assert_eq!(get_unread_count(&ctx, handle).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_jump_to_unread_skips_hidden_unread_blocks() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            11,
+            TranscriptBlockKind::Message,
+            2,
+            "hidden unread",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            12,
+            TranscriptBlockKind::Message,
+            2,
+            "visible unread",
+        )
+        .unwrap();
+        for i in 13..=20 {
+            append_block(
+                &mut ctx,
+                handle,
+                i,
+                TranscriptBlockKind::Message,
+                2,
+                "later unread",
+            )
+            .unwrap();
+        }
+        set_hidden(&mut ctx, handle, 11, true).unwrap();
+
+        jump_to_unread(&mut ctx, handle).unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        match &state.anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => assert_eq!(*block_id, 12),
+            other => panic!("Unexpected anchor kind: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_mark_read_clears_hidden_unread_blocks() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            11,
+            TranscriptBlockKind::Message,
+            2,
+            "hidden unread",
+        )
+        .unwrap();
+        set_hidden(&mut ctx, handle, 11, true).unwrap();
+        assert_eq!(get_unread_count(&ctx, handle).unwrap(), 1);
+
         mark_read(&mut ctx, handle).unwrap();
         assert_eq!(get_unread_count(&ctx, handle).unwrap(), 0);
     }

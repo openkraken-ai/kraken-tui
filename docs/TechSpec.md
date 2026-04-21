@@ -54,7 +54,7 @@
 | -------- | ------ | ------ |
 | Native Core | `libkraken_tui.{so,dylib,dll}` | `native/target/release/` |
 | Host Package | TypeScript source | `ts/src/` |
-| Flagship Examples | Bun entrypoints | `examples/agent-console.tsx`, `examples/ops-log-console.tsx`, `examples/repo-inspector.tsx` |
+| Flagship Examples | Bun entrypoints | `examples/agent-console.ts`, `examples/ops-log-console.ts`, `examples/repo-inspector.ts` |
 
 ### 1.5 CI and Tooling
 
@@ -462,7 +462,7 @@ All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and deb
 | `tui_transcript_jump_to_unread` | `(u32 handle) -> i32` | 0 / -1 | Jump to the earliest unread anchor |
 | `tui_transcript_set_follow_mode` | `(u32 handle, u8 mode) -> i32` | 0 / -1 | Set `FollowMode` |
 | `tui_transcript_get_follow_mode` | `(u32 handle) -> i32` | mode / -1 | Read current `FollowMode` |
-| `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Clear unread state at the current viewport |
+| `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Mark all unread blocks in the transcript as read |
 | `tui_transcript_get_unread_count` | `(u32 handle) -> i32` | count / -1 | Read unread block count |
 
 #### 4.3.2 SplitPane (+6)
@@ -618,9 +618,9 @@ kraken-tui/
 |  |     |- hud.ts         # v4
 |  |     `- traces.ts      # v4
 |- examples/
-|  |- agent-console.tsx    # v4
-|  |- ops-log-console.tsx  # v4
-|  `- repo-inspector.tsx   # v4
+|  |- agent-console.ts     # v4
+|  |- ops-log-console.ts   # v4
+|  `- repo-inspector.ts    # v4
 `- docs/
 ```
 
@@ -668,12 +668,12 @@ bun test ts/test-runner.test.ts
 bun test ts/test-jsx.test.ts
 
 # Flagship examples (target commands)
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/agent-console.tsx
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/ops-log-console.tsx
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/repo-inspector.tsx
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/agent-console.ts
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/ops-log-console.ts
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/repo-inspector.ts
 
 # Dev restart loop
-bun --watch examples/agent-console.tsx
+bun --watch examples/agent-console.ts
 ```
 
 ### 5.5 Performance and Quality Gates

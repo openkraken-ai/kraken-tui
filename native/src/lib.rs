@@ -1287,7 +1287,8 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_open = open != 0;
-        {
+        let previous_focus = ctx.focused;
+        let was_open = {
             let node = ctx
                 .nodes
                 .get(&handle)
@@ -1295,10 +1296,31 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
             if node.node_type != NodeType::Overlay {
                 return Err(format!("Handle {handle} is not an Overlay widget"));
             }
+            node.overlay_state
+                .as_ref()
+                .is_some_and(|overlay| overlay.open)
+        };
+        {
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Handle {handle} not found"))?;
+            let overlay = node.overlay_state.as_mut().unwrap();
+            if is_open && !was_open {
+                overlay.restore_focus = previous_focus;
+            }
         }
-        if !is_open {
+        let restore_focus = if !is_open {
+            let restore = ctx
+                .nodes
+                .get_mut(&handle)
+                .and_then(|node| node.overlay_state.as_mut())
+                .and_then(|overlay| overlay.restore_focus.take());
             crate::tree::clear_focus_if_under(&mut ctx, handle);
-        }
+            restore
+        } else {
+            None
+        };
         let (taffy_node, should_display) = {
             let node = ctx.nodes.get_mut(&handle).unwrap();
             let overlay = node.overlay_state.as_mut().unwrap();
@@ -1320,6 +1342,21 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
         ctx.tree
             .set_style(taffy_node, style)
             .map_err(|e| format!("Failed to set style: {e:?}"))?;
+        if ctx.focused.is_none() {
+            if let Some(restore_handle) = restore_focus {
+                if let Some(node) = ctx.nodes.get(&restore_handle) {
+                    if node.focusable && node.visible {
+                        let old = ctx.focused.unwrap_or(0);
+                        ctx.focused = Some(restore_handle);
+                        if old != restore_handle {
+                            ctx.event_buffer
+                                .push(TuiEvent::focus_change(old, restore_handle));
+                            event::maybe_emit_accessibility_event(&mut ctx, restore_handle);
+                        }
+                    }
+                }
+            }
+        }
         Ok(0)
     })
 }

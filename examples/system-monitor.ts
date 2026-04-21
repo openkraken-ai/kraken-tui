@@ -1093,6 +1093,14 @@ const loop = createLoop({
 	fps: 60,
 
 	onEvent(event: KrakenEvent) {
+		if (event.type === "change" && event.target === helpOverlay.handle) {
+			helpVisible = helpOverlay.isOpen();
+			if (!helpVisible) {
+				focusBeforeHelp = 0;
+			}
+			return;
+		}
+
 		if (event.type === "key") {
 			const focused = ffi.tui_get_focused();
 			const editingText =

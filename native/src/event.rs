@@ -43,6 +43,11 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                         if let Some(overlay_handle) =
                             find_dismissable_overlay_ancestor(ctx, focused_handle)
                         {
+                            let restore_focus = ctx
+                                .nodes
+                                .get_mut(&overlay_handle)
+                                .and_then(|node| node.overlay_state.as_mut())
+                                .and_then(|overlay| overlay.restore_focus.take());
                             let taffy_node = if let Some(node) = ctx.nodes.get_mut(&overlay_handle)
                             {
                                 if let Some(ref mut ov) = node.overlay_state {
@@ -61,6 +66,23 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                                 }
                             }
                             crate::tree::clear_focus_if_under(ctx, overlay_handle);
+                            if ctx.focused.is_none() {
+                                if let Some(restore_handle) = restore_focus {
+                                    if let Some(node) = ctx.nodes.get(&restore_handle) {
+                                        if node.focusable && node.visible {
+                                            let old_focus = ctx.focused.unwrap_or(0);
+                                            ctx.focused = Some(restore_handle);
+                                            if old_focus != restore_handle {
+                                                ctx.event_buffer.push(TuiEvent::focus_change(
+                                                    old_focus,
+                                                    restore_handle,
+                                                ));
+                                                maybe_emit_accessibility_event(ctx, restore_handle);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
                             count += 1;
                             continue;
@@ -1898,6 +1920,57 @@ mod tests {
         assert_eq!(event.event_type, TuiEventType::Change as u32);
         assert_eq!(event.target, overlay);
         assert_eq!(event.data[0], 0); // closed
+    }
+
+    #[test]
+    fn test_escape_dismisses_overlay_and_restores_focus() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let previous = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, previous).unwrap();
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .restore_focus = Some(previous);
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(ctx.focused, Some(previous));
+
+        let focus_event = next_event(&mut ctx).unwrap();
+        assert_eq!(focus_event.event_type, TuiEventType::FocusChange as u32);
+        assert_eq!(focus_event.data[1], previous);
+
+        let overlay_event = next_event(&mut ctx).unwrap();
+        assert_eq!(overlay_event.event_type, TuiEventType::Change as u32);
+        assert_eq!(overlay_event.target, overlay);
     }
 
     #[test]

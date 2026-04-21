@@ -653,6 +653,7 @@ pub struct OverlayState {
     pub modal: bool,
     pub clear_under: bool,
     pub dismiss_on_escape: bool,
+    pub restore_focus: Option<u32>,
 }
 
 impl Default for OverlayState {
@@ -662,6 +663,7 @@ impl Default for OverlayState {
             modal: false,
             clear_under: false,
             dismiss_on_escape: true,
+            restore_focus: None,
         }
     }
 }

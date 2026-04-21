@@ -2887,6 +2887,15 @@ describe("FFI integration", () => {
 				ffi.tui_destroy_node(h);
 			});
 
+			test("jump to hidden block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
+
 		test("many blocks lifecycle stress test", () => {
 			const h = ffi.tui_create_node(10);
 			const c = new TextEncoder().encode("msg");
@@ -3709,9 +3718,8 @@ describe("FFI integration", () => {
 				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
 
 				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
-				expect(ffi.tui_get_focused()).toBe(0);
-				expect(palette.isOpen()).toBe(false);
 				expect(ffi.tui_get_focused()).toBe(input.handle);
+				expect(palette.isOpen()).toBe(false);
 
 				root.destroySubtree();
 			});
