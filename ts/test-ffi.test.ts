@@ -3547,6 +3547,49 @@ describe("FFI integration", () => {
 			cv.getWidget().destroySubtree();
 		});
 
+		test("CodeView uses terminal column width for wide unicode lines", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const root = ffi.tui_create_node(0); // Box
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const cv = new CodeView({ lineNumbers: false, width: "100%", height: "100%" });
+			cv.setContent("漢漢漢漢漢漢"); // 6 code points, 12 terminal columns
+			ffi.tui_append_child(root, cv.getWidget().handle);
+			ffi.tui_set_root(root);
+			ffi.tui_render();
+
+			const codeText = (cv as unknown as { codeText: { handle: number } }).codeText;
+			const wBuf = new Int32Array(1);
+			expect(ffi.tui_get_layout(codeText.handle, new Int32Array(1), new Int32Array(1), wBuf, new Int32Array(1))).toBe(0);
+			expect(wBuf[0]).toBe(12);
+
+			cv.getWidget().destroySubtree();
+			ffi.tui_destroy_node(root);
+		});
+
+		test("CodeView width ignores combining marks", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const root = ffi.tui_create_node(0); // Box
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			// "ééé" using combining marks should occupy 3 columns.
+			const cv = new CodeView({ lineNumbers: false, width: "100%", height: "100%" });
+			cv.setContent("e\u0301e\u0301e\u0301");
+			ffi.tui_append_child(root, cv.getWidget().handle);
+			ffi.tui_set_root(root);
+			ffi.tui_render();
+
+			const codeText = (cv as unknown as { codeText: { handle: number } }).codeText;
+			const wBuf = new Int32Array(1);
+			expect(ffi.tui_get_layout(codeText.handle, new Int32Array(1), new Int32Array(1), wBuf, new Int32Array(1))).toBe(0);
+			expect(wBuf[0]).toBe(3);
+
+			cv.getWidget().destroySubtree();
+			ffi.tui_destroy_node(root);
+		});
+
 		test("CodeView toggles line numbers after creation", async () => {
 			const { CodeView } = await import("./src/composites/code-view");
 			const cv = new CodeView({ lineNumbers: false });

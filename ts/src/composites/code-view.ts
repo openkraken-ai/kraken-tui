@@ -6,10 +6,23 @@
  */
 
 import { Widget } from "../widget";
+import { ptr } from "bun:ffi";
+import { ffi } from "../ffi";
 import { ScrollBox } from "../widgets/scrollbox";
 import { Text } from "../widgets/text";
 import { Box } from "../widgets/box";
 import { SplitPane } from "../widgets/splitpane";
+
+function terminalDisplayWidth(text: string): number {
+	const encoded = new TextEncoder().encode(text);
+	const out = new Int32Array(1);
+	const result = ffi.tui_measure_text(ptr(encoded), encoded.length, out);
+	if (result < 0) {
+		// Keep CodeView resilient even if measurement fails unexpectedly.
+		return text.length;
+	}
+	return out[0] ?? 0;
+}
 
 // ============================================================================
 // CodeView
@@ -90,7 +103,7 @@ export class CodeView {
 		const lineCount = lines.length;
 		// Use the longest line width so text never wraps; the ScrollBox
 		// provides horizontal scrolling for lines that exceed viewport width.
-		const maxLineWidth = lines.reduce((max, line) => Math.max(max, line.length), 0);
+		const maxLineWidth = lines.reduce((max, line) => Math.max(max, terminalDisplayWidth(line)), 0);
 
 		const gutterWidth = this.showLineNumbers && this.gutterText
 			? Math.max(3, String(lineCount).length + 1)
