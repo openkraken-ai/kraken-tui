@@ -36,3 +36,4 @@ node_modules/
 
 # Guardrail artifacts
 ts/.artifacts/
+ts/.test-dist/
