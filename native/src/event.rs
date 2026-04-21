@@ -63,55 +63,54 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                 if let Some(focused_handle) = ctx.focused {
                     let focused_type = ctx.nodes.get(&focused_handle).map(|n| n.node_type);
                     match focused_type {
-                        Some(crate::types::NodeType::Input) => {
-                            if handle_input_key(ctx, focused_handle, code, character) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Input)
+                            if handle_input_key(ctx, focused_handle, code, character) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::TextArea) => {
-                            if handle_textarea_key(ctx, focused_handle, code, character) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::TextArea)
+                            if handle_textarea_key(ctx, focused_handle, code, character) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Select) => {
-                            if handle_select_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Select)
+                            if handle_select_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Table) => {
-                            if handle_table_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Table)
+                            if handle_table_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::List) => {
-                            if handle_list_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::List)
+                            if handle_list_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Tabs) => {
-                            if handle_tabs_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Tabs)
+                            if handle_tabs_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Transcript) => {
-                            if let Ok(true) =
-                                crate::transcript::handle_key(ctx, focused_handle, code)
-                            {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Transcript)
+                            if crate::transcript::handle_key(ctx, focused_handle, code)
+                                == Ok(true) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::SplitPane) => {
-                            if crate::splitpane::handle_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::SplitPane)
+                            if crate::splitpane::handle_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
                         _ => {}
                     }
