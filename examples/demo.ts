@@ -56,6 +56,7 @@ const middleRow = new Box({
 	flexDirection: "row",
 	gap: 2,
 });
+middleRow.setFlexShrink(0);
 
 // Input field with border
 const inputLabel = new Text({ content: "Name:", bold: true, fg: "green" });
@@ -93,20 +94,23 @@ middleRow.append(select);
 
 // ── 3. Scrollable text region ──────────────────────────────────────────
 
-const scrollLabel = new Text({
-	content: "Scroll region (use scroll wheel):",
-	bold: true,
-	fg: "magenta",
+const scrollSection = new Box({
+	width: "100%",
+	flexDirection: "column",
+	gap: 1,
 });
+scrollSection.setFlexGrow(1);
+scrollSection.setFlexShrink(1);
+scrollSection.setFlexBasis(0);
+
+const scrollLabel = new Text({ content: "Scroll region (use scroll wheel):", bold: true, fg: "magenta" });
 scrollLabel.setWidth("100%");
 scrollLabel.setHeight(1);
 
-const scrollBox = new ScrollBox({
-	width: "100%",
-	height: 12,
-	border: "single",
-	fg: "white",
-});
+const scrollBox = new ScrollBox({ width: "100%", border: "single", fg: "white" });
+scrollBox.setFlexGrow(1);
+scrollBox.setFlexShrink(1);
+scrollBox.setFlexBasis(0);
 
 const scrollContent = new Text({
 	content: [
@@ -136,9 +140,10 @@ const scrollContent = new Text({
 	fg: "white",
 });
 scrollContent.setWidth("100%");
-scrollContent.setHeight(40);
 
 scrollBox.append(scrollContent);
+scrollSection.append(scrollLabel);
+scrollSection.append(scrollBox);
 
 // ── 4. Status bar ──────────────────────────────────────────────────────
 
@@ -153,8 +158,7 @@ statusBar.setHeight(1);
 
 root.append(header);
 root.append(middleRow);
-root.append(scrollLabel);
-root.append(scrollBox);
+root.append(scrollSection);
 root.append(statusBar);
 
 app.setRoot(root);
@@ -247,6 +251,7 @@ applyTheme("Dark Mode");
 // ── Event loop at ~60fps ───────────────────────────────────────────────
 
 let running = true;
+const auditOnce = process.env.KRAKEN_AUDIT_RENDER_ONCE === "1";
 
 while (running) {
 	// Read terminal input with 16ms timeout (~60fps)
@@ -287,6 +292,9 @@ while (running) {
 
 	// Render the frame
 	app.render();
+	if (auditOnce) {
+		running = false;
+	}
 }
 
 // ── Clean shutdown ─────────────────────────────────────────────────────

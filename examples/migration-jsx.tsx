@@ -116,12 +116,13 @@ const tree = jsxs("Box", {
 		}),
 
 		// Middle row: Input + Select
-		jsxs("Box", {
-			key: "middle",
-			width: "100%",
-			flexDirection: "row",
-			gap: 2,
-			children: [
+			jsxs("Box", {
+				key: "middle",
+				width: "100%",
+				flexDirection: "row",
+				gap: 2,
+				flexShrink: 0,
+				children: [
 				jsx("Text", { key: "input-label", content: "Name:", bold: true, fg: labelColor, width: 6, height: 3 }),
 				jsx("Input", {
 					key: "input",
@@ -145,35 +146,45 @@ const tree = jsxs("Box", {
 			],
 		}),
 
-		// Scroll region label
-		jsx("Text", {
-			key: "scroll-label",
-			content: "Scroll region (use scroll wheel):",
-			bold: true,
-			fg: accentColor,
-			width: "100%",
-			height: 1,
-		}),
-
-		// Scrollable content
-		jsxs("ScrollBox", {
-			key: "scroll",
-			width: "100%",
-			height: 12,
-			border: "single",
-			fg: borderColor,
-			bg: rootBg,
-			children: [
-				jsx("Text", {
-					key: "scroll-text",
-					content: scrollText,
-					fg: fgColor,
-					bg: rootBg,
-					width: "100%",
-					height: 40,
-				}),
-			],
-		}),
+			// Scroll region label
+			jsxs("Box", {
+				key: "scroll-section",
+				width: "100%",
+				flexDirection: "column",
+				gap: 1,
+				flexGrow: 1,
+				flexShrink: 1,
+				flexBasis: 0,
+				children: [
+					jsx("Text", {
+						key: "scroll-label",
+						content: "Scroll region (use scroll wheel):",
+						bold: true,
+						fg: accentColor,
+						width: "100%",
+						height: 1,
+					}),
+					jsxs("ScrollBox", {
+						key: "scroll",
+						width: "100%",
+						flexGrow: 1,
+						flexShrink: 1,
+						flexBasis: 0,
+						border: "single",
+						fg: borderColor,
+						bg: rootBg,
+						children: [
+							jsx("Text", {
+								key: "scroll-text",
+								content: scrollText,
+								fg: fgColor,
+								bg: rootBg,
+								width: "100%",
+							}),
+						],
+					}),
+				],
+			}),
 
 		// Status bar
 		jsx("Text", {

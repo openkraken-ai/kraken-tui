@@ -834,6 +834,7 @@ const helpContent = new Text({
 });
 helpContent.setWidth("100%");
 helpContent.setHeight(14);
+helpContent.setFocusable(true);
 
 helpOverlay.append(helpContent);
 
@@ -862,13 +863,27 @@ app.setRoot(root);
 const tabPanels = [overviewPanel, processPanel, networkPanel, diskPanel];
 let currentTabPanel = overviewPanel;
 
+function isDescendantHandle(handle: number, ancestor: number): boolean {
+	let current = handle;
+	while (current !== 0) {
+		if (current === ancestor) return true;
+		current = ffi.tui_get_parent(current);
+	}
+	return false;
+}
+
 function switchTab(index: number): void {
 	if (index === activeTab || index < 0 || index >= tabPanels.length) return;
+	const focused = ffi.tui_get_focused();
+	const focusWasInOldPanel = focused !== 0 && isDescendantHandle(focused, currentTabPanel.handle);
 	contentArea.removeChild(currentTabPanel);
 	activeTab = index;
 	tabs.setActive(index);
 	currentTabPanel = tabPanels[index]!;
 	contentArea.append(currentTabPanel);
+	if (focusWasInOldPanel) {
+		tabs.focus();
+	}
 }
 
 // ── Theme Switching ───────────────────────────────────────────────────
@@ -1070,6 +1085,7 @@ function updateData(): void {
 // ── Event Loop ────────────────────────────────────────────────────────
 
 let helpVisible = false;
+let focusBeforeHelp = 0;
 let tickCounter = 0;
 
 const loop = createLoop({
@@ -1082,6 +1098,7 @@ const loop = createLoop({
 				if (helpVisible) {
 					helpOverlay.setOpen(false);
 					helpVisible = false;
+					if (focusBeforeHelp !== 0) ffi.tui_focus(focusBeforeHelp);
 					return;
 				}
 				loop.stop();
@@ -1090,12 +1107,24 @@ const loop = createLoop({
 			const cp = event.codepoint ?? 0;
 			if (cp === 0) return;
 			const key = String.fromCodePoint(cp).toLowerCase();
+			if (helpVisible) {
+				if (key === "h") {
+					helpOverlay.setOpen(false);
+					helpVisible = false;
+					if (focusBeforeHelp !== 0) ffi.tui_focus(focusBeforeHelp);
+				}
+				return;
+			}
 			if (key === "q") { loop.stop(); return; }
 			if (key >= "1" && key <= "4") { switchTab(parseInt(key) - 1); return; }
 			if (key === "t") { cycleTheme(); return; }
 			if (key === "h") {
 				helpVisible = !helpVisible;
 				helpOverlay.setOpen(helpVisible);
+				if (helpVisible) {
+					focusBeforeHelp = ffi.tui_get_focused();
+					helpContent.focus();
+				}
 				return;
 			}
 			if (key === "/") {

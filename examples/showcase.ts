@@ -62,7 +62,7 @@ const wrapEnabled = signal(true);
 const notesMeta = signal("TextArea lines: 0 | wrap: on");
 const runtimeHostHint = signal("Press [b] to insert/remove a runtime subtree (insertChild/destroySubtree).");
 const footerHint = signal(
-	"Esc quit | Space replay anim | t theme | b banner | w wrap | Enter in Input runs commands",
+	"Esc quit/edit-exit | Space replay anim | t theme | b banner | w wrap | / focus input | n focus notes",
 );
 
 const logLines: string[] = [];
@@ -507,22 +507,27 @@ const tree = jsxs("Box", {
 			role: "heading",
 			"aria-label": "Kraken showcase title",
 		}),
-		jsxs("Box", {
-			key: "main",
-			width: "100%",
-			height: "100%",
-			flexDirection: "row",
-			gap: 1,
-			children: [
-				jsxs("Box", {
+			jsxs("Box", {
+				key: "main",
+				width: "100%",
+				flexGrow: 1,
+				flexShrink: 1,
+				flexBasis: 0,
+				flexDirection: "row",
+				gap: 1,
+				children: [
+					jsxs("Box", {
 					key: "control-deck",
 					width: "42%",
 					border: "rounded",
-					padding: 1,
-					gap: 1,
-					flexDirection: "column",
-					role: "region",
-					"aria-label": "Control deck",
+						padding: 1,
+						gap: 1,
+						flexDirection: "column",
+						flexGrow: 1,
+						flexShrink: 1,
+						flexBasis: 0,
+						role: "region",
+						"aria-label": "Control deck",
 					children: [
 						jsx("Text", {
 							key: "control-title",
@@ -534,7 +539,7 @@ const tree = jsxs("Box", {
 						jsx("Input", {
 							key: "command-input",
 							width: "100%",
-							height: 3,
+								height: 2,
 							border: "single",
 							focusable: true,
 							role: "input",
@@ -545,11 +550,11 @@ const tree = jsxs("Box", {
 								commandInputHandle = w.handle;
 							},
 						}),
-						jsx("Select", {
+							jsx("Select", {
 							key: "theme-select",
 							options: themeModes.map((mode) => mode.name),
 							width: "100%",
-							height: 7,
+									height: 3,
 							border: "single",
 							focusable: true,
 							role: "list",
@@ -561,12 +566,12 @@ const tree = jsxs("Box", {
 								themeSelectHandle = w.handle;
 							},
 						}),
-						jsx("TextArea", {
+							jsx("TextArea", {
 							key: "notes",
 							value: textareaSeed,
 							wrap: wrapEnabled,
 							width: "100%",
-							height: 8,
+									height: 3,
 							border: "single",
 							focusable: true,
 							role: "textarea",
@@ -577,7 +582,7 @@ const tree = jsxs("Box", {
 								notesHandle = w.handle;
 							},
 						}),
-						jsx("Text", {
+							jsx("Text", {
 							key: "notes-meta",
 							content: notesMeta,
 							height: 1,
@@ -594,24 +599,28 @@ const tree = jsxs("Box", {
 							border: "single",
 							fg: codeFgColor,
 							bg: codeBgColor,
-							height: 5,
+								height: 2,
 							role: "status",
 							"aria-label": "Syntax highlighted Rust snippet",
 						}),
 					],
 				}),
-				jsxs("Box", {
-					key: "observability",
-					width: "58%",
-					flexDirection: "column",
-					gap: 1,
-					children: [
+					jsxs("Box", {
+						key: "observability",
+						width: "58%",
+						flexDirection: "column",
+						flexGrow: 1,
+						flexShrink: 1,
+						flexBasis: 0,
+						gap: 1,
+						children: [
 						jsxs("Box", {
 							key: "hero",
 							border: "rounded",
 							padding: 1,
-							gap: 1,
-							flexDirection: "column",
+								gap: 1,
+								height: 10,
+								flexDirection: "column",
 							role: "status",
 							"aria-label": "Live metrics card",
 							ref: (w: Widget) => {
@@ -679,7 +688,7 @@ const tree = jsxs("Box", {
 							key: "runtime-host",
 							border: "single",
 							padding: [0, 1, 0, 1],
-							height: 4,
+								height: 3,
 							role: "region",
 							"aria-label": "Runtime tree operations host",
 							ref: (w: Widget) => {
@@ -704,11 +713,13 @@ const tree = jsxs("Box", {
 								}),
 							],
 						}),
-						jsxs("ScrollBox", {
-							key: "log-scroll",
-							width: "100%",
-							height: 12,
-							border: "single",
+							jsxs("ScrollBox", {
+								key: "log-scroll",
+								width: "100%",
+								flexGrow: 1,
+								flexShrink: 1,
+								flexBasis: 0,
+								border: "single",
 							role: "list",
 							"aria-label": "Event log",
 							children: [
@@ -716,7 +727,6 @@ const tree = jsxs("Box", {
 									key: "log-text",
 									content: logText,
 									width: "100%",
-									height: 80,
 									role: "status",
 									"aria-label": "Log output",
 								}),
@@ -740,8 +750,8 @@ const tree = jsxs("Box", {
 const instance = render(tree, app);
 rootWidget = instance.widget;
 
-if (commandInputHandle !== 0) {
-	ffi.tui_focus(commandInputHandle);
+if (themeSelectHandle !== 0) {
+	ffi.tui_focus(themeSelectHandle);
 }
 
 applyTheme(0);
@@ -753,7 +763,13 @@ const loop = createLoop({
 	app,
 	onEvent(event: KrakenEvent) {
 		if (event.type === "key") {
+			const focused = ffi.tui_get_focused();
 			if (event.keyCode === KeyCode.Escape) {
+				if ((focused === commandInputHandle || focused === notesHandle) && themeSelectHandle !== 0) {
+					ffi.tui_focus(themeSelectHandle);
+					pushLog("left text-edit mode");
+					return;
+				}
 				loop.stop();
 				return;
 			}
@@ -761,13 +777,21 @@ const loop = createLoop({
 			const cp = event.codepoint ?? 0;
 			if (cp === 0) return;
 			const key = String.fromCodePoint(cp).toLowerCase();
-			if (key === "q") {
-				loop.stop();
-				return;
-			}
-			if (key === " ") {
-				runHeroChoreography();
-			}
+				if (key === "q") {
+					loop.stop();
+					return;
+				}
+				if (key === "/") {
+					if (commandInputHandle !== 0) ffi.tui_focus(commandInputHandle);
+					return;
+				}
+				if (key === "n") {
+					if (notesHandle !== 0) ffi.tui_focus(notesHandle);
+					return;
+				}
+				if (key === " ") {
+					runHeroChoreography();
+				}
 			if (key === "t") {
 				cycleTheme();
 			}
