@@ -26,6 +26,7 @@
  * Controls:
  *   Tab / Shift+Tab — Cycle focus
  *   1-4             — Switch tabs (Overview / Processes / Network / Disks)
+ *   Left / Right    — Switch tabs when the tab strip is focused
  *   t               — Cycle theme
  *   h               — Toggle help overlay
  *   /               — Focus filter input
@@ -424,6 +425,8 @@ const tabs = new Tabs({
 	fg: pal.fg,
 	bg: pal.panelBg,
 });
+tabs.setFocusable(true);
+tabs.setLabel("System monitor tabs");
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────────────
 
@@ -823,6 +826,8 @@ const helpContent = new Text({
 		"",
 		"  `Tab`     Cycle focus",
 		"  `1-4`     Switch tabs",
+		"  `Left`    Previous focused tab",
+		"  `Right`   Next focused tab",
 		"  `t`       Cycle theme",
 		"  `h`       Toggle help",
 		"  `/`       Focus filter",
@@ -1099,6 +1104,11 @@ const loop = createLoop({
 			if (!helpVisible) {
 				focusBeforeHelp = 0;
 			}
+			return;
+		}
+
+		if (event.type === "change" && event.target === tabs.handle) {
+			switchTab(tabs.getActive());
 			return;
 		}
 

@@ -73,20 +73,53 @@ afterEach(() => {
 
 interface MockedExampleContext {
 	recordedLists: Array<{ handle: number; getSelected(): number }>;
+	recordedPalettes: Array<{ isOpen(): boolean; getQuery(): string }>;
+	recordedTabs: Array<{ handle: number; getActive(): number; setActive(index: number): void }>;
+	recordedInputs: Array<{ handle: number }>;
 }
 
 async function importExampleWithMockedIndex(
 	exampleFile: string,
-	onStart?: (options: LoopOptions) => Promise<void> | void,
+	onStart?: (options: LoopOptions, context: MockedExampleContext) => Promise<void> | void,
 ): Promise<MockedExampleContext> {
 	const actualIndex = ACTUAL_INDEX;
 	const recordedLists: Array<{ handle: number; getSelected(): number }> = [];
+	const recordedPalettes: Array<{ isOpen(): boolean; getQuery(): string }> = [];
+	const recordedTabs: Array<{ handle: number; getActive(): number; setActive(index: number): void }> = [];
+	const recordedInputs: Array<{ handle: number }> = [];
 	const originalShutdown = app.shutdown.bind(app);
+	const context: MockedExampleContext = {
+		recordedLists,
+		recordedPalettes,
+		recordedTabs,
+		recordedInputs,
+	};
 
 	class RecordedList extends actualIndex.List {
 		constructor(...args: ConstructorParameters<typeof actualIndex.List>) {
 			super(...args);
 			recordedLists.push(this);
+		}
+	}
+
+	class RecordedCommandPalette extends actualIndex.CommandPalette {
+		constructor(...args: ConstructorParameters<typeof actualIndex.CommandPalette>) {
+			super(...args);
+			recordedPalettes.push(this);
+		}
+	}
+
+	class RecordedTabs extends actualIndex.Tabs {
+		constructor(...args: ConstructorParameters<typeof actualIndex.Tabs>) {
+			super(...args);
+			recordedTabs.push(this);
+		}
+	}
+
+	class RecordedInput extends actualIndex.Input {
+		constructor(...args: ConstructorParameters<typeof actualIndex.Input>) {
+			super(...args);
+			recordedInputs.push(this);
 		}
 	}
 
@@ -101,9 +134,12 @@ async function importExampleWithMockedIndex(
 			initHeadless: actualIndex.Kraken.initHeadless,
 		},
 		List: RecordedList,
+		CommandPalette: RecordedCommandPalette,
+		Tabs: RecordedTabs,
+		Input: RecordedInput,
 		createLoop: (options: LoopOptions) => ({
 			start: async () => {
-				await onStart?.(options);
+				await onStart?.(options, context);
 				options.onTick?.();
 				app.render();
 			},
@@ -119,10 +155,27 @@ async function importExampleWithMockedIndex(
 	const examplePath = resolve(import.meta.dir, "../examples", exampleFile);
 	try {
 		await import(`${examplePath}?test=${Date.now()}-${Math.random()}`);
-		return { recordedLists };
+		return context;
 	} finally {
 		app.shutdown = originalShutdown;
 	}
+}
+
+function collectWidgetHandles(nodes: Array<{ handle: number; children?: Array<any> }>): Set<number> {
+	const handles = new Set<number>();
+
+	function walk(node: { handle: number; children?: Array<any> }): void {
+		handles.add(node.handle);
+		for (const child of node.children ?? []) {
+			walk(child);
+		}
+	}
+
+	for (const node of nodes) {
+		walk(node);
+	}
+
+	return handles;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -647,6 +700,48 @@ describe("Flagship example smoke coverage", () => {
 		expect(app.getFocused()).toBe(fileList.handle);
 	});
 
+	test("agent-console closes the palette on a second Ctrl+P", async () => {
+		const ctrlP = {
+			type: "key" as const,
+			target: 0,
+			keyCode: 0,
+			modifiers: publicIndex.Modifier.Ctrl,
+			codepoint: "p".codePointAt(0),
+		};
+
+		const { recordedPalettes } = await importExampleWithMockedIndex(
+			"agent-console.ts",
+			(options) => {
+				options.onEvent?.(ctrlP);
+				options.onEvent?.(ctrlP);
+			},
+		);
+
+		expect(recordedPalettes.length).toBeGreaterThan(0);
+		expect(recordedPalettes[0]!.isOpen()).toBe(false);
+	});
+
+	test("repo-inspector closes the palette on a second Ctrl+P", async () => {
+		const ctrlP = {
+			type: "key" as const,
+			target: 0,
+			keyCode: 0,
+			modifiers: publicIndex.Modifier.Ctrl,
+			codepoint: "p".codePointAt(0),
+		};
+
+		const { recordedPalettes } = await importExampleWithMockedIndex(
+			"repo-inspector.ts",
+			(options) => {
+				options.onEvent?.(ctrlP);
+				options.onEvent?.(ctrlP);
+			},
+		);
+
+		expect(recordedPalettes.length).toBeGreaterThan(0);
+		expect(recordedPalettes[0]!.isOpen()).toBe(false);
+	});
+
 	test("system-monitor handles a synthetic key event without throwing", async () => {
 		await expect(
 			importExampleWithMockedIndex("system-monitor.ts", async (options) => {
@@ -659,6 +754,32 @@ describe("Flagship example smoke coverage", () => {
 				});
 			}),
 		).resolves.toBeDefined();
+	});
+
+	test("system-monitor switches panels when the tabs widget emits a change event", async () => {
+		const { recordedTabs, recordedInputs } = await importExampleWithMockedIndex(
+			"system-monitor.ts",
+			(options, context) => {
+				const tabs = context.recordedTabs[0];
+				if (!tabs) {
+					throw new Error("Expected system-monitor tabs to be recorded");
+				}
+				tabs.setActive(1);
+				options.onEvent?.({
+					type: "change",
+					target: tabs.handle,
+					selectedIndex: 1,
+				});
+			},
+		);
+
+		expect(recordedTabs.length).toBeGreaterThan(0);
+		expect(recordedInputs.length).toBeGreaterThan(0);
+		const snapshot = JSON.parse(app.debugGetSnapshot()) as {
+			widget_tree: Array<{ handle: number; children?: Array<any> }>;
+		};
+		const handles = collectWidgetHandles(snapshot.widget_tree);
+		expect(handles.has(recordedInputs[0]!.handle)).toBe(true);
 	});
 });
 

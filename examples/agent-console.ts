@@ -528,6 +528,12 @@ const loop = createLoop({
 				return;
 			}
 			if (event.type === "key") {
+				const cp = event.codepoint ?? 0;
+				const mods = event.modifiers ?? 0;
+				if (cp === 112 && (mods & Modifier.Ctrl) !== 0) {
+					palette.close();
+					return;
+				}
 				if (event.keyCode === KeyCode.Escape) {
 					palette.close();
 					return;
