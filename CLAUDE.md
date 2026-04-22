@@ -1,80 +1,119 @@
 CLAUDE.md
 
-Guidance for AI Agents working in this repository. Domain-specific details are in `native/CLAUDE.md` (Rust) and `ts/CLAUDE.md` (TypeScript).
+Guidance for AI agents working in this repository. Domain-specific details live in `native/CLAUDE.md` for the Rust core and `ts/CLAUDE.md` for the TypeScript/Bun host layer.
 
 ---
 
 ## Project Overview
 
-**Kraken TUI** — Rust-powered terminal UI library with TypeScript/Bun bindings via FFI. Rust is the performance engine; TypeScript is a thin command client.
+**Kraken TUI** is a Rust-native terminal UI engine with TypeScript/Bun bindings over FFI.
 
-**Core invariant:** Rust owns all mutable state. TypeScript holds opaque `u32` handles. Unidirectional: TS calls Rust; Rust never calls back.
+**Core invariant:** Rust owns all mutable UI state. TypeScript holds opaque `u32` Handles and issues commands. Control flow is unidirectional: the Host Layer calls into the Native Core; the Native Core never calls back into the Host Layer.
 
-**Authority documents** (read in order for design questions):
-1. [PRD.md](./docs/PRD.md) — What and why
-2. [Architecture.md](./docs/Architecture.md) — System design and module boundaries
-3. [TechSpec.md](./docs/TechSpec.md) — Technical contracts, FFI surface, ADRs, data model
-4. [Tasks.md](./docs/Tasks.md) — Ticket decomposition and execution status
+**Canonical document chain** (read in order for design and planning questions):
+1. [docs/PRD.md](./docs/PRD.md) — product intent, glossary, scope, and constraints
+2. [docs/Architecture.md](./docs/Architecture.md) — logical boundaries, containers, flows, and risks
+3. [docs/TechSpec.md](./docs/TechSpec.md) — concrete implementation contract, ABI, state model, and verification surface
+4. [docs/Tasks.md](./docs/Tasks.md) — active execution plan plus archived completed scope
 
-**Info flow:** PRD > Architecture > TechSpec > Tasks. Each doc owns its boundary per its output standard.
+**Information flow:** PRD -> Architecture -> TechSpec -> Tasks
+
+---
+
+## Current Repo Status
+
+- The canonical docs chain is current and should be treated as the source of truth for planning work.
+- `Tasks.md` now separates **active scope** from **archived completed scope**. Do not mistake the archived v6/v4 delivery wave for the current backlog.
+- The transcript/devtools/split-pane/flagship-example wave is already implemented in source.
 
 ---
 
 ## Development Commands
 
-All commands run from the repository root. The Rust crate is in `native/`.
+Run all commands from the repository root unless stated otherwise.
 
 ```bash
 # Build
-cargo build --manifest-path native/Cargo.toml --release   # Required before any TS code
-cargo check --manifest-path native/Cargo.toml              # Fast type-check
+cargo build --manifest-path native/Cargo.toml --release
+cargo check --manifest-path native/Cargo.toml
 
-# Test
-cargo test --manifest-path native/Cargo.toml               # Rust unit tests
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts  # FFI integration
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts  # JSX reconciler
+# Native tests and quality
+cargo test --manifest-path native/Cargo.toml
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo clippy --manifest-path native/Cargo.toml -- -D warnings
 
-# Quality
-cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
-bun run ts/check-bundle.ts                                 # Bundle budget (<75KB)
+# Host tests
+bun test ts/test-ffi.test.ts
+bun test ts/test-jsx.test.ts
+bun test ts/test-examples.test.ts
+bun test ts/test-install.test.ts
+bun test ts/test-runner.test.ts
 
-# Demo
+# Benchmarks and budgets
+bun run ts/check-bundle.ts
+bun run ts/bench-ffi.ts
+bun run ts/bench-render.ts
+
+# Flagship examples
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/agent-console.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/ops-log-console.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/repo-inspector.ts
+
+# Broader showcase examples
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/system-monitor.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/accessibility-demo.tsx
 ```
 
-**Note:** Run `cd ts && bun install` once after cloning to install `@preact/signals-core` (needed for JSX tests).
+**Dependency note:** Run `cd ts && bun install` once after cloning to install `@preact/signals-core`.
 
 ---
 
-## Architecture at a Glance
+## Architecture At A Glance
 
-```
-TypeScript/Bun (thin command client)
-  ↓ C ABI functions via bun:ffi dlopen
-Rust cdylib (native performance engine)
-  ├─ Tree, Layout, Style, Render, Event, Scroll, Text, Terminal
-  ├─ Theme — named style defaults, subtree binding, built-in dark/light, per-NodeType defaults
-  ├─ Animation — timed property transitions, 8 easing functions, chaining, choreography, position animation
-  ├─ Safe state via OnceLock<RwLock> (ADR-T16)
-  ├─ Subtree destroy + indexed insert (ADR-T17/T18)
-  ├─ Widgets: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay, Transcript, SplitPane
-  ├─ Writer — run compaction, stateful cursor/style tracking (ADR-T24)
-  ├─ Text cache — bounded LRU, 8 MiB default (ADR-T25)
-  ├─ Runner API — app.run() with onChange/continuous modes (ADR-T26)
-  ├─ JSX reconciler + signals (ADR-T20) — TS-only, wraps imperative API
-  └─ Accessibility foundation (ADR-T23) — roles, labels, descriptions, a11y events
+```text
+TypeScript/Bun (thin command client, composites, examples, dev session helpers)
+  ↓
+C ABI via bun:ffi
+  ↓
+Rust cdylib (single mutable UI authority)
+  ├─ Tree, Layout, Style, Theme, Animation
+  ├─ Render, Writer, Event, Scroll, Terminal
+  ├─ Text + bounded Text Cache
+  ├─ Transcript state and anchor-aware viewport semantics
+  ├─ SplitPane layout and resize semantics
+  ├─ Devtools: overlays, snapshots, traces, perf counters
+  ├─ Runner-compatible synchronous render pipeline
+  └─ Accessibility foundation on TuiNode metadata
 ```
 
-**FFI contract:** Return codes 0 = success, -1 = error (`tui_get_last_error()`), -2 = panic. Handle 0 = invalid sentinel. All `extern "C"` functions wrapped in `catch_unwind` (ADR-T03).
+**FFI contract:** `0` success, `-1` explicit error via `tui_get_last_error()`, `-2` panic caught at the boundary. `Handle(0)` is the invalid sentinel.
 
 ---
 
-## Before Implementing FFI Functions
+## Working Rules
 
-1. Read the contract in TechSpec §4
-2. Read the relevant ADR in TechSpec §2
-3. Read the data model in TechSpec §3
-4. Implement module logic in the appropriate `native/src/*.rs` file
-5. Add `extern "C"` entry point in `lib.rs` using `ffi_wrap()`
+### When changing product or planning docs
+1. Respect the document chain. Fix upstream artifacts before downstream artifacts.
+2. Keep each artifact in its own layer. Do not repair PRD or Architecture defects inside TechSpec or Tasks.
+3. Preserve active scope separately from archived completed scope.
+4. When Brownfield reality differs from a doc, report and reconcile the drift explicitly.
+
+### When changing Rust FFI surface
+1. Read the relevant contract in `docs/TechSpec.md` section 4.
+2. Read the related ADRs in `docs/TechSpec.md` section 2.
+3. Read the state model in `docs/TechSpec.md` section 3.
+4. Implement feature logic in the appropriate `native/src/*.rs` module.
+5. Add or update the `extern "C"` entry point in `native/src/lib.rs` via `ffi_wrap()` or `ffi_wrap_handle()`.
+
+### When changing the host layer
+1. Keep wrappers thin. Rust still owns mutable UI state and performance-critical semantics.
+2. Prefer composites over new native widgets unless the TechSpec or active Tasks plan explicitly justifies native promotion.
+3. Preserve the native library resolver contract: `KRAKEN_LIB_PATH` -> prebuilds -> local Cargo release artifact.
+
+### When picking what to read
+- Product/scope question -> `docs/PRD.md`
+- Boundary/flow question -> `docs/Architecture.md`
+- ABI/state/test/release question -> `docs/TechSpec.md`
+- Current execution priority -> `docs/Tasks.md`

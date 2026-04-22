@@ -1,19 +1,24 @@
 CLAUDE.md — Native Core (Rust)
 
-Rust cdylib that owns all state, layout, rendering, events, and text parsing. See root `CLAUDE.md` for project overview and authority documents.
+Rust `cdylib` that owns all mutable UI state, layout, rendering, events, scroll semantics, transcript behavior, and diagnostic surfaces. See the repo-root `CLAUDE.md` for the overall document chain and cross-layer rules.
 
 ---
 
 ## Commands
 
 ```bash
-cargo build --manifest-path native/Cargo.toml --release   # Shared library (required before TS)
-cargo build --manifest-path native/Cargo.toml              # Debug build
-cargo check --manifest-path native/Cargo.toml              # Type-check only
-cargo test  --manifest-path native/Cargo.toml              # Unit tests
-cargo test  --manifest-path native/Cargo.toml <name> -- --exact   # Single test
-cargo fmt   --manifest-path native/Cargo.toml              # Format
-cargo clippy --manifest-path native/Cargo.toml             # Lint
+cargo build --manifest-path native/Cargo.toml --release
+cargo build --manifest-path native/Cargo.toml
+cargo check --manifest-path native/Cargo.toml
+cargo test --manifest-path native/Cargo.toml
+cargo test --manifest-path native/Cargo.toml <name> -- --exact
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo clippy --manifest-path native/Cargo.toml -- -D warnings
+
+# Native benches currently in the tree
+cargo bench --manifest-path native/Cargo.toml --bench writer_bench
+cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench
+cargo bench --manifest-path native/Cargo.toml --bench devtools_bench
 ```
 
 ---
@@ -21,81 +26,104 @@ cargo clippy --manifest-path native/Cargo.toml             # Lint
 ## Module Map (`src/`)
 
 | File | Responsibility |
-|------|----------------|
-| `lib.rs` | `extern "C"` FFI entry points only. Zero logic — delegates via `ffi_wrap()`/`ffi_wrap_handle()`. |
-| `context.rs` | `TuiContext` struct. `OnceLock<RwLock<TuiContext>>` for safe global state (ADR-T16). Thread-affinity enforcement via `OWNER_THREAD`. |
-| `types.rs` | All shared enums (`NodeType` with 12 variants, `BorderStyle`, `CellAttrs`, `ContentFormat`, `TuiEventType`, `AnimProp`, `Easing`, `AccessibilityRole`), `TuiEvent` struct, key code constants. |
-| `tree.rs` | Handle allocation (`next_handle++`, never recycled), node CRUD, parent-child, dirty-flag propagation. `destroy_subtree()` (ADR-T17), `insert_child()` (ADR-T18). |
-| `layout.rs` | Taffy integration: `tui_set_layout_*` → read-modify-write on Taffy `Style` (ADR-T04). Hit-testing via computed rectangles. |
-| `style.rs` | `VisualStyle` per node. Color encoding (u32 tagged: 0x00=default, 0x01=RGB, 0x02=indexed). Style mask bits (ADR-T12). `resolve_style()` with 4-level precedence (ADR-T21). |
-| `render.rs` | Double-buffered cell grid. Pipeline: animation advancement → theme resolution → layout → buffer write → dirty diff → terminal I/O. |
-| `writer.rs` | Run compaction, `WriterState` cursor/style tracking, efficient terminal emission (ADR-T24). |
-| `event.rs` | `read_input()` → classify → `TuiEvent`. Focus state machine (Tab/BackTab, depth-first). Mouse hit-testing. Widget-specific key handlers (Input, TextArea, Select, Table, List, Tabs). Overlay modal behavior. |
-| `scroll.rs` | Per-ScrollBox `(scroll_x, scroll_y)`. Clamped to content bounds. |
-| `text.rs` | Markdown: `pulldown_cmark` → `Vec<StyledSpan>`. Code: `syntect` highlighter. |
-| `text_utils.rs` | TextArea line-buffer helpers: cursor mapping, line operations for multi-line editing. |
-| `textarea.rs` | TextArea widget: selection, undo/redo, find-next (ADR-T28). |
-| `text_cache.rs` | Bounded LRU cache (8 MiB), keyed by content/format/width/style fingerprint (ADR-T25). |
-| `terminal.rs` | `TerminalBackend` trait + `CrosstermBackend` (production) + `HeadlessBackend` (testing). |
-| `theme.rs` | Theme storage, built-in dark/light, per-NodeType defaults (ADR-T21), subtree bindings. |
-| `animation.rs` | Animation registry, delta-time advancement, interpolation, 8 easing functions, chaining, choreography groups, position animation (ADR-T22). |
-| `golden.rs` | Golden file testing utility for deterministic snapshot tests (ADR-T30). |
-| `threaded_render.rs` | Experimental background render thread behind `--features threaded-render` (ADR-T31, deferred). |
+| --- | --- |
+| `lib.rs` | `extern "C"` FFI entry points only. Zero business logic. Delegates via `ffi_wrap()` / `ffi_wrap_handle()`. |
+| `context.rs` | `TuiContext` and global accessors. Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` plus thread-affinity enforcement through `OWNER_THREAD`. |
+| `types.rs` | Shared enums, structs, widget state attachments, transcript types, split-pane types, debug/devtools payload types, and key constants. |
+| `tree.rs` | Handle allocation, node CRUD, parent-child relationships, dirty propagation, subtree destruction, and indexed child insertion. |
+| `layout.rs` | Taffy integration, computed geometry, and hit-test rectangles. |
+| `style.rs` | Explicit style storage, style mask handling, color encoding, and resolved style precedence. |
+| `theme.rs` | Theme definitions, built-in themes, per-NodeType defaults, and subtree theme bindings. |
+| `animation.rs` | Animation registry, interpolation, easing, chains, and choreography groups. |
+| `text.rs` | Markdown parsing, syntax highlighting, and styled span generation. |
+| `text_cache.rs` | Bounded LRU cache for text parse/highlight/wrap artifacts. |
+| `render.rs` | Core render pipeline: animation advancement, theme resolution, layout, transcript rendering, diffing, and overlay staging. |
+| `writer.rs` | Run compaction, cursor/style delta tracking, and efficient terminal emission. |
+| `event.rs` | Input ingestion, event classification, focus model, mouse hit-testing, transcript/split-pane key dispatch, and buffered event delivery. |
+| `scroll.rs` | ScrollBox state and clipping-related scroll behavior. |
+| `textarea.rs` | TextArea editing state, selection, undo/redo, and find-next behavior. |
+| `text_utils.rs` | TextArea line-buffer helpers and cursor mapping utilities. |
+| `transcript.rs` | Transcript block storage, follow modes, unread anchors, collapse behavior, and transcript-specific scroll/key handling. |
+| `splitpane.rs` | Two-child pane layout, ratio constraints, keyboard/mouse resize behavior, and child layout synchronization. |
+| `devtools.rs` | Debug trace rings, JSON snapshots, JSON traces, overlay rendering, and trace clearing. |
+| `terminal.rs` | Terminal backend abstraction plus Crossterm and headless backends. |
+| `golden.rs` | Deterministic golden snapshot test helpers. |
+| `threaded_render.rs` | Experimental opt-in background render path behind `--features threaded-render` only. |
 
 ---
 
 ## Critical Patterns
 
-### FFI Entry Point Template
+### FFI Boundary Template
 ```rust
 #[unsafe(no_mangle)]
 pub extern "C" fn tui_something(handle: u32) -> i32 {
     ffi_wrap(|| {
         let ctx = context_mut()?;
-        // validate, delegate to module, return Ok(0)
+        // validate and delegate
         Ok(0)
     })
 }
 ```
 
-### Style Patching (ADR-T04)
-**Never** create `Style::DEFAULT` and overwrite. Always: read existing Taffy Style → modify one property → write back.
+### State Ownership
+- The Native Core is the single mutable UI authority.
+- Host code never receives interior pointers.
+- `Handle(0)` is permanently invalid.
 
-### Style Mask (ADR-T12)
-Every `tui_set_style_*` call must also set the corresponding `style_mask` bit. Resolution: explicit wins → theme type default → theme global default → stored default.
+### Style Patching
+- Never rebuild Taffy style from scratch for a single property mutation.
+- Read existing style -> modify one property -> write it back.
+
+### Transcript Rules
+- Transcript operations address stable `u64` block IDs, never visible row positions.
+- Follow mode and unread behavior are part of the native state contract, not host-side convenience logic.
+- Transcript scroll and key handling integrate into the shared event path.
+
+### SplitPane Rules
+- `SplitPane` accepts exactly two direct children.
+- Ratio, min-size, and resize semantics live in native state.
+- Keyboard resize behavior is dispatched through the event module.
+
+### Devtools Rules
+- Debug snapshot and trace APIs are copy-out only.
+- Trace retention is bounded per kind.
+- Overlay rendering must not mutate application layout semantics.
 
 ### Error Handling
-- Return `Result<i32, String>` from module functions. `ffi_wrap` converts: `Ok(code)` → code, `Err(msg)` → sets last_error + returns -1, panic → -2.
-- No `unwrap()` in production code. Use `?` or explicit match.
-- No `println!`. Debug output via `eprintln!` gated behind `ctx.debug_mode`.
+- Module functions return `Result<_, String>`.
+- `ffi_wrap` converts success/error/panic into the public return-code contract.
+- No `println!` in production paths. Debug logging is gated behind `ctx.debug_mode`.
 
 ### Visibility
-- `pub(crate)` for module-internal functions. Only `lib.rs` exports are `pub`.
-- Handle validation at FFI boundary (in `lib.rs`), not repeated in modules.
+- `lib.rs` is the only public FFI export surface.
+- Keep feature logic `pub(crate)` unless broader module visibility is genuinely needed.
 
 ---
 
 ## Dependencies
 
 | Crate | Version | Purpose |
-|-------|---------|---------|
-| taffy | 0.9 | Flexbox layout (pure Rust) |
-| crossterm | 0.29 | Terminal I/O |
-| pulldown-cmark | 0.13 | Markdown parsing |
-| syntect | 5.3 | Syntax highlighting |
-| bitflags | 2 | Cell attribute flags |
-| unicode-width | 0.2 | Display cell width |
-| unicode-segmentation | 1.12 | Grapheme cluster iteration |
-| regex | 1 | Pattern matching |
-| serde | 1.0 | Serialization derive macros (debug snapshots, trace JSON) |
-| serde_json | 1.0 | JSON serialization for `tui_debug_get_snapshot` / `tui_debug_get_trace` |
+| --- | --- | --- |
+| `taffy` | `0.9` | Flexbox-compatible layout |
+| `crossterm` | `0.29` | Terminal I/O |
+| `pulldown-cmark` | `0.13` | Markdown parsing |
+| `syntect` | `5.3` | Syntax highlighting |
+| `bitflags` | `2` | Cell attribute flags |
+| `unicode-width` | `0.2` | Display width calculation |
+| `unicode-segmentation` | `1.12` | Grapheme segmentation |
+| `regex` | `1` | Pattern matching |
+| `serde` | `1.0` | Serialization derives |
+| `serde_json` | `1.0` | Debug snapshot and trace JSON copy-out |
+| `criterion` | `0.5` | Benchmarks (`dev-dependencies`) |
 
 ---
 
 ## Current State
 
-- Zero clippy warnings.
-- 12 widget types: Box, Text, Input, Select, ScrollBox, TextArea, Table, List, Tabs, Overlay, Transcript, SplitPane.
-- Handles: monotonic u32, never recycled. Handle 0 = invalid sentinel.
-- Safe global state via `OnceLock<RwLock<Option<TuiContext>>>` (ADR-T16) — no `static mut`.
-- Zero TODO/FIXME markers in codebase.
+- 12 native node types: `Box`, `Text`, `Input`, `Select`, `ScrollBox`, `TextArea`, `Table`, `List`, `Tabs`, `Overlay`, `Transcript`, `SplitPane`
+- Safe global context via `OnceLock<RwLock<Option<TuiContext>>>`
+- Devtools overlays, snapshots, and bounded trace rings are implemented
+- Transcript anchors, unread behavior, and transcript-specific input handling are implemented
+- `SplitPane` native layout and resize behavior are implemented
+- No `TODO` / `FIXME` markers are expected in production code paths

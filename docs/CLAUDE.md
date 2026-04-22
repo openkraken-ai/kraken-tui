@@ -1,42 +1,65 @@
-# AI Agent Instruction Manual: System Execution Guide
+# AI Agent Instruction Manual: Documentation Layer Guide
 
-> **System Context:** This repository is managed via a strict 4-document planning pipeline. As an AI coding agent executing tasks within this project, your role is to implement the specifications exactly as defined. Please rely exclusively on the provided documentation to determine architecture, business logic, and dependencies.
+> **System Context:** This repository uses a four-stage planning chain. Treat `PRD.md`, `Architecture.md`, `TechSpec.md`, and `Tasks.md` as canonical artifacts with strict layer boundaries.
 
-## The 4-Document Architecture
+## The 4-Document Chain
 
-This project separates concerns into four distinct layers. You should understand where your current task sits within these boundaries to fetch the correct context.
+1. **`PRD.md`** — conceptual product layer: problem, actors, glossary, capabilities, constraints, and scope boundaries
+2. **`Architecture.md`** — logical system layer: containers, flows, resilience, and risks
+3. **`TechSpec.md`** — physical implementation layer: stack, ADRs, state model, interfaces, structure, and verification contract
+4. **`Tasks.md`** — execution layer: active critical path, current tasks, and archived completed work
 
-1. **`PRD.md` (The Conceptual Layer):** Defines the problem space. Contains the business vision, ubiquitous language (strict terminology), and explicit anti-scope (features intentionally excluded).
-2. **`Architecture.md` (The Logical Layer):** Defines the system structure. Contains the logical containers, bounded contexts, fault-tolerance mechanisms, and high-level sequence flows.
-3. **`TechSpec.md` (The Physical Layer):** Defines the concrete implementation. Contains the exact stack versions, database schemas (ERD), and API contracts (E.g. OpenAPI).
-4. **`Tasks.md` (The Execution Layer):** Defines the logistics. Contains the atomic ticket list, the build order (dependency graph), and the Gherkin Acceptance Criteria for every feature.
+**Authority flow:** PRD -> Architecture -> TechSpec -> Tasks
 
 ---
 
 ## Documentation Routing Table
 
-To conserve your context window and ensure accuracy, use this lookup table to find exactly what you need:
-
-| If you need to know...                   | Target File       | Specific Section to Parse                                    |
-| :--------------------------------------- | :---------------- | :----------------------------------------------------------- |
-| **What task to do next?**                | `Tasks.md`        | "Build Order" & "The Ticket List"                            |
-| **How to test if a task is done?**       | `Tasks.md`        | "Acceptance Criteria (Gherkin)" under the specific Ticket ID |
-| **What exact tech/library to use?**      | `TechSpec.md`     | "Stack Specification" & "Implementation Guidelines"          |
-| **What the database tables/types are?**  | `TechSpec.md`     | "Database Schema (Physical ERD)"                             |
-| **The required JSON body/API routes?**   | `TechSpec.md`     | "API Contract (OpenAPI 3.0)"                                 |
-| **How services securely communicate?**   | `Architecture.md` | "Container Diagram" & "Sequence Diagrams"                    |
-| **What a specific business term means?** | `PRD.md`          | "Ubiquitous Language (Glossary)"                             |
-| **If you should add an extra feature?**  | `PRD.md`          | "Boundary Analysis (Out of Scope)"                           |
+| If you need to know... | Target File | Specific Section |
+| --- | --- | --- |
+| What product and scope Kraken serves | `PRD.md` | `1. Executive Summary`, `4. Functional Capabilities`, `6. Boundary Analysis` |
+| Which term should be used consistently | `PRD.md` | `2. Ubiquitous Language (Glossary)` |
+| What the logical boundaries are | `Architecture.md` | `1. Architectural Strategy`, `2. System Containers`, `4. Critical Execution Flows` |
+| What concrete interfaces, state, and tests exist | `TechSpec.md` | `1. Stack Specification`, `3. State & Data Modeling`, `4. Interface Contract`, `5. Implementation Guidelines` |
+| What should happen next | `Tasks.md` | `1. Executive Summary & Active Critical Path`, `4. Ticket List` |
+| What was already delivered in the previous wave | `Tasks.md` | `Appendix A-C` |
+| How CI and release gates currently work | `reports/GatePolicy.md` | all sections |
 
 ---
 
-## Execution Guidelines
+## Documentation Rules
 
-1. **Interface First:** Adhere strictly to the exact types, field names, and endpoints defined in the `TechSpec.md`. If a task requires a database column or API route that does not exist in the Tech Spec, pause and request clarification from the user. Do not improvise schema or contract changes.
-2. **Ubiquitous Language:** When naming variables, classes, or functions, use the exact terminology defined in the `PRD.md` Glossary. Avoid using synonyms.
-3. **Definition of Done:** Code is considered complete only when it satisfies the exact `Given/When/Then` Gherkin criteria listed for your current ticket in `Tasks.md`.
-4. **Scope Containment:** Focus exclusively on the current atomic task. Do not generate code or scaffold files for future tickets to prevent cascading integration issues.
+1. **Respect layer boundaries.** Do not move stack or ABI detail into the PRD. Do not move product intent into TechSpec. Do not invent contracts in Tasks.
+2. **Preserve continuity.** Version history, archived completed scope, operator preferences, and major historical decisions are part of the trust surface.
+3. **Use current framework shape.** The canonical docs now follow the current stage skeletons; keep future revisions in that format.
+4. **Treat code as Brownfield truth.** If a doc drifts from the source tree, reconcile explicitly instead of silently preserving stale future-tense language.
+5. **Keep active and archived scope separate.** `Tasks.md` should not let completed execution masquerade as the active backlog.
 
-## Getting Started
+---
 
-To begin implementation, locate your assigned Ticket ID in `Tasks.md`, review its technical requirements in `TechSpec.md`, and write the code required to satisfy the documented Acceptance Criteria.
+## When Revising Docs
+
+### Product-layer change
+- Start with `PRD.md`
+- Validate whether the requested change is really a scope change or only an implementation/architecture change
+
+### Logical design change
+- Confirm the PRD already authorizes the change
+- Revise `Architecture.md` before touching `TechSpec.md`
+
+### Implementation contract change
+- Confirm Architecture already authorizes it
+- Revise `TechSpec.md`
+- Then revise `Tasks.md` if execution implications change
+
+### Execution-plan change
+- Only revise `Tasks.md` once the upstream contract is already present
+- Preserve archived scope if it still explains current reality
+
+---
+
+## Current Repo-Specific Notes
+
+- `TechSpec.md` is now a **current-state Brownfield spec**, not a future-phase memo.
+- `Tasks.md` has a small active docs/drift-control wave and a large archived v6/v4 delivery appendix.
+- `reports/GatePolicy.md` reflects the current CI host test surface, including install smoke and runner tests.

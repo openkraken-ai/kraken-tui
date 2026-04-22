@@ -78,6 +78,12 @@ jobs:
       - name: Run example replay tests
         run: bun test ts/test-examples.test.ts
 
+      - name: Run install smoke tests
+        run: bun test ts/test-install.test.ts
+
+      - name: Run runner API tests
+        run: bun test ts/test-runner.test.ts
+
       - name: Check bundle budget (< 75KB)
         run: bun run ts/check-bundle.ts
 

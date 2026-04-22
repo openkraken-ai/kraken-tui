@@ -1,69 +1,105 @@
-# Execution Plan (Tasks.md)
+# Engineering Execution Plan
 
-## Kraken TUI
+## 0. Version History & Changelog
+- v7.0.0 - Reframed the plan around active versus archived scope, made documentation-chain normalization the current maintenance wave, and preserved the completed v4 execution record as archived continuity.
+- v6.0.0 - Planned the transcript, devtools, split-pane, and flagship-example execution wave.
+- v5.0.0 - Preserved the earlier v3 planning wave prior to the v4 focus reset.
+- ... [Older history truncated, refer to git logs]
 
-**Version**: 6.0
-**Status**: Complete (Epics I, J, K, L all done)
-**Date**: March 2026
-**Source of Truth**: [TechSpec.md](./TechSpec.md), [Architecture.md](./Architecture.md), [PRD.md](./PRD.md), Kraken Focus Directive (March 2026)
+## 1. Executive Summary & Active Critical Path
+- **Total Active Story Points:** 8
+- **Critical Path:** `DOCS-A001 -> DOCS-A002 -> DOCS-A003`
+- **Planning Assumptions:** The transcript/devtools/split-pane/flagship-example wave is already implemented and is now archived context. The active scope in this revision is documentation-chain normalization and source-truth reconciliation, not a new product feature wave. Post-v4 product work remains unratified until the canonical docs chain is trustworthy again.
 
-**Planning note**: v3 is complete and remains the implementation baseline. This file tracks only the next execution phase and depends on the concrete contracts defined in `TechSpec.md`.
+## 2. Project Phasing & Iteration Strategy
+### Current Active Scope
+- Normalize `PRD.md`, `Architecture.md`, `TechSpec.md`, and `Tasks.md` to the current four-stage framework skeletons.
+- Verify that the rewrite preserves glossary terms, scope boundaries, delivered capabilities, ADR intent, and the detailed v4 execution record.
+- Reconcile the canonical docs chain with the current source tree, tests, examples, and release workflows.
 
----
+### Future / Deferred Scope
+- Ratify the first post-v4 product backlog only after the canonical docs chain is stable again.
+- Decide whether release/install hardening and public onboarding become the next active engineering wave.
+- Preserve previously deferred product items: no native promotion of code/diff surfaces without measured pressure, no default background-render promotion, no packaging-first rewrite, and no additional TextArea expansion without reprioritization.
 
-## 1. EXECUTIVE SUMMARY
+### Archived or Already Completed Scope
+- Epics I-L delivered native transcript state, anchor-based viewport behavior, nested scroll handoff, devtools APIs, host inspector surfaces, split-pane layout, transcript-backed composites, and flagship examples.
+- The archived planning wave also delivered replay fixtures, golden coverage, and example-driven performance gates.
+- Detailed archived tickets, acceptance criteria, and the archived build-order graph are preserved below for continuity and auditability.
 
-**Total Estimation:** 85 Story Points (Fibonacci: 1, 2, 3, 5, 8)
+## 3. Build Order (Mermaid)
+```mermaid
+flowchart LR
+    A001[DOCS-A001 Normalize canonical artifact structure]
+    A002[DOCS-A002 Verify preservation and archival continuity]
+    A003[DOCS-A003 Reconcile docs with source and workflows]
 
-**Phase 1 (MVP) Estimation:** 72 Story Points
+    A001 --> A002 --> A003
+```
 
-**Phase 2 (Post-MVP) Estimation:** 13 Story Points
+## 4. Ticket List
+### Epic A — Documentation And Drift Control (DOCS)
 
-**Critical Path:**
+**DOCS-A001 Normalize Canonical Planning Artifacts**
+- **Type:** Chore
+- **Effort:** 3
+- **Dependencies:** None
+- **Description:** Rewrite the four canonical planning artifacts into the current framework skeletons so each layer cleanly owns the right kind of information again.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given the canonical docs chain was written against an older framework shape
+When PRD, Architecture, TechSpec, and Tasks are revised
+Then each artifact follows the current required section skeleton in order
+And upstream versus downstream responsibilities are explicit again
+```
 
-`TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-I5 -> TASK-J0 -> TASK-J1 -> TASK-J2 -> TASK-J3 -> TASK-J4 -> TASK-L1 -> TASK-L3`
+**DOCS-A002 Verify Preservation And Archived Continuity**
+- **Type:** Chore
+- **Effort:** 2
+- **Dependencies:** [DOCS-A001]
+- **Description:** Review the rewritten artifacts against the prior versions to ensure product scope, glossary, delivered capabilities, ADR intent, and the completed v4 execution record remain represented.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given the canonical artifacts have been reformatted
+When preservation review is performed against the prior versions
+Then glossary terms, scope boundaries, delivered capabilities, and ADR intent remain represented
+And archived completed work remains accessible without being mistaken for current active scope
+```
 
-**Critical Path Estimate:** 56 Story Points
+**DOCS-A003 Reconcile Docs With Source Truth**
+- **Type:** Chore
+- **Effort:** 3
+- **Dependencies:** [DOCS-A002]
+- **Description:** Check the rewritten docs against the current codebase, tests, examples, and release workflows, and correct or explicitly call out any remaining drift.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given the canonical docs chain has been rewritten
+When the docs are checked against source files, test suites, examples, and workflows
+Then already-implemented features are documented in present tense
+And any remaining drift is either corrected or explicitly recorded
+```
 
-**Planning Constraints:**
+## Appendix A: Archived Completed Scope (v6 Planning Wave)
+### A.1 Archived Executive Summary
+- **Total Archived Story Points:** 85
+- **Archived MVP Story Points:** 72
+- **Archived Post-MVP Story Points:** 13
+- **Archived Critical Path:** `TASK-I0 -> TASK-I1 -> TASK-I2 -> TASK-I3 -> TASK-I4 -> TASK-I5 -> TASK-J0 -> TASK-J1 -> TASK-J2 -> TASK-J3 -> TASK-J4 -> TASK-L1 -> TASK-L3`
+- **Archived Constraints Preserved:** Transcript and viewport correctness were treated as the first bottleneck; dev mode was treated as product work; `agent-console` and `ops-log-console` were the blocking proof applications for the wave.
 
-1. `Tasks.md` is downstream of `TechSpec.md`. No ticket may introduce APIs, state, or widgets that the TechSpec does not already define.
-2. Transcript/viewport correctness is the first bottleneck. Until that is stable, no example or component work is allowed to pull the roadmap toward generic widget expansion.
-3. Dev mode is product work. It is not optional polish and cannot be deferred behind packaging or public adoption work.
-4. `agent-console` and `ops-log-console` are blocking proof apps for this phase. `repo-inspector` starts only after the MVP stack is real and measurable.
-
----
-
-## 2. PROJECT PHASING STRATEGY
-
-### Phase 1 (MVP for v4)
-
-Functional outcomes:
-
+### A.2 Archived Phasing
+#### Archived MVP Outcomes
 1. Ship a native `TranscriptView` with stable block IDs, streaming patch/update semantics, sticky-bottom, jump-to-unread, group collapse, and nested scroll correctness.
-2. Ship transcript replay fixtures, goldens, and benchmark gates that exercise long-lived streaming workloads rather than short dashboard demos.
+2. Ship transcript replay fixtures, goldens, and benchmark gates for long-lived streaming workloads.
 3. Ship a cohesive dev mode with native snapshot/trace export, bounds/focus/dirty overlays, widget tree inspection, perf HUD, and deterministic watch/restart behavior.
 4. Ship a native `SplitPane` plus host-side `CommandPalette`, `TracePanel`, and `StructuredLogView` composites.
 5. Ship `agent-console` and `ops-log-console` as real regression-driving examples.
 
-### Phase 2 (Post-MVP / Scope-Controlled)
-
-Functional outcomes:
-
-1. Ship host-side `CodeView` and `DiffView` composites and measure whether native promotion is actually needed.
+#### Archived Post-MVP Outcomes
+1. Ship host-side `CodeView` and `DiffView` composites and measure whether native promotion is warranted.
 2. Ship `repo-inspector` on top of the proven transcript, pane, palette, and devtools foundation.
 
-Explicitly deferred:
-
-- Any native promotion of code/diff surfaces without measured example pressure
-- Packaging/public usability work beyond the v3 baseline
-- More `TextArea` depth
-- Any revisit of background rendering
-
----
-
-## 3. BUILD ORDER (DEPENDENCY GRAPH)
-
+### A.3 Archived Build Order
 ```mermaid
 flowchart LR
     subgraph INFRA[INFRA_AND_SPIKES]
@@ -116,10 +152,7 @@ flowchart LR
     K2 --> L4
 ```
 
----
-
-## 4. THE TICKET LIST
-
+## Appendix B: Archived Ticket Inventory (v6)
 ### Epic I: Transcript and Viewport Architecture
 
 **[TASK-I0] Spike Transcript Replay Contract and Canonical Fixtures**
@@ -351,7 +384,7 @@ And bounded trace buffers never exceed their configured retention limits
 - **Dependencies:** [TASK-I4]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Add `NodeType::SplitPane`, ratio/min-size state, and keyboard/mouse resize behavior as defined in the TechSpec.
-- **Implementation Notes:** Created `native/src/splitpane.rs` with 8 module functions (set_axis, set_ratio, get_ratio, set_min_sizes, set_resize_step, set_resizable, handle_key, sync_children_layout). Added 6 FFI entry points in `lib.rs`. Added two-child constraint in `tree.rs` (like ScrollBox single-child). Added divider rendering in `render.rs` (│ for horizontal, ─ for vertical). Added keyboard resize dispatch in `event.rs`. SplitPane is focusable for keyboard resize. Created `ts/src/widgets/splitpane.ts` TS widget, added to JSX reconciler. 23 Rust unit tests, 17 FFI integration tests.
+- **Implementation Notes:** Created `native/src/splitpane.rs` with 8 module functions (set_axis, set_ratio, get_ratio, set_min_sizes, set_resize_step, set_resizable, handle_key, sync_children_layout). Added 6 FFI entry points in `lib.rs`. Added two-child constraint in `tree.rs` (like ScrollBox single-child). Added divider rendering in `render.rs` (`|` for horizontal, `-` for vertical in portable documentation terms; box-drawing characters in implementation). Added keyboard resize dispatch in `event.rs`. SplitPane is focusable for keyboard resize. Created `ts/src/widgets/splitpane.ts` TS widget, added to JSX reconciler. 23 Rust unit tests, 17 FFI integration tests.
 - **Out of Scope:** Command palette, code/diff viewer composites, or repo inspector example assembly
 - **Acceptance Criteria (Gherkin):**
 
@@ -370,7 +403,7 @@ And terminal resize preserves a valid ratio and visible divider state
 - **Dependencies:** [TASK-K1]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Build `CommandPalette` as a host composite over `Overlay`, `Input`, and `List`, with dense filtering behavior suitable for flagship examples.
-- **Implementation Notes:** Created `ts/src/composites/command-palette.ts` as a pure TS composite. Uses Overlay (modal, dismiss-on-escape) → Box (column layout) → Input (filter) + List (commands). Provides open/close, setCommands, applyFilter, executeSelected, selectPrevious/selectNext APIs. Case-insensitive substring filtering. 2 FFI integration tests validating the widget composition pattern.
+- **Implementation Notes:** Created `ts/src/composites/command-palette.ts` as a pure TS composite. Uses Overlay (modal, dismiss-on-escape) -> Box (column layout) -> Input (filter) + List (commands). Provides open/close, setCommands, applyFilter, executeSelected, selectPrevious/selectNext APIs. Case-insensitive substring filtering. 2 FFI integration tests validating the widget composition pattern.
 - **Out of Scope:** Native palette widget work or repo inspector metadata panes
 - **Acceptance Criteria (Gherkin):**
 
@@ -408,7 +441,7 @@ And the same composite surfaces work in both agent and ops examples
 - **Dependencies:** [TASK-K1]
 - **Priority Area:** Agent/devtool-oriented components
 - **Description:** Build initial code and diff viewer composites from existing text, scroll, and syntax-highlight primitives, then capture the measurements needed to decide whether native promotion is justified.
-- **Implementation Notes:** Created `ts/src/composites/code-view.ts` with two composites. `CodeView` wraps ScrollBox → Box → optional gutter Text + code Text (format=code, syntect highlighting). Provides setContent, setLineNumbers, getContent APIs. `DiffView` supports side-by-side (via SplitPane) and unified modes. Includes generateUnifiedDiff helper. Written measurement document at `docs/code-diff-native-measurement.md` — recommendation: native promotion NOT warranted for v4. 4 FFI integration tests validating code/diff widget composition.
+- **Implementation Notes:** Created `ts/src/composites/code-view.ts` with two composites. `CodeView` wraps ScrollBox -> Box -> optional gutter Text + code Text (format=code, syntect highlighting). Provides setContent, setLineNumbers, getContent APIs. `DiffView` supports side-by-side (via SplitPane) and unified modes. Includes generateUnifiedDiff helper. Written measurement document at `docs/reports/code-diff-native-measurement.md` - recommendation: native promotion NOT warranted for v4. 4 FFI integration tests validating code/diff widget composition.
 - **Out of Scope:** Immediate native code/diff widgets or packaging work
 - **Acceptance Criteria (Gherkin):**
 
@@ -497,12 +530,10 @@ Then pane layout, code viewing, and diff navigation remain stable
 And the example uses only the primitives and composites already defined in the TechSpec
 ```
 
----
-
-## 5. SUMMARY TABLE
+## Appendix C: Archived Summary Table (v6)
 
 | ID | Epic | Type | SP | Dependencies | Phase |
-| -- | ---- | ---- | -- | ------------ | ----- |
+| --- | --- | --- | --- | --- | --- |
 | TASK-I0 | I | Spike | 2 | None | MVP |
 | TASK-I1 | I | Feature | 5 | I0 | MVP |
 | TASK-I2 | I | Feature | 5 | I1 | MVP |
@@ -522,4 +553,4 @@ And the example uses only the primitives and composites already defined in the T
 | TASK-L2 | L | Feature | 5 | J3, K3 | MVP |
 | TASK-L3 | L | Chore | 5 | L1, L2 | MVP |
 | TASK-L4 | L | Feature | 8 | K4, K2, J3 | Post-MVP |
-| | | **TOTAL** | **85** | | |
+|  |  | **TOTAL** | **85** |  |  |
