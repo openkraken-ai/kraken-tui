@@ -185,7 +185,7 @@ cargo fmt --manifest-path native/Cargo.toml -- --check
 cargo clippy --manifest-path native/Cargo.toml -- -D warnings
 ```
 
-Current verified bundle size in this repo state: `62.4KB / 75KB`.
+The host package is currently under the 75KB bundle budget; use `bun run ts/check-bundle.ts` for the exact measurement in the current checkout.
 
 ## Documentation
 

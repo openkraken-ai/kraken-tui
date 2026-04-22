@@ -10,7 +10,9 @@
   },
   "scripts": {
     "test": "bun test test-ffi.test.ts && bun test test-jsx.test.ts && bun test test-examples.test.ts && bun test test-install.test.ts && bun test test-runner.test.ts && bun run check-bundle.ts",
-    "bench": "bun run bench-ffi.ts",
+    "bench": "bun run bench-ffi.ts && bun run bench-render.ts",
+    "bench:ffi": "bun run bench-ffi.ts",
+    "bench:render": "bun run bench-render.ts",
     "guardrails": "bun run guardrails-ffi.ts",
     "guardrails:report": "bun run guardrails-ffi.ts --report-only",
     "test:examples": "bun test test-examples.test.ts",

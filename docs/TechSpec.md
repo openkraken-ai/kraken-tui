@@ -415,6 +415,7 @@ supported_release_targets:
 │   ├── TechSpec.md
 │   ├── Tasks.md
 │   └── reports/
+│       ├── GatePolicy.md
 │       └── code-diff-native-measurement.md
 ├── examples/
 │   ├── agent-console.ts
