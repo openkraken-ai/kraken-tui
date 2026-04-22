@@ -13,7 +13,7 @@ See the repo-root `CLAUDE.md` for cross-layer rules and the canonical docs chain
 cargo build --manifest-path native/Cargo.toml --release
 
 # Install dependencies once
-cd ts && bun install
+bun install --cwd ts
 
 # Host tests
 bun test ts/test-ffi.test.ts

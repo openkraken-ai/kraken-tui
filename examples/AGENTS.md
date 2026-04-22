@@ -6,7 +6,7 @@ Practical lessons from building examples. Follow these when creating or modifyin
 
 ```bash
 cargo build --manifest-path native/Cargo.toml --release
-cd ts && bun install  # once after clone
+bun install --cwd ts  # once after clone
 bun run examples/<example>.ts
 ```
 
