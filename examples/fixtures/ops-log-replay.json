@@ -1,0 +1,40 @@
+{
+  "name": "ops-log-replay",
+  "description": "Canonical structured log fixture for ops-log console example. Mixed log levels from a microservices application.",
+  "terminalWidth": 120,
+  "terminalHeight": 40,
+  "entries": [
+    { "level": "info", "source": "http", "message": "GET /api/users 200 45ms", "timestamp": "2026-03-21T10:00:00.000Z" },
+    { "level": "info", "source": "http", "message": "POST /api/auth/login 200 23ms", "timestamp": "2026-03-21T10:00:00.100Z" },
+    { "level": "debug", "source": "cache", "message": "cache hit ratio: 92% keys=12500", "timestamp": "2026-03-21T10:00:00.200Z" },
+    { "level": "info", "source": "worker", "message": "job abc12345 completed in 1200ms", "timestamp": "2026-03-21T10:00:00.300Z" },
+    { "level": "warn", "source": "http", "message": "GET /api/search 429 rate-limited client=10.0.1.55", "timestamp": "2026-03-21T10:00:00.400Z" },
+    { "level": "info", "source": "http", "message": "GET /api/products?page=3 200 120ms", "timestamp": "2026-03-21T10:00:00.500Z" },
+    { "level": "error", "source": "db", "message": "connection pool timeout after 15s queue=30", "timestamp": "2026-03-21T10:00:00.600Z" },
+    { "level": "debug", "source": "cache", "message": "evicted 50 keys, freed 5MB", "timestamp": "2026-03-21T10:00:00.700Z" },
+    { "level": "info", "source": "health", "message": "health check passed all=8 services ok", "timestamp": "2026-03-21T10:00:00.800Z" },
+    { "level": "warn", "source": "mem", "message": "heap usage 87%, GC triggered pause=25ms", "timestamp": "2026-03-21T10:00:00.900Z" },
+    { "level": "error", "source": "auth", "message": "token expired for user xk9f2m3a ip=192.168.1.100", "timestamp": "2026-03-21T10:00:01.000Z" },
+    { "level": "info", "source": "deploy", "message": "build r4n80m1d deployed to staging env=staging-1", "timestamp": "2026-03-21T10:00:01.100Z" },
+    { "level": "info", "source": "worker", "message": "queue depth: 15 pending, 3 active", "timestamp": "2026-03-21T10:00:01.200Z" },
+    { "level": "debug", "source": "trace", "message": "span t8k2l9m1 duration=250ms parent=p3x7n2q5", "timestamp": "2026-03-21T10:00:01.300Z" },
+    { "level": "error", "source": "db", "message": "query timeout SELECT * FROM orders WHERE id=5432", "timestamp": "2026-03-21T10:00:01.400Z", "data": { "duration_ms": 15000, "table": "orders" } },
+    { "level": "fatal", "source": "db", "message": "primary replica unreachable host=db-primary-1.internal", "timestamp": "2026-03-21T10:00:01.500Z" },
+    { "level": "warn", "source": "http", "message": "POST /api/upload 413 payload too large size=50MB", "timestamp": "2026-03-21T10:00:01.600Z" },
+    { "level": "info", "source": "http", "message": "GET /api/users 200 33ms", "timestamp": "2026-03-21T10:00:01.700Z" },
+    { "level": "error", "source": "auth", "message": "invalid signature attempt from 10.5.3.200", "timestamp": "2026-03-21T10:00:01.800Z", "data": { "attempts": 5, "blocked": false } },
+    { "level": "info", "source": "worker", "message": "job def67890 completed in 3500ms", "timestamp": "2026-03-21T10:00:01.900Z" }
+  ],
+  "checkpoints": [
+    {
+      "afterEntryIndex": 9,
+      "label": "After 10 entries",
+      "expect": { "entryCount": 10 }
+    },
+    {
+      "afterEntryIndex": 19,
+      "label": "After all 20 entries",
+      "expect": { "entryCount": 20 }
+    }
+  ]
+}

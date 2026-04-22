@@ -252,12 +252,9 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                         heading_fg(heading_level),
                     );
                 }
-                Tag::Paragraph => {
-                    // Inside blockquotes, prefix each paragraph with a bar glyph
-                    if blockquote_depth > 0 {
-                        let bar = "▎ ".repeat(blockquote_depth);
-                        push(&mut spans, &bar, CellAttrs::BOLD, 0x018b949e);
-                    }
+                Tag::Paragraph if blockquote_depth > 0 => {
+                    let bar = "▎ ".repeat(blockquote_depth);
+                    push(&mut spans, &bar, CellAttrs::BOLD, 0x018b949e);
                 }
                 Tag::Strong => bold = true,
                 Tag::Emphasis => italic = true,

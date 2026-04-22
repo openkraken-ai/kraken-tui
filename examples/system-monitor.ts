@@ -26,6 +26,7 @@
  * Controls:
  *   Tab / Shift+Tab — Cycle focus
  *   1-4             — Switch tabs (Overview / Processes / Network / Disks)
+ *   Left / Right    — Switch tabs when the tab strip is focused
  *   t               — Cycle theme
  *   h               — Toggle help overlay
  *   /               — Focus filter input
@@ -51,6 +52,7 @@ import {
 	createLoop,
 } from "../ts/src/index";
 import type { KrakenEvent } from "../ts/src/index";
+import { ffi } from "../ts/src/ffi";
 
 // ── System Data Readers ───────────────────────────────────────────────
 
@@ -385,24 +387,27 @@ titleText.setWidth(18);
 titleText.setHeight(1);
 
 const hostText = new Text({ content: ` ${readHostname()}`, fg: pal.fg });
-hostText.setWidth(20);
+hostText.setWidth(18);
 hostText.setHeight(1);
 
 const uptimeText = new Text({ content: "", fg: pal.fgDim });
-uptimeText.setWidth(18);
+uptimeText.setWidth(16);
 uptimeText.setHeight(1);
 
 const loadText = new Text({ content: "", fg: pal.cyan });
-loadText.setWidth(28);
+loadText.setWidth(22);
 loadText.setHeight(1);
 
 const themeText = new Text({ content: ` [t] ${pal.name}`, fg: pal.accent });
-themeText.setWidth(20);
+themeText.setWidth(14);
 themeText.setHeight(1);
 
+// Help hint fills remaining space so wider terminals don't leave a gap.
 const helpHint = new Text({ content: " [h]Help [q]Quit", fg: pal.fgDim });
-helpHint.setWidth(18);
 helpHint.setHeight(1);
+helpHint.setFlexGrow(1);
+helpHint.setFlexShrink(1);
+helpHint.setFlexBasis(0);
 
 headerBar.append(titleText);
 headerBar.append(hostText);
@@ -420,6 +425,8 @@ const tabs = new Tabs({
 	fg: pal.fg,
 	bg: pal.panelBg,
 });
+tabs.setFocusable(true);
+tabs.setLabel("System monitor tabs");
 
 // ── OVERVIEW TAB ──────────────────────────────────────────────────────
 
@@ -819,6 +826,8 @@ const helpContent = new Text({
 		"",
 		"  `Tab`     Cycle focus",
 		"  `1-4`     Switch tabs",
+		"  `Left`    Previous focused tab",
+		"  `Right`   Next focused tab",
 		"  `t`       Cycle theme",
 		"  `h`       Toggle help",
 		"  `/`       Focus filter",
@@ -831,6 +840,7 @@ const helpContent = new Text({
 });
 helpContent.setWidth("100%");
 helpContent.setHeight(14);
+helpContent.setFocusable(true);
 
 helpOverlay.append(helpContent);
 
@@ -838,10 +848,12 @@ helpOverlay.append(helpContent);
 
 const contentArea = new Box({
 	width: "100%",
-	height: "100%",
 	flexDirection: "column",
 	bg: pal.bg,
 });
+contentArea.setFlexGrow(1);
+contentArea.setFlexShrink(1);
+contentArea.setFlexBasis(0);
 contentArea.append(overviewPanel);
 
 root.append(headerBar);
@@ -857,13 +869,27 @@ app.setRoot(root);
 const tabPanels = [overviewPanel, processPanel, networkPanel, diskPanel];
 let currentTabPanel = overviewPanel;
 
+function isDescendantHandle(handle: number, ancestor: number): boolean {
+	let current = handle;
+	while (current !== 0) {
+		if (current === ancestor) return true;
+		current = ffi.tui_get_parent(current);
+	}
+	return false;
+}
+
 function switchTab(index: number): void {
 	if (index === activeTab || index < 0 || index >= tabPanels.length) return;
+	const focused = ffi.tui_get_focused();
+	const focusWasInOldPanel = focused !== 0 && isDescendantHandle(focused, currentTabPanel.handle);
 	contentArea.removeChild(currentTabPanel);
 	activeTab = index;
 	tabs.setActive(index);
 	currentTabPanel = tabPanels[index]!;
 	contentArea.append(currentTabPanel);
+	if (focusWasInOldPanel) {
+		tabs.focus();
+	}
 }
 
 // ── Theme Switching ───────────────────────────────────────────────────
@@ -1065,6 +1091,7 @@ function updateData(): void {
 // ── Event Loop ────────────────────────────────────────────────────────
 
 let helpVisible = false;
+let focusBeforeHelp = 0;
 let tickCounter = 0;
 
 const loop = createLoop({
@@ -1072,11 +1099,28 @@ const loop = createLoop({
 	fps: 60,
 
 	onEvent(event: KrakenEvent) {
+		if (event.type === "change" && event.target === helpOverlay.handle) {
+			helpVisible = helpOverlay.isOpen();
+			if (!helpVisible) {
+				focusBeforeHelp = 0;
+			}
+			return;
+		}
+
+		if (event.type === "change" && event.target === tabs.handle) {
+			switchTab(tabs.getActive());
+			return;
+		}
+
 		if (event.type === "key") {
+			const focused = ffi.tui_get_focused();
+			const editingText =
+				focused === filterInput.handle || focused === notesArea.handle;
 			if (event.keyCode === KeyCode.Escape) {
 				if (helpVisible) {
 					helpOverlay.setOpen(false);
 					helpVisible = false;
+					if (focusBeforeHelp !== 0) ffi.tui_focus(focusBeforeHelp);
 					return;
 				}
 				loop.stop();
@@ -1085,12 +1129,27 @@ const loop = createLoop({
 			const cp = event.codepoint ?? 0;
 			if (cp === 0) return;
 			const key = String.fromCodePoint(cp).toLowerCase();
+			if (helpVisible) {
+				if (key === "h") {
+					helpOverlay.setOpen(false);
+					helpVisible = false;
+					if (focusBeforeHelp !== 0) ffi.tui_focus(focusBeforeHelp);
+				}
+				return;
+			}
+			if (editingText) {
+				return;
+			}
 			if (key === "q") { loop.stop(); return; }
 			if (key >= "1" && key <= "4") { switchTab(parseInt(key) - 1); return; }
 			if (key === "t") { cycleTheme(); return; }
 			if (key === "h") {
 				helpVisible = !helpVisible;
 				helpOverlay.setOpen(helpVisible);
+				if (helpVisible) {
+					focusBeforeHelp = ffi.tui_get_focused();
+					helpContent.focus();
+				}
 				return;
 			}
 			if (key === "/") {

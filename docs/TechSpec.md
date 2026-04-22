@@ -20,7 +20,7 @@
 
 ### 1.1 Product Constraint Summary
 
-- Kraken already has the foundation: 142 public C ABI functions, 10 shipped widget types, writer compaction, text cache, `app.run()`, JSX/signals, headless golden tests, and a completed threaded-render no-go report.
+- Kraken already has the foundation: a broad C ABI surface, shipped transcript/split-pane-era widgets, writer compaction, text cache, `app.run()`, JSX/signals, headless golden tests, and a completed threaded-render no-go report.
 - The next phase is not another generic widget or packaging pass. It is a product-shaping pass for long-lived agent consoles, developer inspectors, streaming logs, and dense pane-based workflows.
 - New dependencies are blocked unless they directly improve transcript behavior, devtools, or flagship examples.
 
@@ -54,7 +54,7 @@
 | -------- | ------ | ------ |
 | Native Core | `libkraken_tui.{so,dylib,dll}` | `native/target/release/` |
 | Host Package | TypeScript source | `ts/src/` |
-| Flagship Examples | Bun entrypoints | `examples/agent-console.tsx`, `examples/ops-log-console.tsx`, `examples/repo-inspector.tsx` |
+| Flagship Examples | Bun entrypoints | `examples/agent-console.ts`, `examples/ops-log-console.ts`, `examples/repo-inspector.ts` |
 
 ### 1.5 CI and Tooling
 
@@ -347,6 +347,7 @@ pub struct TranscriptBlock {
     pub code_language: Option<String>,
     pub streaming: bool,
     pub collapsed: bool,
+    pub hidden: bool,
     pub unread: bool,
     pub rendered_rows: u32,
     pub version: u64,
@@ -445,22 +446,31 @@ pub struct TuiContext {
 
 All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and debug/devtools symbols without breaking the existing runner, widget, theme, or diagnostics contracts.
 
-### 4.3 v4 Additions (New Symbols)
-
-#### 4.3.1 Transcript Surface (+11)
+The carried-forward layout surface also includes:
 
 | Function | Signature | Returns | Description |
 | -------- | --------- | ------- | ----------- |
+| `tui_set_layout_flex_factor` | `(u32 handle, u32 prop, f32 value) -> i32` | 0 / -1 | Set `flex_grow`, `flex_shrink`, or fixed `flex_basis`; `prop`: 0=grow, 1=shrink, 2=basis |
+
+### 4.3 v4 Additions (New Symbols)
+
+#### 4.3.1 Transcript Surface (+14)
+
+| Function | Signature | Returns | Description |
+| -------- | --------- | ------- | ----------- |
+| `tui_transcript_clear` | `(u32 handle) -> i32` | 0 / -1 | Clear all transcript blocks and reset viewport/unread state |
 | `tui_transcript_append_block` | `(u32 handle, u64 block_id, u8 kind, u8 role, *const u8 ptr, u32 len) -> i32` | 0 / -1 | Append a new logical block |
 | `tui_transcript_patch_block` | `(u32 handle, u64 block_id, u8 patch_mode, *const u8 ptr, u32 len) -> i32` | 0 / -1 | `patch_mode`: 0=append text, 1=replace text |
 | `tui_transcript_finish_block` | `(u32 handle, u64 block_id) -> i32` | 0 / -1 | Mark a streaming block as complete |
 | `tui_transcript_set_parent` | `(u32 handle, u64 block_id, u64 parent_id) -> i32` | 0 / -1 | Assign a group parent |
 | `tui_transcript_set_collapsed` | `(u32 handle, u64 block_id, u8 collapsed) -> i32` | 0 / -1 | Collapse or expand a block group |
+| `tui_transcript_set_hidden` | `(u32 handle, u64 block_id, u8 hidden) -> i32` | 0 / -1 | Hide or show a block for filtering without changing collapse semantics |
 | `tui_transcript_jump_to_block` | `(u32 handle, u64 block_id, u8 align) -> i32` | 0 / -1 | Jump viewport to block; `align`: 0=start, 1=center, 2=end |
 | `tui_transcript_jump_to_unread` | `(u32 handle) -> i32` | 0 / -1 | Jump to the earliest unread anchor |
 | `tui_transcript_set_follow_mode` | `(u32 handle, u8 mode) -> i32` | 0 / -1 | Set `FollowMode` |
 | `tui_transcript_get_follow_mode` | `(u32 handle) -> i32` | mode / -1 | Read current `FollowMode` |
-| `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Clear unread state at the current viewport |
+| `tui_transcript_set_role_color` | `(u32 handle, u8 role, u32 color) -> i32` | 0 / -1 | Override the foreground color for one transcript role; `role`: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning |
+| `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Mark all unread blocks in the transcript as read |
 | `tui_transcript_get_unread_count` | `(u32 handle) -> i32` | count / -1 | Read unread block count |
 
 #### 4.3.2 SplitPane (+6)
@@ -507,13 +517,13 @@ Counters `0..13` remain unchanged from the v3 baseline. v4 adds:
 
 ### 4.6 Symbol Count
 
-- Current implemented baseline at end of v3: **142**
-- v4 additions in this spec: **+24**
-- Projected total after v4 MVP: **166**
+- Current implemented baseline at end of v3: **143**
+- v4 additions in this spec: **+27**
+- Current implemented total after v4 MVP: **170**
 
 Breakdown of v4 additions:
 
-- Transcript: +11
+- Transcript: +14
 - SplitPane: +6
 - Debug/devtools: +7
 
@@ -523,6 +533,8 @@ Breakdown of v4 additions:
 
 ```ts
 class TranscriptView extends Widget {
+  clear(): void;
+
   appendBlock(input: {
     id: bigint | number;
     kind: "message" | "toolCall" | "toolResult" | "reasoning" | "activity" | "divider";
@@ -538,8 +550,14 @@ class TranscriptView extends Widget {
   finishBlock(id: bigint | number): void;
   setParent(id: bigint | number, parentId: bigint | number): void;
   setCollapsed(id: bigint | number, collapsed: boolean): void;
+  setHidden(id: bigint | number, hidden: boolean): void;
   setFollowMode(mode: "manual" | "tailLocked" | "tailWhileNearBottom"): void;
+  getFollowMode(): "manual" | "tailLocked" | "tailWhileNearBottom";
+  jumpToBlock(id: bigint | number, align?: "top" | "center" | "bottom"): void;
   jumpToUnread(): void;
+  markRead(): void;
+  getUnreadCount(): number;
+  setRoleColor(role: "system" | "user" | "assistant" | "tool" | "reasoning", color: string | number): void;
 }
 ```
 
@@ -615,9 +633,9 @@ kraken-tui/
 |  |     |- hud.ts         # v4
 |  |     `- traces.ts      # v4
 |- examples/
-|  |- agent-console.tsx    # v4
-|  |- ops-log-console.tsx  # v4
-|  `- repo-inspector.tsx   # v4
+|  |- agent-console.ts     # v4
+|  |- ops-log-console.ts   # v4
+|  `- repo-inspector.ts    # v4
 `- docs/
 ```
 
@@ -665,12 +683,12 @@ bun test ts/test-runner.test.ts
 bun test ts/test-jsx.test.ts
 
 # Flagship examples (target commands)
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/agent-console.tsx
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/ops-log-console.tsx
-cargo build --release --manifest-path native/Cargo.toml && bun run examples/repo-inspector.tsx
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/agent-console.ts
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/ops-log-console.ts
+cargo build --release --manifest-path native/Cargo.toml && bun run examples/repo-inspector.ts
 
 # Dev restart loop
-bun --watch examples/agent-console.tsx
+bun --watch examples/agent-console.ts
 ```
 
 ### 5.5 Performance and Quality Gates

@@ -36,6 +36,8 @@ export class CommandPalette {
 	private list: List;
 	private commands: Command[] = [];
 	private filteredCommands: Command[] = [];
+	private restoreFocusHandle = 0;
+	private wasOpen = false;
 
 	constructor(options: CommandPaletteOptions = {}) {
 		this.overlay = new Overlay({
@@ -48,12 +50,13 @@ export class CommandPalette {
 			border: "rounded",
 		});
 		this.overlay.setDismissOnEscape(true);
+		this.overlay.setPositionType("absolute");
 
-		this.container = new Box({ width: "100%", height: "100%" });
+		this.container = new Box({ width: "100%", height: "100%", bg: options.bg });
 		this.container.setFlexDirection("column");
 
-		this.input = new Input({ width: "100%", border: "single" });
-		this.list = new List({ width: "100%", height: "100%" });
+		this.input = new Input({ width: "100%", border: "single", fg: options.fg, bg: options.bg });
+		this.list = new List({ width: "100%", height: "100%", fg: options.fg, bg: options.bg });
 
 		this.container.append(this.input);
 		this.container.append(this.list);
@@ -78,7 +81,11 @@ export class CommandPalette {
 
 	/** Open the palette. Clears filter, resets selection, and focuses input. */
 	open(): void {
+		if (!this.overlay.isOpen()) {
+			this.restoreFocusHandle = ffi.tui_get_focused();
+		}
 		this.overlay.setOpen(true);
+		this.wasOpen = true;
 		this.filteredCommands = [...this.commands];
 		this.syncListItems();
 		// Clear filter input
@@ -91,12 +98,15 @@ export class CommandPalette {
 
 	/** Close the palette. */
 	close(): void {
-		this.overlay.setOpen(false);
+		if (this.overlay.isOpen()) {
+			this.overlay.setOpen(false);
+		}
+		this.syncClosedState(false);
 	}
 
 	/** Check if the palette is currently open. */
 	isOpen(): boolean {
-		return this.overlay.isOpen();
+		return this.syncClosedState(this.overlay.isOpen());
 	}
 
 	/**
@@ -180,5 +190,46 @@ export class CommandPalette {
 		for (const cmd of this.filteredCommands) {
 			this.list.addItem(cmd.label);
 		}
+		if (this.filteredCommands.length > 0) {
+			this.list.setSelected(0);
+		}
+	}
+
+	private isEffectivelyVisible(handle: number): boolean {
+		let current = handle;
+		while (current !== 0) {
+			if (ffi.tui_get_visible(current) !== 1) {
+				return false;
+			}
+			if (
+				ffi.tui_get_node_type(current) === NodeType.Overlay &&
+				ffi.tui_overlay_get_open(current) !== 1
+			) {
+				return false;
+			}
+			current = ffi.tui_get_parent(current);
+		}
+		return true;
+	}
+
+	private canRestoreFocus(handle: number): boolean {
+		return handle !== 0 &&
+			this.isEffectivelyVisible(handle) &&
+			ffi.tui_is_focusable(handle) === 1;
+	}
+
+	private syncClosedState(open: boolean): boolean {
+		if (!open && this.wasOpen) {
+			this.wasOpen = false;
+			const restoreFocusHandle = this.restoreFocusHandle;
+			this.restoreFocusHandle = 0;
+			if (
+				ffi.tui_get_focused() === 0 &&
+				this.canRestoreFocus(restoreFocusHandle)
+			) {
+				checkResult(ffi.tui_focus(restoreFocusHandle));
+			}
+		}
+		return open;
 	}
 }

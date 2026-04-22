@@ -653,6 +653,7 @@ pub struct OverlayState {
     pub modal: bool,
     pub clear_under: bool,
     pub dismiss_on_escape: bool,
+    pub restore_focus: Option<u32>,
 }
 
 impl Default for OverlayState {
@@ -662,6 +663,7 @@ impl Default for OverlayState {
             modal: false,
             clear_under: false,
             dismiss_on_escape: true,
+            restore_focus: None,
         }
     }
 }
@@ -775,6 +777,7 @@ pub struct TranscriptBlock {
     pub code_language: Option<String>,
     pub streaming: bool,
     pub collapsed: bool,
+    pub hidden: bool,
     pub unread: bool,
     pub rendered_rows: u32,
     pub version: u64,
@@ -793,6 +796,10 @@ pub struct TranscriptState {
     pub viewport_rows: u32,
     /// Width of the viewport in columns, used for line-wrapping estimates.
     pub viewport_width: u32,
+    /// Per-role foreground colors. Index = role (0=system, 1=user, 2=assistant,
+    /// 3=tool, 4=reasoning). Value 0 means "inherit node default fg".
+    /// Encoded as 0x01RRGGBB (RGB tag).
+    pub role_colors: [u32; 5],
 }
 
 impl Default for TranscriptState {
@@ -808,6 +815,7 @@ impl Default for TranscriptState {
             tail_attached: true,
             viewport_rows: 0,
             viewport_width: 80,
+            role_colors: [0; 5], // all inherit from node fg by default
         }
     }
 }

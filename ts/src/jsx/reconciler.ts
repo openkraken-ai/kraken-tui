@@ -291,9 +291,18 @@ function applyStaticProp(handle: number, type: string, prop: string, value: unkn
 			}
 			break;
 		}
-		case "gap":
-			checkResult(ffi.tui_set_layout_gap(handle, value as number, value as number));
-			break;
+			case "gap":
+				checkResult(ffi.tui_set_layout_gap(handle, value as number, value as number));
+				break;
+			case "flexGrow":
+				checkResult(ffi.tui_set_layout_flex_factor(handle, 0, value as number));
+				break;
+			case "flexShrink":
+				checkResult(ffi.tui_set_layout_flex_factor(handle, 1, value as number));
+				break;
+			case "flexBasis":
+				checkResult(ffi.tui_set_layout_flex_factor(handle, 2, value as number));
+				break;
 
 		// --- Visual style (common) ---
 		case "fg":

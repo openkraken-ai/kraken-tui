@@ -237,9 +237,38 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        let node = ctx.nodes.get_mut(&handle).unwrap();
-        node.visible = visible != 0;
-        node.dirty = true;
+        let is_visible = visible != 0;
+        let old_focus = ctx.focused.unwrap_or(0);
+        let focused_under = ctx
+            .focused
+            .is_some_and(|focused| crate::tree::is_self_or_descendant(&ctx, focused, handle));
+        if !is_visible {
+            crate::tree::clear_focus_if_under(&mut ctx, handle);
+        }
+        let (taffy_node, should_display) = {
+            let node = ctx.nodes.get_mut(&handle).unwrap();
+            node.visible = is_visible;
+            node.dirty = true;
+            // For Overlay nodes, display requires BOTH visible AND open.
+            let overlay_open = node.overlay_state.as_ref().is_none_or(|ov| ov.open);
+            (node.taffy_node, is_visible && overlay_open)
+        };
+        let mut style = ctx
+            .tree
+            .style(taffy_node)
+            .map_err(|e| format!("Failed to read style: {e:?}"))?
+            .clone();
+        style.display = if should_display {
+            taffy::Display::Flex
+        } else {
+            taffy::Display::None
+        };
+        ctx.tree
+            .set_style(taffy_node, style)
+            .map_err(|e| format!("Failed to set style: {e:?}"))?;
+        if !is_visible && focused_under && ctx.focused.is_none() {
+            event::refocus_after_loss(&mut ctx, old_focus);
+        }
         Ok(0)
     })
 }
@@ -1264,13 +1293,67 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
-        let node = ctx.nodes.get_mut(&handle).unwrap();
-        if node.node_type != NodeType::Overlay {
-            return Err(format!("Handle {handle} is not an Overlay widget"));
+        let is_open = open != 0;
+        let previous_focus = ctx.focused;
+        let was_open = {
+            let node = ctx
+                .nodes
+                .get(&handle)
+                .ok_or_else(|| format!("Handle {handle} not found"))?;
+            if node.node_type != NodeType::Overlay {
+                return Err(format!("Handle {handle} is not an Overlay widget"));
+            }
+            node.overlay_state
+                .as_ref()
+                .is_some_and(|overlay| overlay.open)
+        };
+        {
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Handle {handle} not found"))?;
+            let overlay = node.overlay_state.as_mut().unwrap();
+            if is_open && !was_open {
+                overlay.restore_focus = previous_focus;
+            }
         }
-        let overlay = node.overlay_state.as_mut().unwrap();
-        overlay.open = open != 0;
-        node.dirty = true;
+        let restore_focus = if !is_open {
+            let restore = ctx
+                .nodes
+                .get_mut(&handle)
+                .and_then(|node| node.overlay_state.as_mut())
+                .and_then(|overlay| overlay.restore_focus.take());
+            crate::tree::clear_focus_if_under(&mut ctx, handle);
+            restore
+        } else {
+            None
+        };
+        let (taffy_node, should_display) = {
+            let node = ctx.nodes.get_mut(&handle).unwrap();
+            let overlay = node.overlay_state.as_mut().unwrap();
+            overlay.open = is_open;
+            node.dirty = true;
+            // Display requires BOTH visible AND open.
+            (node.taffy_node, node.visible && is_open)
+        };
+        let mut style = ctx
+            .tree
+            .style(taffy_node)
+            .map_err(|e| format!("Failed to read style: {e:?}"))?
+            .clone();
+        style.display = if should_display {
+            taffy::Display::Flex
+        } else {
+            taffy::Display::None
+        };
+        ctx.tree
+            .set_style(taffy_node, style)
+            .map_err(|e| format!("Failed to set style: {e:?}"))?;
+        if ctx.focused.is_none() {
+            if let Some(restore_handle) = restore_focus {
+                event::restore_focus_handle(&mut ctx, restore_handle);
+            }
+        }
         Ok(0)
     })
 }
@@ -1751,6 +1834,16 @@ pub extern "C" fn tui_set_layout_flex(handle: u32, prop: u32, value: u32) -> i32
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         layout::set_flex(&mut ctx, handle, prop, value)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_set_layout_flex_factor(handle: u32, prop: u32, value: f32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        layout::set_flex_factor(&mut ctx, handle, prop, value)?;
         Ok(0)
     })
 }
@@ -2726,6 +2819,16 @@ pub extern "C" fn tui_transcript_set_collapsed(handle: u32, block_id: u64, colla
 }
 
 #[no_mangle]
+pub extern "C" fn tui_transcript_set_hidden(handle: u32, block_id: u64, hidden: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::set_hidden(&mut ctx, handle, block_id, hidden != 0)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_transcript_jump_to_block(handle: u32, block_id: u64, align: u8) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
@@ -2764,6 +2867,45 @@ pub extern "C" fn tui_transcript_get_follow_mode(handle: u32) -> i32 {
         ctx.validate_handle(handle)?;
         let mode = transcript::get_follow_mode(&ctx, handle)?;
         Ok(mode as i32)
+    })
+}
+
+/// Set the foreground color for a specific transcript role.
+/// role: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning.
+/// color: 0 = inherit node default, or 0x01RRGGBB for RGB color.
+#[no_mangle]
+pub extern "C" fn tui_transcript_set_role_color(handle: u32, role: u8, color: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        let node = ctx
+            .nodes
+            .get_mut(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        if node.node_type != types::NodeType::Transcript {
+            return Err(format!("Handle {handle} is not a Transcript widget"));
+        }
+        let state = node
+            .transcript_state
+            .as_mut()
+            .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+        if (role as usize) >= state.role_colors.len() {
+            return Err(format!("Invalid role index: {role}"));
+        }
+        state.role_colors[role as usize] = color;
+        node.dirty = true;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+/// Clear all blocks from a Transcript widget.
+pub extern "C" fn tui_transcript_clear(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        ctx.validate_handle(handle)?;
+        transcript::clear_blocks(&mut ctx, handle)?;
+        Ok(0)
     })
 }
 
@@ -3299,6 +3441,383 @@ mod tests {
 
         // Invalid handle
         assert_eq!(tui_set_z_index(0, 1), -1);
+
+        tui_shutdown();
+    }
+
+    /// Diagnostic test: render header/content/footer and verify header/footer text is visible.
+    #[test]
+    fn render_header_content_footer_visibility() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(40, 10), 0);
+
+        // Root: column, 40x10
+        let root = tui_create_node(NodeType::Box as u8);
+        tui_set_root(root);
+        tui_set_layout_dimension(root, 0, 40.0, 1);
+        tui_set_layout_dimension(root, 1, 10.0, 1);
+        tui_set_layout_flex(root, 0, 1); // column
+
+        // Header: h=1 with text
+        let header = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(header, 0, 40.0, 1);
+        tui_set_layout_dimension(header, 1, 1.0, 1);
+        tui_set_layout_flex(header, 0, 0); // row
+        tui_append_child(root, header);
+
+        let header_text = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(header_text, 0, 40.0, 1);
+        tui_set_layout_dimension(header_text, 1, 1.0, 1);
+        let ht = "HEADER-BAR-VISIBLE";
+        tui_set_content(header_text, ht.as_ptr(), ht.len() as u32);
+        tui_append_child(header, header_text);
+
+        // Content: flex_grow=1
+        let content = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(content, 0, 40.0, 1);
+        tui_set_layout_flex_factor(content, 0, 1.0); // flex_grow=1
+        tui_set_layout_flex(content, 0, 1); // column
+        tui_append_child(root, content);
+
+        // Fill content with text that could overflow
+        let content_text = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(content_text, 0, 40.0, 1);
+        tui_set_layout_dimension(content_text, 1, 100.0, 2); // 100% height
+        let ct =
+            "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12";
+        tui_set_content(content_text, ct.as_ptr(), ct.len() as u32);
+        tui_append_child(content, content_text);
+
+        // Footer: h=1 with text
+        let footer = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(footer, 0, 40.0, 1);
+        tui_set_layout_dimension(footer, 1, 1.0, 1);
+        tui_set_layout_flex(footer, 0, 0); // row
+        tui_append_child(root, footer);
+
+        let footer_text = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(footer_text, 0, 40.0, 1);
+        tui_set_layout_dimension(footer_text, 1, 1.0, 1);
+        let ft = "FOOTER-BAR-VISIBLE";
+        tui_set_content(footer_text, ft.as_ptr(), ft.len() as u32);
+        tui_append_child(footer, footer_text);
+
+        // Render
+        assert_eq!(tui_render(), 0);
+
+        // Read buffer and check if header/footer text is visible
+        {
+            let ctx = context_read().unwrap();
+            let buffer = &ctx.back_buffer;
+
+            // Row 0 should contain "HEADER"
+            let mut row0 = String::new();
+            for x in 0..buffer.width {
+                if let Some(cell) = buffer.get(x, 0) {
+                    row0.push(cell.ch);
+                }
+            }
+            eprintln!("Row 0: '{}'", row0.trim());
+            assert!(
+                row0.contains("HEADER"),
+                "Row 0 should contain HEADER text, got: '{}'",
+                row0.trim()
+            );
+
+            // Row 9 should contain "FOOTER"
+            let mut row9 = String::new();
+            for x in 0..buffer.width {
+                if let Some(cell) = buffer.get(x, 9) {
+                    row9.push(cell.ch);
+                }
+            }
+            eprintln!("Row 9: '{}'", row9.trim());
+            assert!(
+                row9.contains("FOOTER"),
+                "Row 9 should contain FOOTER text, got: '{}'",
+                row9.trim()
+            );
+
+            // Print all rows for debugging
+            for y in 0..buffer.height {
+                let mut row = String::new();
+                for x in 0..buffer.width {
+                    if let Some(cell) = buffer.get(x, y) {
+                        row.push(cell.ch);
+                    }
+                }
+                eprintln!("Row {}: '{}'", y, row.trim_end());
+            }
+        }
+
+        tui_shutdown();
+    }
+
+    /// Test with a SplitPane inside content area — closer to real examples
+    #[test]
+    fn render_header_splitpane_footer_visibility() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(40, 10), 0);
+
+        // Root: column
+        let root = tui_create_node(NodeType::Box as u8);
+        tui_set_root(root);
+        tui_set_layout_dimension(root, 0, 40.0, 1);
+        tui_set_layout_dimension(root, 1, 10.0, 1);
+        tui_set_layout_flex(root, 0, 1); // column
+
+        // Header
+        let header = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(header, 0, 40.0, 1);
+        tui_set_layout_dimension(header, 1, 1.0, 1);
+        tui_append_child(root, header);
+        let ht = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(ht, 0, 40.0, 1);
+        tui_set_layout_dimension(ht, 1, 1.0, 1);
+        let h_str = "HEADER";
+        tui_set_content(ht, h_str.as_ptr(), h_str.len() as u32);
+        tui_append_child(header, ht);
+
+        // Content wrapper with flex_grow=1
+        let content = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(content, 0, 40.0, 1);
+        tui_set_layout_flex_factor(content, 0, 1.0); // flex_grow=1
+        tui_set_layout_flex(content, 0, 1); // column
+        tui_append_child(root, content);
+
+        // SplitPane inside content with height=100%
+        let split = tui_create_node(NodeType::SplitPane as u8);
+        tui_set_layout_dimension(split, 0, 40.0, 1);
+        tui_set_layout_dimension(split, 1, 100.0, 2); // height=100%
+        tui_append_child(content, split);
+
+        // Left pane
+        let left = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(left, 0, 20.0, 1);
+        tui_set_layout_dimension(left, 1, 100.0, 2);
+        tui_append_child(split, left);
+        let lt = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(lt, 0, 20.0, 1);
+        tui_set_layout_dimension(lt, 1, 100.0, 2);
+        let l_str = "LEFT-PANE";
+        tui_set_content(lt, l_str.as_ptr(), l_str.len() as u32);
+        tui_append_child(left, lt);
+
+        // Right pane
+        let right = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(right, 0, 20.0, 1);
+        tui_set_layout_dimension(right, 1, 100.0, 2);
+        tui_append_child(split, right);
+        let rt = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(rt, 0, 20.0, 1);
+        tui_set_layout_dimension(rt, 1, 100.0, 2);
+        let r_str = "RIGHT-PANE";
+        tui_set_content(rt, r_str.as_ptr(), r_str.len() as u32);
+        tui_append_child(right, rt);
+
+        // Footer
+        let footer = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(footer, 0, 40.0, 1);
+        tui_set_layout_dimension(footer, 1, 1.0, 1);
+        tui_append_child(root, footer);
+        let ft = tui_create_node(NodeType::Text as u8);
+        tui_set_layout_dimension(ft, 0, 40.0, 1);
+        tui_set_layout_dimension(ft, 1, 1.0, 1);
+        let f_str = "FOOTER";
+        tui_set_content(ft, f_str.as_ptr(), f_str.len() as u32);
+        tui_append_child(footer, ft);
+
+        assert_eq!(tui_render(), 0);
+
+        {
+            let ctx = context_read().unwrap();
+            let buffer = &ctx.back_buffer;
+
+            for y in 0..buffer.height {
+                let mut row = String::new();
+                for x in 0..buffer.width {
+                    if let Some(cell) = buffer.get(x, y) {
+                        row.push(cell.ch);
+                    }
+                }
+                eprintln!("Row {}: '{}'", y, row.trim_end());
+            }
+
+            // Check header
+            let mut row0 = String::new();
+            for x in 0..buffer.width {
+                if let Some(cell) = buffer.get(x, 0) {
+                    row0.push(cell.ch);
+                }
+            }
+            assert!(
+                row0.contains("HEADER"),
+                "Row 0 should contain HEADER, got: '{}'",
+                row0.trim()
+            );
+
+            // Check footer
+            let mut row9 = String::new();
+            for x in 0..buffer.width {
+                if let Some(cell) = buffer.get(x, 9) {
+                    row9.push(cell.ch);
+                }
+            }
+            assert!(
+                row9.contains("FOOTER"),
+                "Row 9 should contain FOOTER, got: '{}'",
+                row9.trim()
+            );
+        }
+
+        tui_shutdown();
+    }
+
+    /// Diagnostic test: verify layout positions for the header/content/footer pattern.
+    /// This is the exact pattern used in the flagship examples.
+    #[test]
+    fn layout_header_content_footer_pattern() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        // Root: column, 80x24
+        let root = tui_create_node(NodeType::Box as u8);
+        tui_set_root(root);
+        tui_set_layout_dimension(root, 0, 80.0, 1); // width=80px
+        tui_set_layout_dimension(root, 1, 24.0, 1); // height=24px
+        tui_set_layout_flex(root, 0, 1); // flexDirection=column
+
+        // Header: h=1
+        let header = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(header, 0, 80.0, 1); // width=80px (100% of root)
+        tui_set_layout_dimension(header, 1, 1.0, 1); // height=1
+        tui_append_child(root, header);
+
+        // Content: flex_grow=1 (no explicit height)
+        let content = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(content, 0, 80.0, 1); // width=80px
+        tui_set_layout_flex_factor(content, 0, 1.0); // flex_grow=1
+        tui_append_child(root, content);
+
+        // Footer: h=1
+        let footer = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(footer, 0, 80.0, 1); // width=80px
+        tui_set_layout_dimension(footer, 1, 1.0, 1); // height=1
+        tui_append_child(root, footer);
+
+        // Compute layout
+        assert_eq!(tui_render(), 0);
+
+        // Read positions
+        let get = |h: u32| -> (i32, i32, i32, i32) {
+            let (mut x, mut y, mut w, mut h_out) = (0i32, 0i32, 0i32, 0i32);
+            assert_eq!(tui_get_layout(h, &mut x, &mut y, &mut w, &mut h_out), 0);
+            (x, y, w, h_out)
+        };
+
+        let root_layout = get(root);
+        let header_layout = get(header);
+        let content_layout = get(content);
+        let footer_layout = get(footer);
+
+        eprintln!("=== Layout: header/content(flex_grow=1)/footer ===");
+        eprintln!(
+            "root:    x={} y={} w={} h={}",
+            root_layout.0, root_layout.1, root_layout.2, root_layout.3
+        );
+        eprintln!(
+            "header:  x={} y={} w={} h={}",
+            header_layout.0, header_layout.1, header_layout.2, header_layout.3
+        );
+        eprintln!(
+            "content: x={} y={} w={} h={}",
+            content_layout.0, content_layout.1, content_layout.2, content_layout.3
+        );
+        eprintln!(
+            "footer:  x={} y={} w={} h={}",
+            footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3
+        );
+
+        // Header should be at y=0, h=1
+        assert_eq!(header_layout, (0, 0, 80, 1), "header should be at top");
+        // Content should fill middle (y=1, h=22)
+        assert_eq!(content_layout, (0, 1, 80, 22), "content should fill middle");
+        // Footer should be at y=23, h=1
+        assert_eq!(footer_layout, (0, 23, 80, 1), "footer should be at bottom");
+
+        tui_shutdown();
+    }
+
+    /// Test what happens with height=100% on content instead of flex_grow
+    #[test]
+    fn layout_header_content100pct_footer_pattern() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(80, 24), 0);
+
+        // Root: column, 80x24
+        let root = tui_create_node(NodeType::Box as u8);
+        tui_set_root(root);
+        tui_set_layout_dimension(root, 0, 80.0, 1);
+        tui_set_layout_dimension(root, 1, 24.0, 1);
+        tui_set_layout_flex(root, 0, 1); // column
+
+        // Header: h=1
+        let header = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(header, 0, 80.0, 1);
+        tui_set_layout_dimension(header, 1, 1.0, 1);
+        tui_append_child(root, header);
+
+        // Content: height=100%
+        let content = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(content, 0, 80.0, 1); // width=80px
+        tui_set_layout_dimension(content, 1, 100.0, 2); // height=100% (unit=2=percent)
+        tui_append_child(root, content);
+
+        // Footer: h=1
+        let footer = tui_create_node(NodeType::Box as u8);
+        tui_set_layout_dimension(footer, 0, 80.0, 1);
+        tui_set_layout_dimension(footer, 1, 1.0, 1);
+        tui_append_child(root, footer);
+
+        assert_eq!(tui_render(), 0);
+
+        let get = |h: u32| -> (i32, i32, i32, i32) {
+            let (mut x, mut y, mut w, mut h_out) = (0i32, 0i32, 0i32, 0i32);
+            assert_eq!(tui_get_layout(h, &mut x, &mut y, &mut w, &mut h_out), 0);
+            (x, y, w, h_out)
+        };
+
+        let header_layout = get(header);
+        let content_layout = get(content);
+        let footer_layout = get(footer);
+
+        eprintln!("=== Layout: header/content(h=100%)/footer ===");
+        eprintln!(
+            "header:  x={} y={} w={} h={}",
+            header_layout.0, header_layout.1, header_layout.2, header_layout.3
+        );
+        eprintln!(
+            "content: x={} y={} w={} h={}",
+            content_layout.0, content_layout.1, content_layout.2, content_layout.3
+        );
+        eprintln!(
+            "footer:  x={} y={} w={} h={}",
+            footer_layout.0, footer_layout.1, footer_layout.2, footer_layout.3
+        );
+
+        // With height=100%, content wants 24 rows = full parent.
+        // flex_shrink defaults to 1 in Taffy, so it should shrink.
+        // But let's see what actually happens.
+        eprintln!(
+            "footer visible on screen? footer_y({}) + footer_h({}) <= 24: {}",
+            footer_layout.1,
+            footer_layout.3,
+            footer_layout.1 + footer_layout.3 <= 24
+        );
 
         tui_shutdown();
     }

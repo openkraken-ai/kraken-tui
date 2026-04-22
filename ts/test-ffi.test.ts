@@ -54,6 +54,7 @@ const lib = dlopen(LIB_PATH, {
 	// Layout
 	tui_set_layout_dimension: { args: ["u32", "u32", "f32", "u8"] as FFIType[],  returns: "i32" as const },
 	tui_set_layout_flex:      { args: ["u32", "u32", "u32"] as FFIType[],        returns: "i32" as const },
+	tui_set_layout_flex_factor: { args: ["u32", "u32", "f32"] as FFIType[],      returns: "i32" as const },
 	tui_set_layout_edges:     { args: ["u32", "u32", "f32", "f32", "f32", "f32"] as FFIType[], returns: "i32" as const },
 	tui_set_layout_gap:       { args: ["u32", "f32", "f32"] as FFIType[],        returns: "i32" as const },
 	tui_get_layout:           { args: ["u32", "ptr", "ptr", "ptr", "ptr"] as FFIType[], returns: "i32" as const },
@@ -201,10 +202,13 @@ const lib = dlopen(LIB_PATH, {
 	tui_transcript_finish_block:  { args: ["u32", "u64"] as FFIType[],                           returns: "i32" as const },
 	tui_transcript_set_parent:    { args: ["u32", "u64", "u64"] as FFIType[],                    returns: "i32" as const },
 	tui_transcript_set_collapsed: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
+	tui_transcript_set_hidden:    { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_jump_to_block: { args: ["u32", "u64", "u8"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_jump_to_unread:{ args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_set_follow_mode:{ args: ["u32", "u8"] as FFIType[],                           returns: "i32" as const },
 	tui_transcript_get_follow_mode:{ args: ["u32"] as FFIType[],                                 returns: "i32" as const },
+	tui_transcript_clear:         { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
+	tui_transcript_set_role_color:{ args: ["u32", "u8", "u32"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_mark_read:     { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_get_unread_count:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
 
@@ -506,6 +510,15 @@ describe("FFI integration", () => {
 		test("invalid dimension property returns -1", () => {
 			const h = ffi.tui_create_node(0);
 			expect(ffi.tui_set_layout_dimension(h, 99, 10, 1)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("flex factors accept grow, shrink, and basis", () => {
+			const h = ffi.tui_create_node(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 0, 1.5)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 1, 0.5)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 2, 12)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 99, 1)).toBe(-1);
 			ffi.tui_destroy_node(h);
 		});
 
@@ -1264,6 +1277,33 @@ describe("FFI integration", () => {
 			ffi.tui_set_focusable(h, 0);
 			expect(ffi.tui_is_focusable(h)).toBe(0);
 			ffi.tui_destroy_node(h);
+		});
+
+		test("hiding a focused subtree restores focus and emits FocusChange", () => {
+			const root = ffi.tui_create_node(0);
+			const fallback = ffi.tui_create_node(2);
+			const pane = ffi.tui_create_node(0);
+			const focused = ffi.tui_create_node(2);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, fallback)).toBe(0);
+			expect(ffi.tui_append_child(root, pane)).toBe(0);
+			expect(ffi.tui_append_child(pane, focused)).toBe(0);
+			expect(ffi.tui_focus(focused)).toBe(0);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+			while (ffi.tui_next_event(eventBuf) === 1) {
+				// Drain the focus event from the explicit tui_focus() call.
+			}
+
+			expect(ffi.tui_set_visible(pane, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(fallback);
+			expect(ffi.tui_next_event(eventBuf)).toBe(1);
+			expect(eventView.getUint32(0, true)).toBe(4); // FocusChange
+			expect(eventView.getUint32(8, true)).toBe(focused);
+			expect(eventView.getUint32(12, true)).toBe(fallback);
+
+			ffi.tui_destroy_subtree(root);
 		});
 	});
 
@@ -2575,6 +2615,76 @@ describe("FFI integration", () => {
 
 			ffi.tui_destroy_subtree(root);
 		});
+
+		test("modal overlay traps focus even when current focus is outside it", () => {
+			const root = ffi.tui_create_node(0);
+			const outsideA = ffi.tui_create_node(2);
+			const outsideB = ffi.tui_create_node(2);
+			const overlay = ffi.tui_create_node(9);
+			const inside = ffi.tui_create_node(2);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, outsideA)).toBe(0);
+			expect(ffi.tui_append_child(root, outsideB)).toBe(0);
+			expect(ffi.tui_append_child(root, overlay)).toBe(0);
+			expect(ffi.tui_append_child(overlay, inside)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(overlay, 1)).toBe(0);
+			expect(ffi.tui_focus(outsideA)).toBe(0);
+
+			expect(ffi.tui_focus_next()).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(inside);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("hiding a focused child modal keeps focus trapped in its parent modal", () => {
+			const root = ffi.tui_create_node(0);
+			const background = ffi.tui_create_node(2);
+			const parentOverlay = ffi.tui_create_node(9);
+			const parentInput = ffi.tui_create_node(2);
+			const childOverlay = ffi.tui_create_node(9);
+			const childInput = ffi.tui_create_node(2);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, background)).toBe(0);
+			expect(ffi.tui_append_child(root, parentOverlay)).toBe(0);
+			expect(ffi.tui_append_child(parentOverlay, parentInput)).toBe(0);
+			expect(ffi.tui_append_child(parentOverlay, childOverlay)).toBe(0);
+			expect(ffi.tui_append_child(childOverlay, childInput)).toBe(0);
+			expect(ffi.tui_overlay_set_open(parentOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(parentOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_open(childOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(childOverlay, 1)).toBe(0);
+			expect(ffi.tui_focus(childInput)).toBe(0);
+
+			expect(ffi.tui_set_visible(childOverlay, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(parentInput);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("closing overlay does not restore focus into hidden parent subtree", () => {
+			const root = ffi.tui_create_node(0);
+			const panel = ffi.tui_create_node(0);
+			const original = ffi.tui_create_node(2);
+			const overlay = ffi.tui_create_node(9);
+			const overlayInput = ffi.tui_create_node(2);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, panel)).toBe(0);
+			expect(ffi.tui_append_child(panel, original)).toBe(0);
+			expect(ffi.tui_append_child(root, overlay)).toBe(0);
+			expect(ffi.tui_append_child(overlay, overlayInput)).toBe(0);
+
+			expect(ffi.tui_focus(original)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 1)).toBe(0);
+			expect(ffi.tui_focus(overlayInput)).toBe(0);
+			expect(ffi.tui_set_visible(panel, 0)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(0);
+
+			ffi.tui_destroy_subtree(root);
+		});
 	});
 
 	describe("v3 widget leaf/container semantics", () => {
@@ -2715,14 +2825,23 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(h);
 		});
 
-		test("collapse and expand", () => {
-			const h = ffi.tui_create_node(10);
-			const c = new TextEncoder().encode("content");
-			expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
-			expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
-			expect(ffi.tui_transcript_set_collapsed(h, 1n, 0)).toBe(0);
-			ffi.tui_destroy_node(h);
-		});
+			test("collapse and expand", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_collapsed(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_set_collapsed(h, 1n, 0)).toBe(0);
+				ffi.tui_destroy_node(h);
+			});
+
+			test("hide and show block", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 0)).toBe(0);
+				ffi.tui_destroy_node(h);
+			});
 
 		test("follow mode get/set", () => {
 			const h = ffi.tui_create_node(10);
@@ -2764,6 +2883,28 @@ describe("FFI integration", () => {
 			const h = ffi.tui_create_node(10);
 			// No unread — should succeed (no-op)
 			expect(ffi.tui_transcript_jump_to_unread(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("clear resets blocks and unread state", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			for (let i = 1n; i <= 5n; i++) {
+				expect(ffi.tui_transcript_append_block(h, i, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(0);
+			expect(ffi.tui_transcript_append_block(h, 6n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(1);
+			expect(ffi.tui_transcript_clear(h)).toBe(0);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+			expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("role color setter validates role indices", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_set_role_color(h, 2, 0x01ff8800)).toBe(0);
+			expect(ffi.tui_transcript_set_role_color(h, 99, 0x01ff8800)).toBe(-1);
 			ffi.tui_destroy_node(h);
 		});
 
@@ -2865,11 +3006,26 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_node(h);
 		});
 
-		test("collapse unknown block returns error", () => {
-			const h = ffi.tui_create_node(10);
-			expect(ffi.tui_transcript_set_collapsed(h, 999n, 1)).toBe(-1);
-			ffi.tui_destroy_node(h);
-		});
+			test("collapse unknown block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				expect(ffi.tui_transcript_set_collapsed(h, 999n, 1)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
+
+			test("hide unknown block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				expect(ffi.tui_transcript_set_hidden(h, 999n, 1)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
+
+			test("jump to hidden block returns error", () => {
+				const h = ffi.tui_create_node(10);
+				const c = new TextEncoder().encode("content");
+				expect(ffi.tui_transcript_append_block(h, 1n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+				expect(ffi.tui_transcript_set_hidden(h, 1n, 1)).toBe(0);
+				expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(-1);
+				ffi.tui_destroy_node(h);
+			});
 
 		test("many blocks lifecycle stress test", () => {
 			const h = ffi.tui_create_node(10);
@@ -3302,6 +3458,52 @@ describe("FFI integration", () => {
 			expect(focusable).toBe(1);
 			ffi.tui_destroy_node(sp);
 		});
+
+		test("hidden SplitPane does not reserve layout space", () => {
+			const root = ffi.tui_create_node(0);
+			const header = ffi.tui_create_node(0);
+			const splitpane = ffi.tui_create_node(11);
+			const footer = ffi.tui_create_node(0);
+			const left = ffi.tui_create_node(0);
+			const right = ffi.tui_create_node(0);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 1, 24, 1)).toBe(0);
+			expect(ffi.tui_set_layout_flex(root, 0, 1)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(header, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(header, 1, 1, 1)).toBe(0);
+			expect(ffi.tui_append_child(root, header)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(splitpane, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(splitpane, 1, 100, 2)).toBe(0);
+			expect(ffi.tui_append_child(root, splitpane)).toBe(0);
+			expect(ffi.tui_append_child(splitpane, left)).toBe(0);
+			expect(ffi.tui_append_child(splitpane, right)).toBe(0);
+			expect(ffi.tui_set_visible(splitpane, 0)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(footer, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(footer, 1, 1, 1)).toBe(0);
+			expect(ffi.tui_append_child(root, footer)).toBe(0);
+
+			expect(ffi.tui_render()).toBe(0);
+
+			const xBuf = new Int32Array(1);
+			const yBuf = new Int32Array(1);
+			const wBuf = new Int32Array(1);
+			const hBuf = new Int32Array(1);
+
+			expect(ffi.tui_get_layout(splitpane, xBuf, yBuf, wBuf, hBuf)).toBe(0);
+			expect(wBuf[0]).toBe(0);
+			expect(hBuf[0]).toBe(0);
+
+			expect(ffi.tui_get_layout(footer, xBuf, yBuf, wBuf, hBuf)).toBe(0);
+			expect(yBuf[0]).toBe(1);
+			expect(hBuf[0]).toBe(1);
+
+			ffi.tui_destroy_subtree(root);
+		});
 	});
 
 	// ====================================================================
@@ -3547,15 +3749,205 @@ describe("FFI integration", () => {
 			cv.getWidget().destroySubtree();
 		});
 
-		test("CodeView toggles line numbers after creation", async () => {
+		test("CodeView uses terminal column width for wide unicode lines", async () => {
 			const { CodeView } = await import("./src/composites/code-view");
-			const cv = new CodeView({ lineNumbers: false });
-			cv.setContent("a\nb\nc");
-			cv.setLineNumbers(true);
-			cv.setLineNumbers(false);
-			expect(cv.getContent()).toBe("a\nb\nc");
+			const root = ffi.tui_create_node(0); // Box
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			const cv = new CodeView({ lineNumbers: false, width: "100%", height: "100%" });
+			cv.setContent("漢漢漢漢漢漢"); // 6 code points, 12 terminal columns
+			ffi.tui_append_child(root, cv.getWidget().handle);
+			ffi.tui_set_root(root);
+			ffi.tui_render();
+
+			const codeText = (cv as unknown as { codeText: { handle: number } }).codeText;
+			const wBuf = new Int32Array(1);
+			expect(ffi.tui_get_layout(codeText.handle, new Int32Array(1), new Int32Array(1), wBuf, new Int32Array(1))).toBe(0);
+			expect(wBuf[0]).toBe(12);
+
 			cv.getWidget().destroySubtree();
+			ffi.tui_destroy_node(root);
 		});
+
+		test("CodeView width ignores combining marks", async () => {
+			const { CodeView } = await import("./src/composites/code-view");
+			const root = ffi.tui_create_node(0); // Box
+			ffi.tui_set_layout_dimension(root, 0, 80, 1);
+			ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+			// "ééé" using combining marks should occupy 3 columns.
+			const cv = new CodeView({ lineNumbers: false, width: "100%", height: "100%" });
+			cv.setContent("e\u0301e\u0301e\u0301");
+			ffi.tui_append_child(root, cv.getWidget().handle);
+			ffi.tui_set_root(root);
+			ffi.tui_render();
+
+			const codeText = (cv as unknown as { codeText: { handle: number } }).codeText;
+			const wBuf = new Int32Array(1);
+			expect(ffi.tui_get_layout(codeText.handle, new Int32Array(1), new Int32Array(1), wBuf, new Int32Array(1))).toBe(0);
+			expect(wBuf[0]).toBe(3);
+
+			cv.getWidget().destroySubtree();
+			ffi.tui_destroy_node(root);
+		});
+
+			test("CodeView toggles line numbers after creation", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const cv = new CodeView({ lineNumbers: false });
+				cv.setContent("a\nb\nc");
+				cv.setLineNumbers(true);
+				cv.setLineNumbers(false);
+				expect(cv.getContent()).toBe("a\nb\nc");
+				cv.getWidget().destroySubtree();
+			});
+
+			test("CodeView toggles line numbers with empty content", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const cv = new CodeView({ lineNumbers: true });
+				expect(() => cv.setLineNumbers(false)).not.toThrow();
+				expect(() => cv.setLineNumbers(true)).not.toThrow();
+				expect(cv.getContent()).toBe("");
+				cv.getWidget().destroySubtree();
+			});
+
+			test("CodeView recomputes width when line numbers are turned off", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const root = ffi.tui_create_node(0); // Box
+				ffi.tui_set_layout_dimension(root, 0, 80, 1);
+				ffi.tui_set_layout_dimension(root, 1, 24, 1);
+
+				const cv = new CodeView({ lineNumbers: true, width: "100%", height: "100%" });
+				cv.setContent("alpha\nbeta");
+				ffi.tui_append_child(root, cv.getWidget().handle);
+				ffi.tui_set_root(root);
+				ffi.tui_render();
+
+				const container = (cv as unknown as { container: { handle: number } }).container;
+				const beforeWidth = new Int32Array(1);
+				expect(
+					ffi.tui_get_layout(
+						container.handle,
+						new Int32Array(1),
+						new Int32Array(1),
+						beforeWidth,
+						new Int32Array(1),
+					),
+				).toBe(0);
+				expect(beforeWidth[0]).toBe(8);
+
+				cv.setLineNumbers(false);
+				ffi.tui_render();
+
+				const afterWidth = new Int32Array(1);
+				expect(
+					ffi.tui_get_layout(
+						container.handle,
+						new Int32Array(1),
+						new Int32Array(1),
+						afterWidth,
+						new Int32Array(1),
+					),
+				).toBe(0);
+				expect(afterWidth[0]).toBe(5);
+
+				cv.getWidget().destroySubtree();
+				ffi.tui_destroy_node(root);
+			});
+
+			test("CommandPalette restores focus after close", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				root.append(input);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				palette.close();
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+
+				root.destroySubtree();
+			});
+
+			test("CommandPalette restores focus after native/external close", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				root.append(input);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
+				expect(ffi.tui_get_focused()).toBe(input.handle);
+				expect(palette.isOpen()).toBe(false);
+
+				root.destroySubtree();
+			});
+
+			test("CommandPalette does not restore focus to a prior target hidden by its parent", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const panel = new Box({ width: "100%", height: 3 });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				panel.append(input);
+				root.append(panel);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				panel.setVisible(false);
+				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
+				expect(ffi.tui_get_focused()).toBe(0);
+				expect(palette.isOpen()).toBe(false);
+				expect(ffi.tui_get_focused()).toBe(0);
+
+				root.destroySubtree();
+			});
+
+			test("TranscriptView.setRoleColor rejects invalid role names", async () => {
+				const { TranscriptView } = await import("./src/widgets/transcript");
+				const transcript = new TranscriptView();
+				const invalidRole = "bogus" as unknown as "system";
+				expect(() => transcript.setRoleColor(invalidRole, "#ff0000")).toThrow("Invalid transcript role");
+				transcript.destroy();
+			});
 
 		test("DiffView side-by-side constructs without throwing", async () => {
 			const { DiffView } = await import("./src/composites/code-view");

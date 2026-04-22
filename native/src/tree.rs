@@ -17,18 +17,32 @@ pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u
     let handle = ctx.next_handle;
     ctx.next_handle += 1;
 
+    let mut style = Style::DEFAULT;
+
     // ScrollBox uses Overflow::Scroll so Taffy measures children at their
     // natural size instead of constraining them to the parent's bounds.
-    let style = if node_type == NodeType::ScrollBox {
-        let mut s = Style::DEFAULT;
-        s.overflow = taffy::Point {
+    if node_type == NodeType::ScrollBox {
+        style.overflow = taffy::Point {
             x: taffy::Overflow::Scroll,
             y: taffy::Overflow::Scroll,
         };
-        s
-    } else {
-        Style::DEFAULT
-    };
+    }
+
+    // Override Taffy's default min_size (Auto) with zero for container nodes.
+    // Without this, a flex item's min-content-height propagates tall children
+    // (e.g. a 200-line code view inside a ScrollBox) upward, causing overflow.
+    // This matches the common CSS reset `min-height: 0` / `min-width: 0`.
+    if !node_type.is_leaf() {
+        style.min_size = taffy::Size {
+            width: taffy::Dimension::length(0.0),
+            height: taffy::Dimension::length(0.0),
+        };
+    }
+
+    // Overlay defaults to closed; match Taffy layout to prevent phantom space.
+    if node_type == NodeType::Overlay {
+        style.display = taffy::Display::None;
+    }
 
     let taffy_result = if node_type.is_leaf() {
         ctx.tree.new_leaf(style)
@@ -375,6 +389,59 @@ fn would_create_cycle(ctx: &TuiContext, parent: u32, child: u32) -> bool {
         current = ctx.nodes.get(&handle).and_then(|node| node.parent);
     }
     false
+}
+
+/// Check if `child` is `ancestor` itself or a descendant of `ancestor`.
+pub(crate) fn is_self_or_descendant(ctx: &TuiContext, child: u32, ancestor: u32) -> bool {
+    if child == ancestor {
+        return true;
+    }
+    let mut current = child;
+    while let Some(node) = ctx.nodes.get(&current) {
+        if let Some(parent) = node.parent {
+            if parent == ancestor {
+                return true;
+            }
+            current = parent;
+        } else {
+            break;
+        }
+    }
+    false
+}
+
+/// If `ctx.focused` is `handle` or a descendant of `handle`, clear it.
+pub(crate) fn clear_focus_if_under(ctx: &mut TuiContext, handle: u32) {
+    if let Some(focused) = ctx.focused {
+        if is_self_or_descendant(ctx, focused, handle) {
+            ctx.focused = None;
+        }
+    }
+}
+
+/// Check whether a node is visible through its full ancestor chain.
+/// Closed overlays count as effectively hidden even if their stored
+/// `visible` bit remains true.
+pub(crate) fn is_effectively_visible(ctx: &TuiContext, handle: u32) -> bool {
+    let mut current = Some(handle);
+    while let Some(node_handle) = current {
+        let Some(node) = ctx.nodes.get(&node_handle) else {
+            return false;
+        };
+        if !node.visible {
+            return false;
+        }
+        if node.node_type == NodeType::Overlay
+            && node
+                .overlay_state
+                .as_ref()
+                .is_some_and(|overlay| !overlay.open)
+        {
+            return false;
+        }
+        current = node.parent;
+    }
+    true
 }
 
 /// Mark a node and all its ancestors as dirty.

@@ -204,6 +204,7 @@ pub(crate) fn handle_key(ctx: &mut TuiContext, handle: u32, code: u32) -> bool {
 /// relative to the SplitPane's content area origin.
 /// `size` is the content dimension along the split axis.
 /// Returns true if the click was consumed (i.e., the ratio changed).
+#[allow(dead_code)]
 pub(crate) fn handle_mouse(ctx: &mut TuiContext, handle: u32, click_pos: u16, size: u16) -> bool {
     let (resizable, children_len) = {
         let node = match ctx.nodes.get(&handle) {
@@ -241,7 +242,7 @@ pub(crate) fn handle_mouse(ctx: &mut TuiContext, handle: u32, click_pos: u16, si
 /// Synchronize Taffy layout properties for SplitPane children.
 ///
 /// Sets the SplitPane's flex_direction based on axis, then configures each
-/// child's flex_basis as a percentage of the available space.
+/// child's flex_basis to match the requested ratio.
 pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let node = ctx
         .nodes
@@ -253,6 +254,7 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
     };
     let children = node.children.clone();
     let taffy_node = node.taffy_node;
+    let visible = node.visible;
 
     // Set flex direction on the SplitPane node itself
     let mut pane_style = ctx
@@ -261,7 +263,11 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
         .map_err(|e| format!("Taffy style read failed: {e:?}"))?
         .clone();
 
-    pane_style.display = Display::Flex;
+    pane_style.display = if visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
     pane_style.flex_direction = match state.axis {
         SplitAxis::Horizontal => FlexDirection::Row,
         SplitAxis::Vertical => FlexDirection::Column,
@@ -313,7 +319,12 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
             }
         };
 
-        // Primary child: fixed percentage, shrinkable under pressure
+        let exact_primary = (usable * (state.primary_ratio_permille as f32) / 1000.0).round();
+        let exact_primary = exact_primary.clamp(0.0, usable);
+        let exact_secondary = (usable - exact_primary).max(0.0);
+
+        // Primary child: use exact cell lengths after layout is known so the
+        // ratio remains stable even when children carry width/height: 100%.
         if let Some(primary) = ctx.nodes.get(&children[0]) {
             let primary_taffy = primary.taffy_node;
             let mut style = ctx
@@ -321,7 +332,11 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .style(primary_taffy)
                 .map_err(|e| format!("Taffy style read failed: {e:?}"))?
                 .clone();
-            style.flex_basis = percent(ratio_pct / 100.0);
+            style.flex_basis = if available > 0.0 {
+                length(exact_primary)
+            } else {
+                percent(ratio_pct / 100.0)
+            };
             style.flex_grow = 0.0;
             style.flex_shrink = 1.0;
 
@@ -348,7 +363,9 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .map_err(|e| format!("Taffy set_style failed: {e:?}"))?;
         }
 
-        // Secondary child: takes remaining space, shrinkable under pressure
+        // Secondary child: explicitly reserve the remaining cells once the
+        // container size is known so its own width/height styles do not skew
+        // the requested ratio.
         if let Some(secondary) = ctx.nodes.get(&children[1]) {
             let secondary_taffy = secondary.taffy_node;
             let mut style = ctx
@@ -356,8 +373,12 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .style(secondary_taffy)
                 .map_err(|e| format!("Taffy style read failed: {e:?}"))?
                 .clone();
-            style.flex_basis = auto();
-            style.flex_grow = 1.0;
+            style.flex_basis = if available > 0.0 {
+                length(exact_secondary)
+            } else {
+                percent((100.0 - ratio_pct) / 100.0)
+            };
+            style.flex_grow = 0.0;
             style.flex_shrink = 1.0;
 
             // Set min size based on axis
@@ -716,7 +737,7 @@ mod tests {
 
     #[test]
     fn test_get_ratio_invalid_handle_rejected() {
-        let mut ctx = test_ctx();
+        let ctx = test_ctx();
         assert!(get_ratio(&ctx, 99999).is_err());
     }
 
@@ -928,6 +949,29 @@ mod tests {
         assert_eq!(style.gap.height, length(1.0));
     }
 
+    #[test]
+    fn test_sync_preserves_hidden_display_none() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&sp).unwrap();
+            node.visible = false;
+            let mut style = ctx.tree.style(node.taffy_node).unwrap().clone();
+            style.display = Display::None;
+            ctx.tree.set_style(node.taffy_node, style).unwrap();
+        }
+
+        sync_children_layout(&mut ctx, sp).unwrap();
+
+        let style = ctx.tree.style(ctx.nodes[&sp].taffy_node).unwrap();
+        assert_eq!(style.display, Display::None);
+    }
+
     // ================================================================
     // Edge case: mouse click resize
     // ================================================================
@@ -1057,7 +1101,7 @@ mod tests {
         set_resize_step(&mut ctx, sp, 5).unwrap(); // 5 cells
 
         // Compute layout so the size is known
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
 
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp, key::RIGHT);
@@ -1090,7 +1134,7 @@ mod tests {
         }
         set_ratio(&mut ctx, sp1, 500).unwrap();
         set_resize_step(&mut ctx, sp1, 10).unwrap();
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp1, key::RIGHT);
         let delta_100 = get_ratio(&ctx, sp1).unwrap() - 500;
@@ -1111,7 +1155,7 @@ mod tests {
         }
         set_ratio(&mut ctx, sp2, 500).unwrap();
         set_resize_step(&mut ctx, sp2, 10).unwrap();
-        crate::layout::compute_layout(&mut ctx);
+        crate::layout::compute_layout(&mut ctx).unwrap();
         ctx.event_buffer.clear();
         handle_key(&mut ctx, sp2, key::RIGHT);
         let delta_200 = get_ratio(&ctx, sp2).unwrap() - 500;
@@ -1122,6 +1166,49 @@ mod tests {
         assert_eq!(delta_200, 50);
         // Different widths produce different permille deltas
         assert_ne!(delta_100, delta_200);
+    }
+
+    #[test]
+    fn test_ratio_stays_close_with_full_size_children() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(100.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        for child in [c1, c2] {
+            let tn = ctx.nodes[&child].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = percent(1.0);
+            s.size.height = percent(1.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 700).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        let left = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let right = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        let usable = left.size.width + right.size.width;
+        let left_ratio = if usable > 0.0 {
+            left.size.width / usable
+        } else {
+            0.0
+        };
+
+        assert!((usable + 1.0 - 100.0).abs() <= 0.5);
+        assert!((left_ratio - 0.70).abs() <= 0.02, "left_ratio={left_ratio}");
+        assert!(left.size.width > right.size.width);
     }
 
     // ================================================================

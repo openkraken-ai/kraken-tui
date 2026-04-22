@@ -46,6 +46,16 @@ function getNodeType(handle: number): number {
 	return ffi.tui_get_node_type(handle);
 }
 
+function getLayout(handle: number): { x: number; y: number; w: number; h: number } {
+	const x = new Int32Array(1);
+	const y = new Int32Array(1);
+	const w = new Int32Array(1);
+	const h = new Int32Array(1);
+	const result = ffi.tui_get_layout(handle, x, y, w, h);
+	if (result !== 0) throw new Error(`tui_get_layout failed: ${result}`);
+	return { x: x[0] ?? 0, y: y[0] ?? 0, w: w[0] ?? 0, h: h[0] ?? 0 };
+}
+
 /**
  * Minimal mock Kraken for render() — only needs setRoot().
  */
@@ -144,6 +154,31 @@ describe("mount", () => {
 		// bold is set via tui_set_style_flag — can't easily read back,
 		// but no error means it was applied successfully
 		instance.widget.destroy();
+	});
+
+	test("applies flexGrow/flexShrink/flexBasis props", () => {
+		const childA = jsx("Box", { width: 20, flexShrink: 0 });
+		const childB = jsx("Box", { flexGrow: 1, flexBasis: 0 });
+		const root = jsxs("Box", {
+			width: 80,
+			height: 10,
+			flexDirection: "row",
+			children: [childA, childB],
+		});
+		const app = createMockApp();
+		const instance = render(root, app);
+
+		ffi.tui_render();
+		const rootHandle = instance.widget.handle;
+		const aHandle = getChildAt(rootHandle, 0);
+		const bHandle = getChildAt(rootHandle, 1);
+		const aLayout = getLayout(aHandle);
+		const bLayout = getLayout(bHandle);
+
+		expect(aLayout.w).toBe(20);
+		expect(bLayout.w).toBe(60);
+
+		unmount(instance);
 	});
 
 	test("mounts children in declaration order", () => {

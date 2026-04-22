@@ -2,9 +2,9 @@ name: CI — Tests, Benchmarks, and Quality Gates
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [master, "claude/**"]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
@@ -75,7 +75,10 @@ jobs:
       - name: Run JSX reconciler tests
         run: bun test ts/test-jsx.test.ts
 
-      - name: Check bundle budget (< 50KB)
+      - name: Run example replay tests
+        run: bun test ts/test-examples.test.ts
+
+      - name: Check bundle budget (< 75KB)
         run: bun run ts/check-bundle.ts
 
   # ── Host Benchmarks ──────────────────────────────────────────────────────
@@ -106,4 +109,4 @@ jobs:
     needs: [native-tests, native-benchmarks, host-tests, host-benchmarks]
     steps:
       - name: All gates passed
-        run: echo "All v3 quality gates passed."
+        run: echo "All v4 quality gates passed."

@@ -6,10 +6,26 @@
  */
 
 import { Widget } from "../widget";
+import { ptr } from "bun:ffi";
+import { ffi } from "../ffi";
 import { ScrollBox } from "../widgets/scrollbox";
 import { Text } from "../widgets/text";
 import { Box } from "../widgets/box";
 import { SplitPane } from "../widgets/splitpane";
+
+function terminalDisplayWidth(text: string): number {
+	if (text.length === 0) {
+		return 0;
+	}
+	const encoded = new TextEncoder().encode(text);
+	const out = new Int32Array(1);
+	const result = ffi.tui_measure_text(ptr(encoded), encoded.length, out);
+	if (result < 0) {
+		// Keep CodeView resilient even if measurement fails unexpectedly.
+		return text.length;
+	}
+	return out[0] ?? 0;
+}
 
 // ============================================================================
 // CodeView
@@ -34,9 +50,11 @@ export class CodeView {
 	private showLineNumbers: boolean;
 	private currentContent: string = "";
 	private currentLanguage: string = "";
+	private bgColor: string | number | undefined;
 
 	constructor(options: CodeViewOptions = {}) {
 		this.showLineNumbers = options.lineNumbers ?? false;
+		this.bgColor = options.bg;
 
 		this.scrollBox = new ScrollBox({
 			width: options.width ?? "100%",
@@ -46,11 +64,11 @@ export class CodeView {
 			bg: options.bg,
 		});
 
-		this.container = new Box({ width: "100%", height: "100%" });
+		this.container = new Box({ width: "100%", height: "100%", bg: options.bg });
 		this.container.setFlexDirection("row");
 
 		if (this.showLineNumbers) {
-			this.gutterText = new Text({ fg: options.fg ?? "#888888" });
+			this.gutterText = new Text({ fg: options.fg ?? "#888888", bg: options.bg });
 			this.gutterText.setWidth(4);
 			this.container.append(this.gutterText);
 		}
@@ -59,6 +77,7 @@ export class CodeView {
 			format: "code",
 			language: options.language,
 			fg: options.fg,
+			bg: options.bg,
 		});
 		this.codeText.setWidth("100%");
 		this.container.append(this.codeText);
@@ -82,16 +101,7 @@ export class CodeView {
 			this.codeText.setCodeLanguage(language);
 		}
 		this.codeText.setContent(code);
-
-		if (this.showLineNumbers && this.gutterText) {
-			const lineCount = code.split("\n").length;
-			const width = Math.max(3, String(lineCount).length + 1);
-			this.gutterText.setWidth(width);
-			const gutter = Array.from({ length: lineCount }, (_, i) =>
-				String(i + 1).padStart(width - 1),
-			).join("\n");
-			this.gutterText.setContent(gutter);
-		}
+		this.updateMeasuredLayout();
 	}
 
 	/** Toggle line number display. */
@@ -100,19 +110,16 @@ export class CodeView {
 		this.showLineNumbers = show;
 
 		if (show && !this.gutterText) {
-			this.gutterText = new Text({ fg: "#888888" });
+			this.gutterText = new Text({ fg: "#888888", bg: this.bgColor });
 			this.gutterText.setWidth(4);
-			// Insert gutter before code text
 			this.container.insertChild(this.gutterText, 0);
-			// Re-apply content to generate gutter
-			if (this.currentContent) {
-				this.setContent(this.currentContent, this.currentLanguage);
-			}
 		} else if (!show && this.gutterText) {
 			this.container.removeChild(this.gutterText);
 			this.gutterText.destroySubtree();
 			this.gutterText = null;
 		}
+
+		this.updateMeasuredLayout();
 	}
 
 	/** Get the current content. */
@@ -123,6 +130,32 @@ export class CodeView {
 	/** Get the current language. */
 	getLanguage(): string {
 		return this.currentLanguage;
+	}
+
+	private updateMeasuredLayout(): void {
+		const lines = this.currentContent.split("\n");
+		const lineCount = lines.length;
+		// Use the longest line width so text never wraps; the ScrollBox
+		// provides horizontal scrolling for lines that exceed viewport width.
+		const maxLineWidth = lines.reduce((max, line) => Math.max(max, terminalDisplayWidth(line)), 0);
+
+		const gutterWidth = this.showLineNumbers && this.gutterText
+			? Math.max(3, String(lineCount).length + 1)
+			: 0;
+
+		this.container.setHeight(lineCount);
+		this.container.setWidth(gutterWidth + maxLineWidth);
+		this.codeText.setHeight(lineCount);
+		this.codeText.setWidth(maxLineWidth);
+
+		if (this.showLineNumbers && this.gutterText) {
+			this.gutterText.setWidth(gutterWidth);
+			this.gutterText.setHeight(lineCount);
+			const gutter = Array.from({ length: lineCount }, (_, i) =>
+				String(i + 1).padStart(gutterWidth - 1),
+			).join("\n");
+			this.gutterText.setContent(gutter);
+		}
 	}
 }
 
@@ -226,6 +259,12 @@ export class DiffView {
 	/** Get the current diff mode. */
 	getMode(): DiffMode {
 		return this.mode;
+	}
+
+	setLineNumbers(show: boolean): void {
+		this.leftView.setLineNumbers(show);
+		this.rightView?.setLineNumbers(show);
+		this.unifiedView?.setLineNumbers(show);
 	}
 }
 

@@ -77,6 +77,22 @@ export function createLoop(options: LoopOptions): Loop {
 	let running = false;
 
 	async function start(): Promise<void> {
+		// Audit mode: run a small deterministic number of ticks and exit, so
+		// examples can populate replay/log state headlessly without requiring a
+		// real event loop or input source.
+		if (process.env.KRAKEN_AUDIT_RENDER_ONCE === "1") {
+			const rawAuditTicks = Number.parseInt(process.env.KRAKEN_AUDIT_TICKS ?? "6", 10);
+			const auditTicks = Number.isFinite(rawAuditTicks) && rawAuditTicks > 0 ? rawAuditTicks : 6;
+			for (let tick = 0; tick < auditTicks; tick++) {
+				for (const event of app.drainEvents()) {
+					onEvent?.(event);
+					if (jsxDispatch) dispatchToJsxHandlers(event);
+				}
+				onTick?.();
+				app.render();
+			}
+			return;
+		}
 		running = true;
 		while (running) {
 			const animating =

@@ -43,13 +43,34 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                         if let Some(overlay_handle) =
                             find_dismissable_overlay_ancestor(ctx, focused_handle)
                         {
-                            if let Some(node) = ctx.nodes.get_mut(&overlay_handle) {
+                            let restore_focus = ctx
+                                .nodes
+                                .get_mut(&overlay_handle)
+                                .and_then(|node| node.overlay_state.as_mut())
+                                .and_then(|overlay| overlay.restore_focus.take());
+                            let taffy_node = if let Some(node) = ctx.nodes.get_mut(&overlay_handle)
+                            {
                                 if let Some(ref mut ov) = node.overlay_state {
                                     ov.open = false;
                                     node.dirty = true;
                                 }
+                                Some(node.taffy_node)
+                            } else {
+                                None
+                            };
+                            if let Some(tn) = taffy_node {
+                                if let Ok(s) = ctx.tree.style(tn) {
+                                    let mut style = s.clone();
+                                    style.display = taffy::Display::None;
+                                    let _ = ctx.tree.set_style(tn, style);
+                                }
                             }
-                            // Emit change event (data[0] = 0 meaning closed)
+                            crate::tree::clear_focus_if_under(ctx, overlay_handle);
+                            if ctx.focused.is_none() {
+                                if let Some(restore_handle) = restore_focus {
+                                    restore_focus_handle(ctx, restore_handle);
+                                }
+                            }
                             ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
                             count += 1;
                             continue;
@@ -63,55 +84,54 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                 if let Some(focused_handle) = ctx.focused {
                     let focused_type = ctx.nodes.get(&focused_handle).map(|n| n.node_type);
                     match focused_type {
-                        Some(crate::types::NodeType::Input) => {
-                            if handle_input_key(ctx, focused_handle, code, character) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Input)
+                            if handle_input_key(ctx, focused_handle, code, character) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::TextArea) => {
-                            if handle_textarea_key(ctx, focused_handle, code, character) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::TextArea)
+                            if handle_textarea_key(ctx, focused_handle, code, character) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Select) => {
-                            if handle_select_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Select)
+                            if handle_select_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Table) => {
-                            if handle_table_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Table)
+                            if handle_table_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::List) => {
-                            if handle_list_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::List)
+                            if handle_list_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Tabs) => {
-                            if handle_tabs_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Tabs)
+                            if handle_tabs_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::Transcript) => {
-                            if let Ok(true) =
-                                crate::transcript::handle_key(ctx, focused_handle, code)
-                            {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::Transcript)
+                            if crate::transcript::handle_key(ctx, focused_handle, code)
+                                == Ok(true) =>
+                        {
+                            count += 1;
+                            continue;
                         }
-                        Some(crate::types::NodeType::SplitPane) => {
-                            if crate::splitpane::handle_key(ctx, focused_handle, code) {
-                                count += 1;
-                                continue;
-                            }
+                        Some(crate::types::NodeType::SplitPane)
+                            if crate::splitpane::handle_key(ctx, focused_handle, code) =>
+                        {
+                            count += 1;
+                            continue;
                         }
                         _ => {}
                     }
@@ -187,49 +207,10 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                     }
                 }
 
-                // Left-click on SplitPane divider: reposition divider (ADR-T35)
-                // Only triggers when the click lands on or adjacent to the divider strip,
-                // not on arbitrary descendant widgets inside the panes.
-                if button == 0 {
-                    if let Some((sp_handle, _divider_pos, pane_size)) =
-                        find_splitpane_divider_hit(ctx, x, y)
-                    {
-                        if pane_size > 0 {
-                            // Compute click position relative to the content
-                            // area (inside border) so the ratio matches the
-                            // rendered divider position.
-                            let resolved_sp = crate::style::resolve_style(sp_handle, ctx);
-                            let sp_border: f32 =
-                                if resolved_sp.border_style != crate::types::BorderStyle::None {
-                                    1.0
-                                } else {
-                                    0.0
-                                };
-                            let click_along_axis = match ctx
-                                .nodes
-                                .get(&sp_handle)
-                                .and_then(|n| n.split_pane_state.as_ref())
-                                .map(|s| s.axis)
-                            {
-                                Some(crate::types::SplitAxis::Horizontal) => {
-                                    let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((x as f32) - abs.0 - sp_border).max(0.0) as u16
-                                }
-                                Some(crate::types::SplitAxis::Vertical) => {
-                                    let abs = compute_absolute_position(ctx, sp_handle);
-                                    ((y as f32) - abs.1 - sp_border).max(0.0) as u16
-                                }
-                                None => 0,
-                            };
-                            crate::splitpane::handle_mouse(
-                                ctx,
-                                sp_handle,
-                                click_along_axis,
-                                pane_size,
-                            );
-                        }
-                    }
-                }
+                // Left-click on SplitPane divider: disabled.
+                // Terminal mouse events don't distinguish click from drag,
+                // so single clicks were jumping the divider. Use keyboard
+                // resize instead (Shift+Arrow when SplitPane is focused).
 
                 // Scroll events (buttons 3-4) on Transcript or ScrollBox
                 if button == 3 || button == 4 {
@@ -792,6 +773,54 @@ pub(crate) fn maybe_emit_accessibility_event(ctx: &mut TuiContext, new_focus: u3
     }
 }
 
+/// Restore focus to a specific handle when it is still a valid visible target.
+pub(crate) fn restore_focus_handle(ctx: &mut TuiContext, restore_handle: u32) -> bool {
+    let can_restore = ctx
+        .nodes
+        .get(&restore_handle)
+        .is_some_and(|node| node.focusable)
+        && crate::tree::is_effectively_visible(ctx, restore_handle);
+    if !can_restore {
+        return false;
+    }
+
+    let old_focus = ctx.focused.unwrap_or(0);
+    ctx.focused = Some(restore_handle);
+    if old_focus != restore_handle {
+        ctx.event_buffer
+            .push(TuiEvent::focus_change(old_focus, restore_handle));
+        maybe_emit_accessibility_event(ctx, restore_handle);
+    }
+    true
+}
+
+/// Restore focus after the previously focused widget became unavailable.
+/// Picks the first remaining focusable node in depth-first order and emits
+/// the expected FocusChange / Accessibility events. If nothing is focusable,
+/// emits a FocusChange to 0.
+pub(crate) fn refocus_after_loss(ctx: &mut TuiContext, old_focus: u32) {
+    let focusable_order = collect_focusable_order(ctx);
+    if let Some(&new_focus) = focusable_order.first() {
+        ctx.focused = Some(new_focus);
+        ctx.event_buffer
+            .push(TuiEvent::focus_change(old_focus, new_focus));
+        if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+            let detail = format!("Focus({old_focus}->{new_focus})");
+            crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, new_focus, detail);
+        }
+        maybe_emit_accessibility_event(ctx, new_focus);
+    } else {
+        ctx.focused = None;
+        if old_focus != 0 {
+            ctx.event_buffer.push(TuiEvent::focus_change(old_focus, 0));
+            if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+                let detail = format!("Focus({old_focus}->0)");
+                crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, 0, detail);
+            }
+        }
+    }
+}
+
 /// Advance focus to the next focusable node (depth-first tree order).
 pub(crate) fn focus_next(ctx: &mut TuiContext) {
     let focusable_order = collect_focusable_order(ctx);
@@ -852,16 +881,13 @@ pub(crate) fn focus_prev(ctx: &mut TuiContext) {
 }
 
 /// Collect focusable nodes in depth-first tree order.
-/// If the currently focused node is inside a modal open overlay,
-/// only nodes within that overlay's subtree are returned (focus trapping).
+/// If any modal open overlay is active, only nodes within that overlay's
+/// subtree are returned (focus trapping).
 fn collect_focusable_order(ctx: &TuiContext) -> Vec<u32> {
-    // Check if focus is inside a modal overlay — if so, trap focus within it.
-    if let Some(focused) = ctx.focused {
-        if let Some(modal_root) = find_modal_overlay_ancestor(ctx, focused) {
-            let mut result = Vec::new();
-            collect_focusable_recursive(ctx, modal_root, &mut result);
-            return result;
-        }
+    if let Some(modal_root) = find_active_modal_root(ctx) {
+        let mut result = Vec::new();
+        collect_focusable_recursive(ctx, modal_root, &mut result);
+        return result;
     }
 
     let mut result = Vec::new();
@@ -880,6 +906,15 @@ fn collect_focusable_recursive(ctx: &TuiContext, handle: u32, result: &mut Vec<u
         if node.node_type == NodeType::Overlay {
             if let Some(ref ov) = node.overlay_state {
                 if !ov.open {
+                    return;
+                }
+            }
+        }
+        // After at least one render, skip nodes whose computed layout has
+        // collapsed to zero area so focus cannot land in invisible panes.
+        if ctx.frame_seq > 0 {
+            if let Ok((_, _, width, height)) = crate::layout::get_layout(ctx, handle) {
+                if width <= 0 || height <= 0 {
                     return;
                 }
             }
@@ -923,6 +958,46 @@ fn find_modal_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
         }
         current = node.parent?;
     }
+}
+
+/// Find the top-most active modal overlay in tree/render order.
+fn find_active_modal_root(ctx: &TuiContext) -> Option<u32> {
+    let root = ctx.root?;
+    find_active_modal_root_recursive(ctx, root)
+}
+
+fn find_active_modal_root_recursive(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let node = ctx.nodes.get(&handle)?;
+    if !node.visible {
+        return None;
+    }
+    if node.node_type == NodeType::Overlay {
+        if let Some(ref ov) = node.overlay_state {
+            if !ov.open {
+                return None;
+            }
+        }
+    }
+
+    let mut active = None;
+    for &child in &node.children {
+        if let Some(child_modal) = find_active_modal_root_recursive(ctx, child) {
+            active = Some(child_modal);
+        }
+    }
+    if active.is_some() {
+        return active;
+    }
+
+    if node.node_type == NodeType::Overlay {
+        if let Some(ref ov) = node.overlay_state {
+            if ov.modal && ov.open {
+                return Some(handle);
+            }
+        }
+    }
+
+    None
 }
 
 /// Check if `handle` is a descendant of `ancestor`.
@@ -979,6 +1054,7 @@ fn find_transcript_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
 /// Returns (splitpane_handle, divider_position, pane_size_along_axis) if the click
 /// is on or within ±1 cell of the divider line. Returns None otherwise, so that
 /// clicks on child widgets inside the panes are not intercepted.
+#[allow(dead_code)]
 fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, u16, u16)> {
     // Walk the tree looking for SplitPane nodes where the click is near the divider.
     // We check from root down so we find the outermost matching SplitPane first.
@@ -1068,6 +1144,7 @@ fn find_splitpane_divider_hit(ctx: &TuiContext, x: u16, y: u16) -> Option<(u32, 
 
 /// Compute the absolute screen position of a node by walking up the parent chain
 /// and accumulating Taffy layout offsets plus render offsets.
+#[allow(dead_code)]
 fn compute_absolute_position(ctx: &TuiContext, handle: u32) -> (f32, f32) {
     let mut x = 0.0_f32;
     let mut y = 0.0_f32;
@@ -1099,6 +1176,7 @@ mod tests {
     use crate::terminal::MockBackend;
     use crate::tree;
     use crate::types::{NodeType, TuiEventType};
+    use taffy::style_helpers::{length, percent};
 
     fn test_ctx() -> TuiContext {
         TuiContext::new(Box::new(MockBackend::new(80, 24)))
@@ -1128,6 +1206,59 @@ mod tests {
 
         focus_prev(&mut ctx);
         assert_eq!(ctx.focused, Some(input2));
+    }
+
+    #[test]
+    fn test_focus_order_skips_zero_width_splitpane_descendants() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let splitpane = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let left = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let left_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let right = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let right_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let outside_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, splitpane).unwrap();
+        tree::append_child(&mut ctx, root, outside_input).unwrap();
+        tree::append_child(&mut ctx, splitpane, left).unwrap();
+        tree::append_child(&mut ctx, left, left_input).unwrap();
+        tree::append_child(&mut ctx, splitpane, right).unwrap();
+        tree::append_child(&mut ctx, right, right_input).unwrap();
+        ctx.root = Some(root);
+
+        {
+            let root_taffy = ctx.nodes[&root].taffy_node;
+            let mut style = ctx.tree.style(root_taffy).unwrap().clone();
+            style.size.width = length(80.0);
+            style.size.height = length(24.0);
+            style.flex_direction = taffy::FlexDirection::Column;
+            ctx.tree.set_style(root_taffy, style).unwrap();
+        }
+        for handle in [left, left_input, right, right_input] {
+            let taffy = ctx.nodes[&handle].taffy_node;
+            let mut style = ctx.tree.style(taffy).unwrap().clone();
+            style.size.width = percent(1.0);
+            style.size.height = percent(1.0);
+            ctx.tree.set_style(taffy, style).unwrap();
+        }
+        {
+            let taffy = ctx.nodes[&outside_input].taffy_node;
+            let mut style = ctx.tree.style(taffy).unwrap().clone();
+            style.size.width = length(10.0);
+            style.size.height = length(1.0);
+            ctx.tree.set_style(taffy, style).unwrap();
+        }
+
+        crate::splitpane::set_ratio(&mut ctx, splitpane, 0).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+        ctx.frame_seq = 1;
+
+        let (_, _, width, _) = crate::layout::get_layout(&ctx, left_input).unwrap();
+        assert_eq!(width, 0);
+
+        let order = collect_focusable_order(&ctx);
+        assert_eq!(order, vec![outside_input]);
     }
 
     #[test]
@@ -1925,6 +2056,108 @@ mod tests {
         assert_eq!(event.event_type, TuiEventType::Change as u32);
         assert_eq!(event.target, overlay);
         assert_eq!(event.data[0], 0); // closed
+    }
+
+    #[test]
+    fn test_escape_dismisses_overlay_and_restores_focus() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let previous = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, previous).unwrap();
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .restore_focus = Some(previous);
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(ctx.focused, Some(previous));
+
+        let focus_event = next_event(&mut ctx).unwrap();
+        assert_eq!(focus_event.event_type, TuiEventType::FocusChange as u32);
+        assert_eq!(focus_event.data[1], previous);
+
+        let overlay_event = next_event(&mut ctx).unwrap();
+        assert_eq!(overlay_event.event_type, TuiEventType::Change as u32);
+        assert_eq!(overlay_event.target, overlay);
+    }
+
+    #[test]
+    fn test_escape_dismiss_does_not_restore_focus_into_hidden_parent() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let hidden_panel = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let previous = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, hidden_panel).unwrap();
+        tree::append_child(&mut ctx, hidden_panel, previous).unwrap();
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes.get_mut(&hidden_panel).unwrap().visible = false;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .restore_focus = Some(previous);
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(ctx.focused, None);
+
+        let overlay_event = next_event(&mut ctx).unwrap();
+        assert_eq!(overlay_event.event_type, TuiEventType::Change as u32);
+        assert_eq!(overlay_event.target, overlay);
+        assert!(next_event(&mut ctx).is_none());
     }
 
     #[test]

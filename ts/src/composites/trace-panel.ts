@@ -50,7 +50,7 @@ export class TracePanel {
 		return this.transcript;
 	}
 
-	/** Append a trace entry. Always appended to transcript; collapsed if filtered out. */
+	/** Append a trace entry. Always appended to transcript; hidden if filtered out. */
 	appendTrace(kind: TraceKind, content: string): void {
 		const id = this.nextId++;
 		this.entries.push({ id, kind, content });
@@ -64,13 +64,13 @@ export class TracePanel {
 		});
 		this.transcript.finishBlock(id);
 
-		// Collapse if it doesn't match the current filter
+		// Hide if it doesn't match the current filter
 		if (this.filter !== "all" && this.filter !== kind) {
-			this.transcript.setCollapsed(id, true);
+			this.transcript.setHidden(id, true);
 		}
 	}
 
-	/** Set the filter. Updates collapsed state on all existing blocks. */
+	/** Set the filter. Updates hidden state on all existing blocks. */
 	setFilter(kind: TraceKind): void {
 		this.filter = kind;
 		this.rebuild();
@@ -91,6 +91,13 @@ export class TracePanel {
 		this.transcript.setFollowMode("manual");
 	}
 
+	/** Clear all trace entries and the underlying transcript. */
+	clear(): void {
+		this.entries = [];
+		this.nextId = 1;
+		this.transcript.clear();
+	}
+
 	/** Get the total number of trace entries (unfiltered). */
 	getEntryCount(): number {
 		return this.entries.length;
@@ -103,12 +110,12 @@ export class TracePanel {
 	}
 
 	private rebuild(): void {
-		// Update collapsed state for every block based on the new filter.
-		// Blocks that match the filter are uncollapsed; non-matching blocks are collapsed.
-		// This preserves transcript anchor correctness (no blocks are deleted/recreated).
+		// Update hidden state for every block based on the new filter.
+		// Blocks that match the filter stay visible; non-matching blocks are
+		// hidden without repurposing transcript collapse semantics.
 		for (const entry of this.entries) {
 			const shouldShow = this.filter === "all" || this.filter === entry.kind;
-			this.transcript.setCollapsed(entry.id, !shouldShow);
+			this.transcript.setHidden(entry.id, !shouldShow);
 		}
 	}
 }
@@ -177,7 +184,7 @@ export class StructuredLogView {
 		return this.transcript;
 	}
 
-	/** Append a structured log entry. Always appended; collapsed if filtered out. */
+	/** Append a structured log entry. Always appended; hidden if filtered out. */
 	appendLog(entry: StructuredLogEntry): void {
 		const id = this.nextId++;
 		this.trackedEntries.push({ blockId: id, entry });
@@ -196,9 +203,9 @@ export class StructuredLogView {
 		this.transcript.appendBlock({ id, kind, role, content });
 		this.transcript.finishBlock(id);
 
-		// Collapse if it doesn't match the current filter
+		// Hide if it doesn't match the current filter
 		if (!this.matchesFilter(entry)) {
-			this.transcript.setCollapsed(id, true);
+			this.transcript.setHidden(id, true);
 		}
 	}
 
@@ -229,6 +236,12 @@ export class StructuredLogView {
 		return this.trackedEntries.length;
 	}
 
+	/** Get the number of entries matching the current filter. */
+	getVisibleCount(): number {
+		if (this.filter === null) return this.trackedEntries.length;
+		return this.trackedEntries.filter(t => this.matchesFilter(t.entry)).length;
+	}
+
 	private matchesFilter(entry: StructuredLogEntry): boolean {
 		if (this.filter === null) return true;
 		if (typeof this.filter === "string") return entry.level === this.filter;
@@ -236,10 +249,10 @@ export class StructuredLogView {
 	}
 
 	private rebuildVisibility(): void {
-		// Update collapsed state for every block based on the new filter.
+		// Update hidden state for every block based on the new filter.
 		for (const tracked of this.trackedEntries) {
 			const shouldShow = this.matchesFilter(tracked.entry);
-			this.transcript.setCollapsed(tracked.blockId, !shouldShow);
+			this.transcript.setHidden(tracked.blockId, !shouldShow);
 		}
 	}
 }

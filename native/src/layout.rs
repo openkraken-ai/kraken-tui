@@ -145,6 +145,15 @@ pub(crate) fn set_flex(
                 _ => return Err(format!("Invalid position: {value}")),
             };
         }
+        7 => {
+            let ov = match value {
+                0 => taffy::Overflow::Visible,
+                1 => taffy::Overflow::Hidden,
+                2 => taffy::Overflow::Scroll,
+                _ => return Err(format!("Invalid overflow: {value}")),
+            };
+            style.overflow = taffy::Point { x: ov, y: ov };
+        }
         _ => return Err(format!("Invalid flex property: {prop}")),
     }
 
@@ -238,6 +247,41 @@ pub(crate) fn set_gap(
     Ok(())
 }
 
+/// Set flex_grow, flex_shrink, or a fixed flex_basis length on a node.
+/// prop: 0 = flex_grow, 1 = flex_shrink, 2 = flex_basis.
+pub(crate) fn set_flex_factor(
+    ctx: &mut TuiContext,
+    handle: u32,
+    prop: u32,
+    value: f32,
+) -> Result<(), String> {
+    let taffy_node = ctx
+        .nodes
+        .get(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?
+        .taffy_node;
+
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
+        .map_err(|e| format!("Failed to read style: {e:?}"))?
+        .clone();
+
+    match prop {
+        0 => style.flex_grow = value,
+        1 => style.flex_shrink = value,
+        2 => style.flex_basis = taffy::Dimension::length(value),
+        _ => return Err(format!("Invalid flex_factor property: {prop}")),
+    }
+
+    ctx.tree
+        .set_style(taffy_node, style)
+        .map_err(|e| format!("Failed to set style: {e:?}"))?;
+
+    crate::tree::mark_dirty(ctx, handle);
+    Ok(())
+}
+
 /// Compute layout from root with the given available space.
 pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
     let root_handle = ctx.root.ok_or("No root set. Call tui_set_root() first.")?;
@@ -260,10 +304,10 @@ pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
         .compute_layout(root_taffy, avail)
         .map_err(|e| format!("Layout computation failed: {e:?}"))?;
 
-    // After the first layout pass, re-sync SplitPane children whose min-size
-    // constraints may now exceed their computed container size (e.g. after a
-    // terminal resize).  If any SplitPane was adjusted, run a second layout
-    // pass so Taffy sees the clamped min values.
+    // After the first layout pass, re-sync SplitPane children using the real
+    // computed container sizes. This locks ratios to exact cell counts instead
+    // of percentage/autobasis guesses, and a second pass lets nested
+    // SplitPanes settle after their parents' sizes change.
     let splitpane_handles: Vec<u32> = ctx
         .nodes
         .iter()
@@ -271,13 +315,16 @@ pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
         .map(|(h, _)| *h)
         .collect();
 
-    let mut needs_relayout = false;
-    for sp_handle in &splitpane_handles {
-        if resync_splitpane_if_needed(ctx, *sp_handle)? {
-            needs_relayout = true;
+    for _ in 0..2 {
+        let mut needs_relayout = false;
+        for sp_handle in &splitpane_handles {
+            if resync_splitpane_if_needed(ctx, *sp_handle)? {
+                needs_relayout = true;
+            }
         }
-    }
-    if needs_relayout {
+        if !needs_relayout {
+            break;
+        }
         ctx.tree
             .compute_layout(root_taffy, avail)
             .map_err(|e| format!("Layout re-computation failed: {e:?}"))?;
@@ -289,44 +336,22 @@ pub(crate) fn compute_layout(ctx: &mut TuiContext) -> Result<(), String> {
     Ok(())
 }
 
-/// Check whether a SplitPane's min-size constraints overflow its computed size.
-/// If so, re-sync its children (which clamps the effective mins) and return true.
+/// Re-sync a SplitPane's child styles using its computed size.
+/// Returns true when a second layout pass should be run.
 fn resync_splitpane_if_needed(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
-    let (axis, min_p, min_s, taffy_node) = {
+    let has_two_children = {
         let node = match ctx.nodes.get(&handle) {
             Some(n) => n,
             None => return Ok(false),
         };
-        let state = match node.split_pane_state.as_ref() {
-            Some(s) => s,
-            None => return Ok(false),
-        };
-        (
-            state.axis,
-            state.min_primary,
-            state.min_secondary,
-            node.taffy_node,
-        )
+        node.split_pane_state.is_some() && node.children.len() >= 2
     };
-
-    let available = ctx
-        .tree
-        .layout(taffy_node)
-        .map(|l| match axis {
-            crate::types::SplitAxis::Horizontal => l.size.width,
-            crate::types::SplitAxis::Vertical => l.size.height,
-        })
-        .unwrap_or(0.0);
-
-    let usable = (available - 1.0).max(0.0);
-    let total_min = (min_p as f32) + (min_s as f32);
-
-    if usable > 0.0 && total_min > usable {
-        crate::splitpane::sync_children_layout(ctx, handle)?;
-        Ok(true)
-    } else {
-        Ok(false)
+    if !has_two_children {
+        return Ok(false);
     }
+
+    crate::splitpane::sync_children_layout(ctx, handle)?;
+    Ok(true)
 }
 
 /// Get the computed layout for a node (x, y, width, height).

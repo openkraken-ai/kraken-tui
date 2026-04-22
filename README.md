@@ -113,7 +113,7 @@ app.shutdown();
 ## Quality and Budgets
 
 ```bash
-# Bundle budget (<50KB target for core TS package)
+# Bundle budget (<75KB target for core TS package)
 bun run ts/check-bundle.ts
 
 # FFI benchmark

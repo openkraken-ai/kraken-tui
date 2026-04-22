@@ -73,6 +73,10 @@ pub(crate) fn set_flag(
 }
 
 /// Set the border style on a node.
+///
+/// Also updates Taffy's `style.border` so child widgets are laid out inside
+/// the border instead of underneath it.  Without this coupling, a bordered
+/// Box would render its children on top of the border glyphs.
 pub(crate) fn set_border(
     ctx: &mut TuiContext,
     handle: u32,
@@ -81,14 +85,33 @@ pub(crate) fn set_border(
     let bs = BorderStyle::from_u8(border_style)
         .ok_or_else(|| format!("Invalid border style: {border_style}"))?;
 
-    let node = ctx
-        .nodes
-        .get_mut(&handle)
-        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    let taffy_node = {
+        let node = ctx
+            .nodes
+            .get_mut(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        node.visual_style.border_style = bs;
+        node.visual_style.style_mask |= VisualStyle::MASK_BORDER_STYLE;
+        node.dirty = true;
+        node.taffy_node
+    };
 
-    node.visual_style.border_style = bs;
-    node.visual_style.style_mask |= VisualStyle::MASK_BORDER_STYLE;
-    node.dirty = true;
+    let mut style = ctx
+        .tree
+        .style(taffy_node)
+        .map_err(|e| format!("Failed to read style: {e:?}"))?
+        .clone();
+    let thickness = if bs == BorderStyle::None { 0.0 } else { 1.0 };
+    style.border = taffy::Rect {
+        left: taffy::LengthPercentage::length(thickness),
+        right: taffy::LengthPercentage::length(thickness),
+        top: taffy::LengthPercentage::length(thickness),
+        bottom: taffy::LengthPercentage::length(thickness),
+    };
+    ctx.tree
+        .set_style(taffy_node, style)
+        .map_err(|e| format!("Failed to set style: {e:?}"))?;
+
     Ok(())
 }
 
