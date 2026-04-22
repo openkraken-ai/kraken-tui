@@ -83,6 +83,8 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/ops-
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/repo-inspector.ts
 ```
 
+These example entrypoints go through `Kraken.init()` and the normal runtime resolver. If you have staged `ts/prebuilds/...` artifacts and want example runs to validate the freshly built branch binary specifically, set `KRAKEN_LIB_PATH` to the matching file under `native/target/release/` before running them.
+
 Other examples:
 
 ```bash

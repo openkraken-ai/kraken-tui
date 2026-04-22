@@ -1,21 +1,21 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.1.0 - Archived the completed docs-normalization wave and marked the active plan as intentionally idle until a post-v4 backlog is ratified.
 - v7.0.0 - Reframed the plan around active versus archived scope, made documentation-chain normalization the current maintenance wave, and preserved the completed v4 execution record as archived continuity.
 - v6.0.0 - Planned the transcript, devtools, split-pane, and flagship-example execution wave.
 - v5.0.0 - Preserved the earlier v3 planning wave prior to the v4 focus reset.
 - ... [Older history truncated, refer to git logs]
 
 ## 1. Executive Summary & Active Critical Path
-- **Total Active Story Points:** 8
-- **Critical Path:** `DOCS-A001 -> DOCS-A002 -> DOCS-A003`
-- **Planning Assumptions:** The transcript/devtools/split-pane/flagship-example wave is already implemented and is now archived context. The active scope in this revision is documentation-chain normalization and source-truth reconciliation, not a new product feature wave. Post-v4 product work remains unratified until the canonical docs chain is trustworthy again.
+- **Total Active Story Points:** 0
+- **Critical Path:** None - no post-v4 backlog is currently ratified in this file
+- **Planning Assumptions:** The transcript/devtools/split-pane/flagship-example wave is already implemented and is archived context. The docs-normalization/source-truth wave is also complete. No new post-v4 engineering backlog has been ratified yet, so this artifact should currently be read as a clean archive boundary rather than an active execution queue.
 
 ## 2. Project Phasing & Iteration Strategy
 ### Current Active Scope
-- Normalize `PRD.md`, `Architecture.md`, `TechSpec.md`, and `Tasks.md` to the current four-stage framework skeletons.
-- Verify that the rewrite preserves glossary terms, scope boundaries, delivered capabilities, ADR intent, and the detailed v4 execution record.
-- Reconcile the canonical docs chain with the current source tree, tests, examples, and release workflows.
+- No active post-v4 implementation or maintenance epic is ratified at this time.
+- The next active scope should begin only after a new product or hardening backlog is explicitly approved upstream.
 
 ### Future / Deferred Scope
 - Ratify the first post-v4 product backlog only after the canonical docs chain is stable again.
@@ -23,6 +23,7 @@
 - Preserve previously deferred product items: no native promotion of code/diff surfaces without measured pressure, no default background-render promotion, no packaging-first rewrite, and no additional TextArea expansion without reprioritization.
 
 ### Archived or Already Completed Scope
+- The v7 docs-maintenance wave completed `DOCS-A001` through `DOCS-A003`: canonical artifact normalization, preservation review, and source-truth reconciliation.
 - Epics I-L delivered native transcript state, anchor-based viewport behavior, nested scroll handoff, devtools APIs, host inspector surfaces, split-pane layout, transcript-backed composites, and flagship examples.
 - The archived planning wave also delivered replay fixtures, golden coverage, and example-driven performance gates.
 - Detailed archived tickets, acceptance criteria, and the archived build-order graph are preserved below for continuity and auditability.
@@ -30,15 +31,13 @@
 ## 3. Build Order (Mermaid)
 ```mermaid
 flowchart LR
-    A001[DOCS-A001 Normalize canonical artifact structure]
-    A002[DOCS-A002 Verify preservation and archival continuity]
-    A003[DOCS-A003 Reconcile docs with source and workflows]
-
-    A001 --> A002 --> A003
+    IDLE[No active post-v4 backlog ratified]
 ```
 
 ## 4. Ticket List
-### Epic A — Documentation And Drift Control (DOCS)
+No active tickets are ratified at this time.
+
+### Archived Epic A — Documentation And Drift Control (DOCS) [Completed]
 
 **DOCS-A001 Normalize Canonical Planning Artifacts**
 - **Type:** Chore
