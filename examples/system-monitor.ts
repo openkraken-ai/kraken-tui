@@ -51,6 +51,7 @@ import {
 	createLoop,
 } from "../ts/src/index";
 import type { KrakenEvent } from "../ts/src/index";
+import { ffi } from "../ts/src/ffi";
 
 // ── System Data Readers ───────────────────────────────────────────────
 

@@ -440,10 +440,18 @@ let flatEntries: FileEntry[] = [];
 let currentFilePath = "";
 
 function refreshTree(): void {
+	const previousSelected = fileList.getSelected();
 	flatEntries = flattenTree(treeEntries);
 	fileList.clearItems();
 	for (const entry of flatEntries) {
 		fileList.addItem(formatEntryLabel(entry));
+	}
+	if (flatEntries.length > 0) {
+		const nextSelected =
+			previousSelected >= 0 && previousSelected < flatEntries.length
+				? previousSelected
+				: 0;
+		fileList.setSelected(nextSelected);
 	}
 	headerInfo.setContent(`${flatEntries.length} entries  ${repoRoot} `);
 }
@@ -493,6 +501,9 @@ function openFile(entry: FileEntry): void {
 
 // Initial tree load
 refreshTree();
+if (flatEntries.length > 0) {
+	fileList.focus();
+}
 
 // ── Status Update ────────────────────────────────────────────────────
 

@@ -14,6 +14,9 @@ import { Box } from "../widgets/box";
 import { SplitPane } from "../widgets/splitpane";
 
 function terminalDisplayWidth(text: string): number {
+	if (text.length === 0) {
+		return 0;
+	}
 	const encoded = new TextEncoder().encode(text);
 	const out = new Int32Array(1);
 	const result = ffi.tui_measure_text(ptr(encoded), encoded.length, out);

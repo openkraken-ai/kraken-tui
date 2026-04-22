@@ -3802,6 +3802,15 @@ describe("FFI integration", () => {
 				cv.getWidget().destroySubtree();
 			});
 
+			test("CodeView toggles line numbers with empty content", async () => {
+				const { CodeView } = await import("./src/composites/code-view");
+				const cv = new CodeView({ lineNumbers: true });
+				expect(() => cv.setLineNumbers(false)).not.toThrow();
+				expect(() => cv.setLineNumbers(true)).not.toThrow();
+				expect(cv.getContent()).toBe("");
+				cv.getWidget().destroySubtree();
+			});
+
 			test("CodeView recomputes width when line numbers are turned off", async () => {
 				const { CodeView } = await import("./src/composites/code-view");
 				const root = ffi.tui_create_node(0); // Box

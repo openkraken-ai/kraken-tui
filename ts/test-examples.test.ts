@@ -8,9 +8,10 @@
  * Run:  bun test ts/test-examples.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import * as publicIndex from "./src/index";
 import { Kraken } from "./src/app";
 import { Box } from "./src/widgets/box";
 import { TranscriptView } from "./src/widgets/transcript";
@@ -20,6 +21,7 @@ import { CommandPalette } from "./src/composites/command-palette";
 import { applyReplayEvent } from "./src/widgets/transcript-adapters";
 import type { TranscriptReplayEvent } from "./src/widgets/transcript-adapters";
 import type { StructuredLogEntry, LogLevel } from "./src/composites/trace-panel";
+import type { LoopOptions } from "./src/index";
 
 // ── Fixture Loading ──────────────────────────────────────────────────
 
@@ -53,6 +55,8 @@ const opsLogFixture: OpsLogFixture = JSON.parse(
 	readFileSync(resolve(FIXTURE_DIR, "ops-log-replay.json"), "utf-8"),
 );
 
+const ACTUAL_INDEX = { ...publicIndex };
+
 // ── Lifecycle ────────────────────────────────────────────────────────
 
 let app: Kraken;
@@ -62,8 +66,64 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	mock.restore();
+	mock.clearAllMocks();
 	app.shutdown();
 });
+
+interface MockedExampleContext {
+	recordedLists: Array<{ handle: number; getSelected(): number }>;
+}
+
+async function importExampleWithMockedIndex(
+	exampleFile: string,
+	onStart?: (options: LoopOptions) => Promise<void> | void,
+): Promise<MockedExampleContext> {
+	const actualIndex = ACTUAL_INDEX;
+	const recordedLists: Array<{ handle: number; getSelected(): number }> = [];
+	const originalShutdown = app.shutdown.bind(app);
+
+	class RecordedList extends actualIndex.List {
+		constructor(...args: ConstructorParameters<typeof actualIndex.List>) {
+			super(...args);
+			recordedLists.push(this);
+		}
+	}
+
+	const factory = () => ({
+		...actualIndex,
+		Kraken: {
+			...actualIndex.Kraken,
+			init: () => {
+				app.shutdown = () => {};
+				return app;
+			},
+			initHeadless: actualIndex.Kraken.initHeadless,
+		},
+		List: RecordedList,
+		createLoop: (options: LoopOptions) => ({
+			start: async () => {
+				await onStart?.(options);
+				options.onTick?.();
+				app.render();
+			},
+			stop: () => {},
+		}),
+	});
+
+	const indexModulePath = resolve(import.meta.dir, "./src/index.ts");
+	mock.module(indexModulePath, factory);
+	mock.module("./src/index", factory);
+	mock.module("../ts/src/index", factory);
+
+	const examplePath = resolve(import.meta.dir, "../examples", exampleFile);
+	try {
+		await import(`${examplePath}?test=${Date.now()}-${Math.random()}`);
+		return { recordedLists };
+	} finally {
+		app.shutdown = originalShutdown;
+	}
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // Agent Console Replay (TASK-L3)
@@ -575,6 +635,30 @@ describe("Ops Log Replay (TASK-L3)", () => {
 		logView.clearFilter();
 		app.render();
 		expect(logView.getVisibleCount()).toBe(20);
+	});
+});
+
+describe("Flagship example smoke coverage", () => {
+	test("repo-inspector initializes tree selection and focus", async () => {
+		const { recordedLists } = await importExampleWithMockedIndex("repo-inspector.ts");
+		expect(recordedLists.length).toBeGreaterThan(0);
+		const fileList = recordedLists[0]!;
+		expect(fileList.getSelected()).toBe(0);
+		expect(app.getFocused()).toBe(fileList.handle);
+	});
+
+	test("system-monitor handles a synthetic key event without throwing", async () => {
+		await expect(
+			importExampleWithMockedIndex("system-monitor.ts", async (options) => {
+				options.onEvent?.({
+					type: "key",
+					target: 0,
+					keyCode: 0,
+					modifiers: 0,
+					codepoint: "h".codePointAt(0),
+				});
+			}),
+		).resolves.toBeDefined();
 	});
 });
 
