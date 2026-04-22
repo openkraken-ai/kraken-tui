@@ -419,6 +419,31 @@ pub(crate) fn clear_focus_if_under(ctx: &mut TuiContext, handle: u32) {
     }
 }
 
+/// Check whether a node is visible through its full ancestor chain.
+/// Closed overlays count as effectively hidden even if their stored
+/// `visible` bit remains true.
+pub(crate) fn is_effectively_visible(ctx: &TuiContext, handle: u32) -> bool {
+    let mut current = Some(handle);
+    while let Some(node_handle) = current {
+        let Some(node) = ctx.nodes.get(&node_handle) else {
+            return false;
+        };
+        if !node.visible {
+            return false;
+        }
+        if node.node_type == NodeType::Overlay
+            && node
+                .overlay_state
+                .as_ref()
+                .is_some_and(|overlay| !overlay.open)
+        {
+            return false;
+        }
+        current = node.parent;
+    }
+    true
+}
+
 /// Mark a node and all its ancestors as dirty.
 pub(crate) fn mark_dirty(ctx: &mut TuiContext, handle: u32) {
     if let Some(node) = ctx.nodes.get_mut(&handle) {

@@ -6,6 +6,7 @@
  */
 
 import { ffi } from "../ffi";
+import { NodeType } from "../ffi/structs";
 import { checkResult } from "../errors";
 import { Widget } from "../widget";
 import { Overlay } from "../widgets/overlay";
@@ -194,9 +195,26 @@ export class CommandPalette {
 		}
 	}
 
+	private isEffectivelyVisible(handle: number): boolean {
+		let current = handle;
+		while (current !== 0) {
+			if (ffi.tui_get_visible(current) !== 1) {
+				return false;
+			}
+			if (
+				ffi.tui_get_node_type(current) === NodeType.Overlay &&
+				ffi.tui_overlay_get_open(current) !== 1
+			) {
+				return false;
+			}
+			current = ffi.tui_get_parent(current);
+		}
+		return true;
+	}
+
 	private canRestoreFocus(handle: number): boolean {
 		return handle !== 0 &&
-			ffi.tui_get_visible(handle) === 1 &&
+			this.isEffectivelyVisible(handle) &&
 			ffi.tui_is_focusable(handle) === 1;
 	}
 

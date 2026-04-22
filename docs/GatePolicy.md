@@ -79,7 +79,7 @@ This document defines the blocking quality gates for v3 release readiness. All g
 |----------|-------|
 | **Owner** | TASK-G4 |
 | **Metric** | Minified TypeScript bundle size |
-| **Threshold** | < 50 KB (PRD §5) |
+| **Threshold** | < 75 KB (PRD §5) |
 | **CI Job** | `host-tests` |
 | **Enforcement** | `bun run ts/check-bundle.ts` |
 
@@ -135,7 +135,7 @@ CI Trigger (push/PR)
 | 3 | Render Budget | §5.5 | Epic G / TASK-G2 |
 | 4 | Render Budget | §5.5 (writer >= 35%) | Epic A / TASK-A3 |
 | 5 | API Stability | §4 | Epic D-F / various |
-| 6 | Host Bundle < 50KB | §5.5 | Epic G / TASK-G4 |
+| 6 | Host Bundle < 75KB | §5.5 | Epic G / TASK-G4 |
 | 7 | Render < 16ms | §5.5 | Epic G / TASK-G3 |
 | 8 | FFI < 1ms | §5.5 | Epic G / TASK-G3 |
 

@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { readFileSync } from "fs";
+import { resolve } from "path";
 import { Kraken } from "./src/app";
 import { Box } from "./src/widgets/box";
 import { TranscriptView } from "./src/widgets/transcript";
@@ -42,12 +43,14 @@ interface OpsLogFixture {
 	}>;
 }
 
+const FIXTURE_DIR = resolve(import.meta.dir, "../examples/fixtures");
+
 const agentFixture: AgentFixture = JSON.parse(
-	readFileSync("examples/fixtures/agent-console-replay.json", "utf-8"),
+	readFileSync(resolve(FIXTURE_DIR, "agent-console-replay.json"), "utf-8"),
 );
 
 const opsLogFixture: OpsLogFixture = JSON.parse(
-	readFileSync("examples/fixtures/ops-log-replay.json", "utf-8"),
+	readFileSync(resolve(FIXTURE_DIR, "ops-log-replay.json"), "utf-8"),
 );
 
 // ── Lifecycle ────────────────────────────────────────────────────────

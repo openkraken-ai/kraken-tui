@@ -2615,6 +2615,29 @@ describe("FFI integration", () => {
 
 			ffi.tui_destroy_subtree(root);
 		});
+
+		test("closing overlay does not restore focus into hidden parent subtree", () => {
+			const root = ffi.tui_create_node(0);
+			const panel = ffi.tui_create_node(0);
+			const original = ffi.tui_create_node(2);
+			const overlay = ffi.tui_create_node(9);
+			const overlayInput = ffi.tui_create_node(2);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, panel)).toBe(0);
+			expect(ffi.tui_append_child(panel, original)).toBe(0);
+			expect(ffi.tui_append_child(root, overlay)).toBe(0);
+			expect(ffi.tui_append_child(overlay, overlayInput)).toBe(0);
+
+			expect(ffi.tui_focus(original)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 1)).toBe(0);
+			expect(ffi.tui_focus(overlayInput)).toBe(0);
+			expect(ffi.tui_set_visible(panel, 0)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(0);
+
+			ffi.tui_destroy_subtree(root);
+		});
 	});
 
 	describe("v3 widget leaf/container semantics", () => {
@@ -3831,15 +3854,17 @@ describe("FFI integration", () => {
 				root.destroySubtree();
 			});
 
-			test("CommandPalette does not restore focus to a hidden prior target", async () => {
+			test("CommandPalette does not restore focus to a prior target hidden by its parent", async () => {
 				const { Box } = await import("./src/widgets/box");
 				const { Input } = await import("./src/widgets/input");
 				const { CommandPalette } = await import("./src/composites/command-palette");
 
 				const root = new Box({ width: "100%", height: "100%" });
+				const panel = new Box({ width: "100%", height: 3 });
 				const input = new Input({ width: 20 });
 				input.setFocusable(true);
-				root.append(input);
+				panel.append(input);
+				root.append(panel);
 
 				const palette = new CommandPalette({
 					commands: [{ id: "noop", label: "No-op", action: () => {} }],
@@ -3851,7 +3876,7 @@ describe("FFI integration", () => {
 				palette.open();
 				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
 
-				input.setVisible(false);
+				panel.setVisible(false);
 				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
 				expect(ffi.tui_get_focused()).toBe(0);
 				expect(palette.isOpen()).toBe(false);

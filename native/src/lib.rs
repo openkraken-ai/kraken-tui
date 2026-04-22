@@ -1351,17 +1351,7 @@ pub extern "C" fn tui_overlay_set_open(handle: u32, open: u8) -> i32 {
             .map_err(|e| format!("Failed to set style: {e:?}"))?;
         if ctx.focused.is_none() {
             if let Some(restore_handle) = restore_focus {
-                if let Some(node) = ctx.nodes.get(&restore_handle) {
-                    if node.focusable && node.visible {
-                        let old = ctx.focused.unwrap_or(0);
-                        ctx.focused = Some(restore_handle);
-                        if old != restore_handle {
-                            ctx.event_buffer
-                                .push(TuiEvent::focus_change(old, restore_handle));
-                            event::maybe_emit_accessibility_event(&mut ctx, restore_handle);
-                        }
-                    }
-                }
+                event::restore_focus_handle(&mut ctx, restore_handle);
             }
         }
         Ok(0)

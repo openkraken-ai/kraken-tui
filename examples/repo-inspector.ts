@@ -69,8 +69,8 @@ const IGNORE = new Set([
 const MAX_DEPTH = 4;
 const MAX_ENTRIES = 500;
 
-function scanDirectory(dirPath: string, depth: number): FileEntry[] {
-	if (depth > MAX_DEPTH) return [];
+function scanDirectory(dirPath: string, depth: number, limit: number): FileEntry[] {
+	if (depth > MAX_DEPTH || limit <= 0) return [];
 	let entries: FileEntry[] = [];
 
 	try {
@@ -83,7 +83,7 @@ function scanDirectory(dirPath: string, depth: number): FileEntry[] {
 		});
 
 		for (const item of items) {
-			if (entries.length >= MAX_ENTRIES) break;
+			if (entries.length >= limit) break;
 			if (IGNORE.has(item.name)) continue;
 			if (item.name.startsWith(".") && item.name !== ".gitignore") continue;
 
@@ -112,10 +112,22 @@ function scanDirectory(dirPath: string, depth: number): FileEntry[] {
 	return entries;
 }
 
+function countTreeEntries(entries: FileEntry[]): number {
+	let count = 0;
+	for (const entry of entries) {
+		count++;
+		if (entry.children && entry.children.length > 0) {
+			count += countTreeEntries(entry.children);
+		}
+	}
+	return count;
+}
+
 function expandEntry(entry: FileEntry): void {
 	if (!entry.isDir || entry.expanded) return;
 	entry.expanded = true;
-	entry.children = scanDirectory(entry.path, entry.depth + 1);
+	const remainingBudget = Math.max(0, MAX_ENTRIES - countTreeEntries(treeEntries));
+	entry.children = scanDirectory(entry.path, entry.depth + 1, remainingBudget);
 }
 
 function collapseEntry(entry: FileEntry): void {
@@ -406,10 +418,15 @@ root.append(header);
 root.append(mainContentArea);
 root.append(statusBar);
 root.append(palette.getWidget());
-palette.getWidget().setMargin(
-	Math.floor(app.getTerminalSize().height * 0.25), 0, 0,
-	Math.floor(app.getTerminalSize().width * 0.20),
-);
+
+function positionPalette(width: number, height: number): void {
+	palette.getWidget().setMargin(
+		Math.floor(height * 0.25), 0, 0, Math.floor(width * 0.20),
+	);
+}
+
+const initialTermSize = app.getTerminalSize();
+positionPalette(initialTermSize.width, initialTermSize.height);
 
 // ── Set Root ─────────────────────────────────────────────────────────
 
@@ -417,7 +434,7 @@ app.setRoot(root);
 
 // ── File Tree State ──────────────────────────────────────────────────
 
-let treeEntries = scanDirectory(repoRoot, 0);
+let treeEntries = scanDirectory(repoRoot, 0, MAX_ENTRIES);
 let flatEntries: FileEntry[] = [];
 let currentFilePath = "";
 
@@ -496,6 +513,14 @@ const loop = createLoop({
 	disableJsxDispatch: true,
 
 	onEvent(event: KrakenEvent) {
+		if (event.type === "resize") {
+			positionPalette(
+				event.width ?? app.getTerminalSize().width,
+				event.height ?? app.getTerminalSize().height,
+			);
+			return;
+		}
+
 		// Palette handling
 		if (palette.isOpen()) {
 			if (event.type === "submit") { palette.executeSelected(); return; }

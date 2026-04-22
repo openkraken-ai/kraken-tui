@@ -68,19 +68,7 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                             crate::tree::clear_focus_if_under(ctx, overlay_handle);
                             if ctx.focused.is_none() {
                                 if let Some(restore_handle) = restore_focus {
-                                    if let Some(node) = ctx.nodes.get(&restore_handle) {
-                                        if node.focusable && node.visible {
-                                            let old_focus = ctx.focused.unwrap_or(0);
-                                            ctx.focused = Some(restore_handle);
-                                            if old_focus != restore_handle {
-                                                ctx.event_buffer.push(TuiEvent::focus_change(
-                                                    old_focus,
-                                                    restore_handle,
-                                                ));
-                                                maybe_emit_accessibility_event(ctx, restore_handle);
-                                            }
-                                        }
-                                    }
+                                    restore_focus_handle(ctx, restore_handle);
                                 }
                             }
                             ctx.event_buffer.push(TuiEvent::change(overlay_handle, 0));
@@ -783,6 +771,27 @@ pub(crate) fn maybe_emit_accessibility_event(ctx: &mut TuiContext, new_focus: u3
                 .push(TuiEvent::accessibility(new_focus, role_code));
         }
     }
+}
+
+/// Restore focus to a specific handle when it is still a valid visible target.
+pub(crate) fn restore_focus_handle(ctx: &mut TuiContext, restore_handle: u32) -> bool {
+    let can_restore = ctx
+        .nodes
+        .get(&restore_handle)
+        .is_some_and(|node| node.focusable)
+        && crate::tree::is_effectively_visible(ctx, restore_handle);
+    if !can_restore {
+        return false;
+    }
+
+    let old_focus = ctx.focused.unwrap_or(0);
+    ctx.focused = Some(restore_handle);
+    if old_focus != restore_handle {
+        ctx.event_buffer
+            .push(TuiEvent::focus_change(old_focus, restore_handle));
+        maybe_emit_accessibility_event(ctx, restore_handle);
+    }
+    true
 }
 
 /// Restore focus after the previously focused widget became unavailable.
@@ -1998,6 +2007,57 @@ mod tests {
         let overlay_event = next_event(&mut ctx).unwrap();
         assert_eq!(overlay_event.event_type, TuiEventType::Change as u32);
         assert_eq!(overlay_event.target, overlay);
+    }
+
+    #[test]
+    fn test_escape_dismiss_does_not_restore_focus_into_hidden_parent() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let hidden_panel = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let previous = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let overlay = tree::create_node(&mut ctx, NodeType::Overlay).unwrap();
+        let input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, hidden_panel).unwrap();
+        tree::append_child(&mut ctx, hidden_panel, previous).unwrap();
+        tree::append_child(&mut ctx, root, overlay).unwrap();
+        tree::append_child(&mut ctx, overlay, input).unwrap();
+        ctx.root = Some(root);
+
+        ctx.nodes.get_mut(&hidden_panel).unwrap().visible = false;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .open = true;
+        ctx.nodes
+            .get_mut(&overlay)
+            .unwrap()
+            .overlay_state
+            .as_mut()
+            .unwrap()
+            .restore_focus = Some(previous);
+        ctx.focused = Some(input);
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Key {
+                code: key::ESCAPE,
+                modifiers: 0,
+                character: '\0',
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(ctx.focused, None);
+
+        let overlay_event = next_event(&mut ctx).unwrap();
+        assert_eq!(overlay_event.event_type, TuiEventType::Change as u32);
+        assert_eq!(overlay_event.target, overlay);
+        assert!(next_event(&mut ctx).is_none());
     }
 
     #[test]

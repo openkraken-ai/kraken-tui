@@ -421,9 +421,14 @@ const palette = new CommandPalette({
 	bg: COLORS.headerBg,
 });
 root.append(palette.getWidget());
-palette.getWidget().setMargin(
-	Math.floor(termH * 0.25), 0, 0, Math.floor(termW * 0.20),
-);
+
+function positionPalette(width: number, height: number): void {
+	palette.getWidget().setMargin(
+		Math.floor(height * 0.25), 0, 0, Math.floor(width * 0.20),
+	);
+}
+
+positionPalette(termW, termH);
 
 // ── Set Root ─────────────────────────────────────────────────────────
 
@@ -508,6 +513,14 @@ const loop = createLoop({
 	disableJsxDispatch: true,
 
 	onEvent(event: KrakenEvent) {
+		if (event.type === "resize") {
+			positionPalette(
+				event.width ?? app.getTerminalSize().width,
+				event.height ?? app.getTerminalSize().height,
+			);
+			return;
+		}
+
 		// Palette input handling
 		if (palette.isOpen()) {
 			if (event.type === "submit") {

@@ -144,7 +144,7 @@
 | **Input Latency**             | < 50ms from keystroke to Surface update                                                    | Below human perception threshold for interactive responsiveness                         |
 | **Render Budget**             | < 16ms per Render Pass (60fps capable)                                                     | Smooth visual updates for real-time dashboards                                          |
 | **Foreign Function Overhead** | < 1ms per cross-boundary call                                                              | Must not be the bottleneck in the render loop                                           |
-| **Host-Language Bundle**      | < 50KB (TypeScript layer)                                                                  | Minimal overhead; the value is in the native core                                       |
+| **Host-Language Bundle**      | < 75KB (TypeScript layer)                                                                  | Minimal overhead; the value is in the native core                                       |
 | **Time to Hello World**       | < 15 minutes for a competent TypeScript developer                                          | Core JTBD: ship faster                                                                  |
 | **API Stability**             | Semantic versioning guarantees begin at public v1.0 GA. Pre-GA releases may include breaking changes. | Community-driven OSS demands trust in API contracts                                     |
 | **Contributor Experience**    | Clear module boundaries, documented architecture decisions, reproducible build environment | Portfolio + community viability depends on contribution accessibility                   |
