@@ -13,6 +13,8 @@ This document defines the current blocking quality gates for Kraken TUI release 
 
 Current CI executes the host test and benchmark surfaces on `ubuntu-latest`. Cross-platform release artifacts are built in the release workflow, but the full host verification matrix is not yet exercised on macOS and Windows in CI.
 
+Repo-side host verification entrypoints that `dlopen` directly are expected to validate the local Cargo-built artifact rather than a staged prebuild, so branch verification is tied to the code under review.
+
 ---
 
 ## 2. Gate Definitions

@@ -10,11 +10,11 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { dlopen, CString, type FFIType } from "bun:ffi";
-import { resolveLibraryPath } from "./src/resolver";
+import { resolveSourceBuildPath } from "./src/resolver";
 
 // ── Load native library ─────────────────────────────────────────────────────
 
-const LIB_PATH = resolveLibraryPath();
+const LIB_PATH = resolveSourceBuildPath();
 
 const lib = dlopen(LIB_PATH, {
 	// Lifecycle

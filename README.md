@@ -73,6 +73,8 @@ bun test ts/test-runner.test.ts
 cargo test --manifest-path native/Cargo.toml
 ```
 
+Repo-side FFI tests and benchmark harnesses intentionally target the local Cargo-built native artifact under `native/target/release/` so they validate the branch under review rather than any staged prebuild.
+
 ## Flagship Examples
 
 ```bash

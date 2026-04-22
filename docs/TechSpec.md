@@ -513,6 +513,8 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/ops-
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/repo-inspector.ts
 ```
 
+Repo-side host verification entrypoints that `dlopen` directly are expected to target the local Cargo-built native artifact under `native/target/release/`. The general runtime resolver still supports staged prebuilds for package/install flows, but branch validation must not be shadowed by stale packaged assets.
+
 ### 5.4 Performance and Quality Gates
 
 | Gate | Target | Current enforcement path |

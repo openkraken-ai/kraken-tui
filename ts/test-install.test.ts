@@ -48,6 +48,8 @@ describe("resolveLibraryPath", () => {
 		import.meta.dir,
 		`../native/target/release/${getLibraryName(process.platform)}`,
 	);
+	let createdStagedDir = false;
+	let createdStagedLib = false;
 
 	afterEach(() => {
 		if (originalEnv === undefined) {
@@ -55,9 +57,15 @@ describe("resolveLibraryPath", () => {
 		} else {
 			process.env.KRAKEN_LIB_PATH = originalEnv;
 		}
-		if (existsSync(stagedLibPath)) {
+
+		if (createdStagedLib && existsSync(stagedLibPath)) {
+			rmSync(stagedLibPath, { force: true });
+		}
+		if (createdStagedDir && existsSync(stagedDir)) {
 			rmSync(stagedDir, { recursive: true, force: true });
 		}
+		createdStagedDir = false;
+		createdStagedLib = false;
 	});
 
 	test("resolves source build path in development", () => {
@@ -77,8 +85,16 @@ describe("resolveLibraryPath", () => {
 
 	test("prefers staged prebuild artifact when present", () => {
 		delete process.env.KRAKEN_LIB_PATH;
-		mkdirSync(stagedDir, { recursive: true });
-		copyFileSync(sourceBuild, stagedLibPath);
+		const hadStagedDir = existsSync(stagedDir);
+		const hadStagedLib = existsSync(stagedLibPath);
+		if (!hadStagedDir) {
+			mkdirSync(stagedDir, { recursive: true });
+			createdStagedDir = true;
+		}
+		if (!hadStagedLib) {
+			copyFileSync(sourceBuild, stagedLibPath);
+			createdStagedLib = true;
+		}
 
 		const libPath = resolveLibraryPath();
 		expect(libPath).toBe(stagedLibPath);

@@ -13,9 +13,9 @@
 import { dlopen, type FFIType } from "bun:ffi";
 import { mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
-import { resolveLibraryPath } from "./src/resolver";
+import { resolveSourceBuildPath } from "./src/resolver";
 
-const LIB_PATH = resolveLibraryPath();
+const LIB_PATH = resolveSourceBuildPath();
 const ARTIFACT_DIR = resolve(import.meta.dir, ".artifacts");
 const ARTIFACT_PATH = resolve(ARTIFACT_DIR, "guardrails-latest.json");
 

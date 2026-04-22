@@ -111,6 +111,7 @@ Rust cdylib (single mutable UI authority)
 1. Keep wrappers thin. Rust still owns mutable UI state and performance-critical semantics.
 2. Prefer composites over new native widgets unless the TechSpec or active Tasks plan explicitly justifies native promotion.
 3. Preserve the native library resolver contract: `KRAKEN_LIB_PATH` -> staged prebuilds -> local Cargo release artifact.
+4. Repo-side verification entrypoints that `dlopen` directly should target the local Cargo build, not staged prebuilds, so branch validation cannot be shadowed by old packaged artifacts.
 
 ### When picking what to read
 - Product/scope question -> `docs/PRD.md`
