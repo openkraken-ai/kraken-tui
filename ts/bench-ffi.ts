@@ -60,18 +60,14 @@ if (initResult !== 0) {
 	process.exit(1);
 }
 
+const benchNode = ffi.tui_create_node(0);
+
 // ── Benchmarks ──────────────────────────────────────────────────────────────
 
 console.log("--- Minimal FFI call overhead ---");
 
-bench("tui_get_node_type(valid handle)", 500_000, () => {
-	// Need at least one node for this
-});
-
-// Create a single node for repeated operations
-const benchNode = ffi.tui_create_node(0);
 if (benchNode > 0) {
-	bench("tui_get_node_type(handle)", 500_000, () => {
+	bench("tui_get_node_type(valid handle)", 500_000, () => {
 		ffi.tui_get_node_type(benchNode);
 	});
 

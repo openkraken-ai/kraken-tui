@@ -7,9 +7,9 @@
  * Run:  bun test ts/test-install.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, afterEach } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "fs";
-import { resolve } from "path";
+import { normalize, resolve } from "path";
 import { resolveLibraryPath, getLibraryName } from "./src/resolver";
 import { formatLoadError } from "./src/diagnostics";
 
@@ -71,9 +71,8 @@ describe("resolveLibraryPath", () => {
 	test("resolves source build path in development", () => {
 		delete process.env.KRAKEN_LIB_PATH;
 		const libPath = resolveLibraryPath();
-		// In this repo, the source build should exist at native/target/release/
-		expect(libPath).toContain("native/target/release/");
-		expect(libPath).toContain("kraken_tui");
+		const expectedPath = existsSync(stagedLibPath) ? stagedLibPath : sourceBuild;
+		expect(normalize(libPath)).toBe(normalize(expectedPath));
 	});
 
 	test("respects KRAKEN_LIB_PATH env override", () => {
@@ -102,9 +101,9 @@ describe("resolveLibraryPath", () => {
 
 	test("throws when KRAKEN_LIB_PATH points to nonexistent file", () => {
 		process.env.KRAKEN_LIB_PATH = "/nonexistent/path/libkraken_tui.so";
-		// Should still resolve via fallback (source build exists)
 		const libPath = resolveLibraryPath();
-		expect(libPath).toContain("native/target/release/");
+		const expectedPath = existsSync(stagedLibPath) ? stagedLibPath : sourceBuild;
+		expect(normalize(libPath)).toBe(normalize(expectedPath));
 	});
 });
 
