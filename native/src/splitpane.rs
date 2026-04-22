@@ -242,7 +242,7 @@ pub(crate) fn handle_mouse(ctx: &mut TuiContext, handle: u32, click_pos: u16, si
 /// Synchronize Taffy layout properties for SplitPane children.
 ///
 /// Sets the SplitPane's flex_direction based on axis, then configures each
-/// child's flex_basis as a percentage of the available space.
+/// child's flex_basis to match the requested ratio.
 pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let node = ctx
         .nodes
@@ -254,6 +254,7 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
     };
     let children = node.children.clone();
     let taffy_node = node.taffy_node;
+    let visible = node.visible;
 
     // Set flex direction on the SplitPane node itself
     let mut pane_style = ctx
@@ -262,7 +263,11 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
         .map_err(|e| format!("Taffy style read failed: {e:?}"))?
         .clone();
 
-    pane_style.display = Display::Flex;
+    pane_style.display = if visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
     pane_style.flex_direction = match state.axis {
         SplitAxis::Horizontal => FlexDirection::Row,
         SplitAxis::Vertical => FlexDirection::Column,
@@ -942,6 +947,29 @@ mod tests {
         let style = ctx.tree.style(sp_taffy).unwrap();
         // Vertical axis → row_gap = 1 cell for the divider
         assert_eq!(style.gap.height, length(1.0));
+    }
+
+    #[test]
+    fn test_sync_preserves_hidden_display_none() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&sp).unwrap();
+            node.visible = false;
+            let mut style = ctx.tree.style(node.taffy_node).unwrap().clone();
+            style.display = Display::None;
+            ctx.tree.set_style(node.taffy_node, style).unwrap();
+        }
+
+        sync_children_layout(&mut ctx, sp).unwrap();
+
+        let style = ctx.tree.style(ctx.nodes[&sp].taffy_node).unwrap();
+        assert_eq!(style.display, Display::None);
     }
 
     // ================================================================

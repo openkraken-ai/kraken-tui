@@ -194,12 +194,22 @@ export class CommandPalette {
 		}
 	}
 
+	private canRestoreFocus(handle: number): boolean {
+		return handle !== 0 &&
+			ffi.tui_get_visible(handle) === 1 &&
+			ffi.tui_is_focusable(handle) === 1;
+	}
+
 	private syncClosedState(open: boolean): boolean {
 		if (!open && this.wasOpen) {
 			this.wasOpen = false;
-			if (this.restoreFocusHandle !== 0) {
-				ffi.tui_focus(this.restoreFocusHandle);
-				this.restoreFocusHandle = 0;
+			const restoreFocusHandle = this.restoreFocusHandle;
+			this.restoreFocusHandle = 0;
+			if (
+				ffi.tui_get_focused() === 0 &&
+				this.canRestoreFocus(restoreFocusHandle)
+			) {
+				checkResult(ffi.tui_focus(restoreFocusHandle));
 			}
 		}
 		return open;

@@ -14,6 +14,7 @@ export type BlockKind =
 	| "divider";
 
 export type FollowModeStr = "manual" | "tailLocked" | "tailWhileNearBottom";
+export type TranscriptRole = "system" | "user" | "assistant" | "tool" | "reasoning";
 
 export interface TranscriptOptions {
 	width?: string | number;
@@ -208,8 +209,11 @@ export class TranscriptView extends Widget {
 	 * @param role - "system" | "user" | "assistant" | "tool" | "reasoning"
 	 * @param color - Color as hex string (e.g. "#ff0000") or number
 	 */
-	setRoleColor(role: string, color: string | number): void {
-		const roleNum = ROLE_MAP[role] ?? 0;
+	setRoleColor(role: TranscriptRole, color: string | number): void {
+		const roleNum = ROLE_MAP[role];
+		if (roleNum === undefined) {
+			throw new Error(`Invalid transcript role: ${role}`);
+		}
 		const c = parseColor(color);
 		checkResult(ffi.tui_transcript_set_role_color(this.handle, roleNum, c));
 	}

@@ -3388,6 +3388,52 @@ describe("FFI integration", () => {
 			expect(focusable).toBe(1);
 			ffi.tui_destroy_node(sp);
 		});
+
+		test("hidden SplitPane does not reserve layout space", () => {
+			const root = ffi.tui_create_node(0);
+			const header = ffi.tui_create_node(0);
+			const splitpane = ffi.tui_create_node(11);
+			const footer = ffi.tui_create_node(0);
+			const left = ffi.tui_create_node(0);
+			const right = ffi.tui_create_node(0);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(root, 1, 24, 1)).toBe(0);
+			expect(ffi.tui_set_layout_flex(root, 0, 1)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(header, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(header, 1, 1, 1)).toBe(0);
+			expect(ffi.tui_append_child(root, header)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(splitpane, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(splitpane, 1, 100, 2)).toBe(0);
+			expect(ffi.tui_append_child(root, splitpane)).toBe(0);
+			expect(ffi.tui_append_child(splitpane, left)).toBe(0);
+			expect(ffi.tui_append_child(splitpane, right)).toBe(0);
+			expect(ffi.tui_set_visible(splitpane, 0)).toBe(0);
+
+			expect(ffi.tui_set_layout_dimension(footer, 0, 80, 1)).toBe(0);
+			expect(ffi.tui_set_layout_dimension(footer, 1, 1, 1)).toBe(0);
+			expect(ffi.tui_append_child(root, footer)).toBe(0);
+
+			expect(ffi.tui_render()).toBe(0);
+
+			const xBuf = new Int32Array(1);
+			const yBuf = new Int32Array(1);
+			const wBuf = new Int32Array(1);
+			const hBuf = new Int32Array(1);
+
+			expect(ffi.tui_get_layout(splitpane, xBuf, yBuf, wBuf, hBuf)).toBe(0);
+			expect(wBuf[0]).toBe(0);
+			expect(hBuf[0]).toBe(0);
+
+			expect(ffi.tui_get_layout(footer, xBuf, yBuf, wBuf, hBuf)).toBe(0);
+			expect(yBuf[0]).toBe(1);
+			expect(hBuf[0]).toBe(1);
+
+			ffi.tui_destroy_subtree(root);
+		});
 	});
 
 	// ====================================================================
@@ -3783,6 +3829,43 @@ describe("FFI integration", () => {
 				expect(palette.isOpen()).toBe(false);
 
 				root.destroySubtree();
+			});
+
+			test("CommandPalette does not restore focus to a hidden prior target", async () => {
+				const { Box } = await import("./src/widgets/box");
+				const { Input } = await import("./src/widgets/input");
+				const { CommandPalette } = await import("./src/composites/command-palette");
+
+				const root = new Box({ width: "100%", height: "100%" });
+				const input = new Input({ width: 20 });
+				input.setFocusable(true);
+				root.append(input);
+
+				const palette = new CommandPalette({
+					commands: [{ id: "noop", label: "No-op", action: () => {} }],
+				});
+				root.append(palette.getWidget());
+				ffi.tui_set_root(root.handle);
+
+				input.focus();
+				palette.open();
+				expect(ffi.tui_get_focused()).toBe(palette.getInput().handle);
+
+				input.setVisible(false);
+				expect(ffi.tui_overlay_set_open(palette.getWidget().handle, 0)).toBe(0);
+				expect(ffi.tui_get_focused()).toBe(0);
+				expect(palette.isOpen()).toBe(false);
+				expect(ffi.tui_get_focused()).toBe(0);
+
+				root.destroySubtree();
+			});
+
+			test("TranscriptView.setRoleColor rejects invalid role names", async () => {
+				const { TranscriptView } = await import("./src/widgets/transcript");
+				const transcript = new TranscriptView();
+				const invalidRole = "bogus" as unknown as "system";
+				expect(() => transcript.setRoleColor(invalidRole, "#ff0000")).toThrow("Invalid transcript role");
+				transcript.destroy();
 			});
 
 		test("DiffView side-by-side constructs without throwing", async () => {
