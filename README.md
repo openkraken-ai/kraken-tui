@@ -1,80 +1,129 @@
 # Kraken TUI
 
-Rust-native terminal UI engine with TypeScript/Bun bindings.
+Rust-native terminal UI engine with TypeScript/Bun bindings for building fast, long-lived terminal applications.
 
-## Architecture
+Kraken is aimed at developer tools, agent consoles, log viewers, and dense pane-based terminal workflows where stable scrolling, low overhead, and strong inspectability matter more than a browser-style framework stack.
 
-- **Native core:** Rust `cdylib` owns all mutable state and rendering
-- **Host API:** TypeScript/Bun wrapper over `bun:ffi`
-- **Boundary invariant:** TypeScript holds opaque `u32` handles, Rust owns data
-- **FFI contract:** `0` success, `-1` error (via `tui_get_last_error()`), `-2` panic caught at boundary
+## Status
 
-## Widgets
+- Pre-1.0 (`0.1.0`) and still evolving
+- Canonical planning chain lives in [`docs/`](./docs/)
+- Current flagship surfaces are already implemented in source: transcript workflows, split panes, devtools, and app-shaped composites
 
-- `Box` — container with flexbox layout
-- `Text` — plain, markdown, and syntax-highlighted content
-- `Input` — single-line text entry with password masking
-- `Select` — option list with arrow navigation
-- `ScrollBox` — scrollable container
-- `TextArea` — multi-line editor with selection, undo/redo, find
-- `Table` — columnar data with row selection
-- `List` — item list with selection
-- `Tabs` — tab labels with active index
-- `Overlay` — modal dialog with dismiss-on-escape
+## Core Model
 
-## Features
+- **Native Core:** Rust `cdylib` owns all mutable UI state and performance-critical work
+- **Host Layer:** TypeScript/Bun wrapper over `bun:ffi`
+- **Boundary invariant:** TypeScript holds opaque `u32` Handles, Rust owns the data
+- **FFI contract:** `0` success, `-1` explicit error via `tui_get_last_error()`, `-2` panic caught at the boundary
 
+## What Kraken Ships
+
+### Native widgets
+- `Box`
+- `Text`
+- `Input`
+- `Select`
+- `ScrollBox`
+- `TextArea`
+- `Table`
+- `List`
+- `Tabs`
+- `Overlay`
+- `TranscriptView`
+- `SplitPane`
+
+### Host composites
+- `CommandPalette`
+- `TracePanel`
+- `StructuredLogView`
+- `CodeView`
+- `DiffView`
+
+### Platform and DX features
 - Flexbox layout via Taffy
-- Incremental double-buffered render with dirty-region diffing
-- Keyboard focus traversal (depth-first) + mouse events (click/scroll/hit-test)
-- Theming: built-in dark/light, custom themes, per-NodeType defaults, runtime switching
-- Animation: property transitions, 8 easing functions, chaining, choreography groups, position animation
-- JSX + signal-driven reconciler (`@preact/signals-core`)
-- Runner API with `app.run()` and `createLoop()` for async event loops
-- Accessibility foundation: roles, labels, descriptions, a11y events
-- Rich text: Markdown (pulldown-cmark) and syntax highlighting (syntect)
-- Terminal writer with run compaction and style delta tracking
-- Bounded LRU text cache (8 MiB)
-- Cross-platform: Linux x64/arm64, macOS x64/arm64, Windows x64
+- Incremental double-buffered render with dirty diffing
+- Keyboard focus traversal plus mouse hit-testing and scroll routing
+- Rich text: Markdown and syntax highlighting
+- Theming with built-in dark/light themes and per-NodeType defaults
+- Animation with easing, chaining, choreography, and position offsets
+- JSX plus `@preact/signals-core` reconciler
+- Runner API with `app.run()` / `createLoop()`
+- Accessibility foundation: roles, labels, descriptions, accessibility events
+- Devtools: overlays, snapshots, traces, perf HUD helpers, and dev sessions
+- Native artifact resolver: `KRAKEN_LIB_PATH` -> staged prebuilds -> local Cargo build
 
-## Quick Start
+## Quick Start (Source Checkout)
 
 ```bash
-# Build native core (required before any TS usage)
+# Build native core
 cargo build --manifest-path native/Cargo.toml --release
 
-# Install TS dependencies
+# Install host dependencies
 cd ts && bun install && cd ..
 
-# Run Rust tests
+# Run the full host test surface
+bun test ts/test-ffi.test.ts
+bun test ts/test-jsx.test.ts
+bun test ts/test-examples.test.ts
+bun test ts/test-install.test.ts
+bun test ts/test-runner.test.ts
+
+# Run native tests
 cargo test --manifest-path native/Cargo.toml
+```
 
-# Run TS tests
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-ffi.test.ts
-cargo build --manifest-path native/Cargo.toml --release && bun test ts/test-jsx.test.ts
+Repo-side FFI tests and benchmark harnesses intentionally target the local Cargo-built native artifact under `native/target/release/` so they validate the branch under review rather than any staged prebuild.
 
-# Run examples
+## Flagship Examples
+
+```bash
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/agent-console.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/ops-log-console.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/repo-inspector.ts
+```
+
+These example entrypoints go through `Kraken.init()` and the normal runtime resolver. If you have staged `ts/prebuilds/...` artifacts and want example runs to validate the freshly built branch binary specifically, set `KRAKEN_LIB_PATH` to the matching file under `native/target/release/` before running them.
+
+Other examples:
+
+```bash
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/demo.ts
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/migration-jsx.tsx
 cargo build --manifest-path native/Cargo.toml --release && bun run examples/system-monitor.ts
+cargo build --manifest-path native/Cargo.toml --release && bun run examples/accessibility-demo.tsx
 ```
 
-## Imperative Example
+## Example: Imperative API
 
 ```ts
 import { Kraken, Box, Text, KeyCode } from "kraken-tui";
 
 const app = Kraken.init();
-const root = new Box({ width: "100%", height: "100%", flexDirection: "column" });
-const label = new Text({ content: "Hello, Kraken!", fg: "#00FF00", bold: true });
-root.append(label);
+
+const root = new Box({
+	width: "100%",
+	height: "100%",
+	flexDirection: "column",
+});
+
+const title = new Text({
+	content: "Hello, Kraken!",
+	fg: "#00FF88",
+	bold: true,
+	height: 1,
+});
+
+root.append(title);
 app.setRoot(root);
 
 let running = true;
 while (running) {
 	app.readInput(16);
 	for (const event of app.drainEvents()) {
-		if (event.type === "key" && event.keyCode === KeyCode.Escape) running = false;
+		if (event.type === "key" && event.keyCode === KeyCode.Escape) {
+			running = false;
+		}
 	}
 	app.render();
 }
@@ -82,7 +131,7 @@ while (running) {
 app.shutdown();
 ```
 
-## JSX Example
+## Example: JSX + Signals
 
 ```tsx
 import { Kraken, signal, render, createLoop, KeyCode } from "kraken-tui";
@@ -92,44 +141,62 @@ const count = signal(0);
 const app = Kraken.init();
 
 const tree = jsxs("Box", {
-	width: "100%", height: "100%", flexDirection: "column",
+	width: "100%",
+	height: "100%",
+	flexDirection: "column",
 	children: [
-		jsx("Text", { key: "label", content: count, fg: "#00FF00", height: 1 }),
+		jsx("Text", {
+			key: "label",
+			content: count,
+			fg: "#00FF88",
+			height: 1,
+		}),
 	],
 });
 
 render(tree, app);
+
 const loop = createLoop({
 	app,
-	onEvent(e) {
-		if (e.type === "key" && e.keyCode === KeyCode.Escape) loop.stop();
+	onEvent(event) {
+		if (event.type === "key" && event.keyCode === KeyCode.Escape) {
+			loop.stop();
+		}
 	},
-	onTick() { count.value++; },
+	onTick() {
+		count.value++;
+	},
 });
+
 await loop.start();
 app.shutdown();
 ```
 
-## Quality and Budgets
+## Verification and Budgets
 
 ```bash
-# Bundle budget (<75KB target for core TS package)
+# Bundle budget
 bun run ts/check-bundle.ts
 
-# FFI benchmark
-cargo build --manifest-path native/Cargo.toml --release && bun run ts/bench-ffi.ts
+# FFI and render benchmarks
+bun run ts/bench-ffi.ts
+bun run ts/bench-render.ts
 
-# Lint
-cargo fmt --manifest-path native/Cargo.toml && cargo clippy --manifest-path native/Cargo.toml
+# Native quality
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo clippy --manifest-path native/Cargo.toml -- -D warnings
 ```
+
+The host package is currently under the 75KB bundle budget; use `bun run ts/check-bundle.ts` for the exact measurement in the current checkout.
 
 ## Documentation
 
-- [PRD](./docs/PRD.md) — Product requirements
-- [Architecture](./docs/Architecture.md) — System design and module boundaries
-- [TechSpec](./docs/TechSpec.md) — Technical contracts, FFI surface, ADRs
-- [Tasks](./docs/Tasks.md) — Execution status
+- [PRD](./docs/PRD.md) — product intent, glossary, scope, constraints
+- [Architecture](./docs/Architecture.md) — logical boundaries, flows, risks
+- [TechSpec](./docs/TechSpec.md) — ABI, state model, interfaces, verification contract
+- [Tasks](./docs/Tasks.md) — active plan plus archived completed execution scope
+- [GatePolicy](./docs/reports/GatePolicy.md) — current CI quality gates
 
 ## License
 
-Apache License 2.0 - See [LICENSE.md](./LICENSE.md)
+Apache License 2.0 — see [LICENSE.md](./LICENSE.md)

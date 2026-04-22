@@ -80,5 +80,33 @@ export function resolveLibraryPath(): string {
 	throw new Error(formatLoadError(platform, arch, searchPaths));
 }
 
+/**
+ * Resolve the local source-built native library for repo-side verification.
+ *
+ * This intentionally bypasses `KRAKEN_LIB_PATH` and any staged prebuilds so
+ * tests and benchmarks in a source checkout always validate the freshly built
+ * branch artifact under `native/target/release/`.
+ */
+export function resolveSourceBuildPath(): string {
+	const libName = getLibraryName(process.platform);
+	const sourceBuildPath = resolve(
+		import.meta.dir,
+		"..",
+		"..",
+		"native",
+		"target",
+		"release",
+		libName,
+	);
+
+	if (existsSync(sourceBuildPath)) {
+		return sourceBuildPath;
+	}
+
+	throw new Error(
+		`Source build not found at ${sourceBuildPath}. Run: cargo build --manifest-path native/Cargo.toml --release`,
+	);
+}
+
 // Re-export for testing
 export { getLibraryName };

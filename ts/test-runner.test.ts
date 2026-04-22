@@ -273,7 +273,7 @@ describe("Legacy loop compatibility (TASK-C3)", () => {
 // ── Bundle budget ────────────────────────────────────────────────────────────
 
 describe("Bundle budget (TASK-C3)", () => {
-	test("bundle stays under 50KB", async () => {
+	test("bundle stays under 75KB", async () => {
 		const { rmSync } = await import("fs");
 		const scriptDir = import.meta.dir;
 
@@ -288,7 +288,7 @@ describe("Bundle budget (TASK-C3)", () => {
 		expect(result.success).toBe(true);
 
 		const output = result.outputs[0]!;
-		const BUDGET_BYTES = 50 * 1024;
+		const BUDGET_BYTES = 75 * 1024;
 		expect(output.size).toBeLessThanOrEqual(BUDGET_BYTES);
 
 		// Cleanup

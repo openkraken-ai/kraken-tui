@@ -5,9 +5,9 @@
  */
 
 import { dlopen, ptr, type FFIType } from "bun:ffi";
-import { resolve } from "path";
+import { resolveSourceBuildPath } from "./src/resolver";
 
-const LIB_PATH = resolve(import.meta.dir, "../native/target/release/libkraken_tui.so");
+const LIB_PATH = resolveSourceBuildPath();
 
 const lib = dlopen(LIB_PATH, {
 	tui_init_headless: { args: ["u16", "u16"] as FFIType[],                    returns: "i32" as const },
@@ -30,6 +30,7 @@ const lib = dlopen(LIB_PATH, {
 });
 
 const ffi = lib.symbols;
+let gatedFail = 0;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -59,18 +60,14 @@ if (initResult !== 0) {
 	process.exit(1);
 }
 
+const benchNode = ffi.tui_create_node(0);
+
 // ── Benchmarks ──────────────────────────────────────────────────────────────
 
 console.log("--- Minimal FFI call overhead ---");
 
-bench("tui_get_node_type(valid handle)", 500_000, () => {
-	// Need at least one node for this
-});
-
-// Create a single node for repeated operations
-const benchNode = ffi.tui_create_node(0);
 if (benchNode > 0) {
-	bench("tui_get_node_type(handle)", 500_000, () => {
+	bench("tui_get_node_type(valid handle)", 500_000, () => {
 		ffi.tui_get_node_type(benchNode);
 	});
 
@@ -192,6 +189,7 @@ console.log("\n--- Performance budget (TechSpec targets) ---");
 	console.log(
 		`  FFI call overhead:  ${perCallUs.toFixed(3)} μs  (target < 1000 μs)  [${status}]`,
 	);
+	if (status === "FAIL") gatedFail++;
 
 	// Target: 60fps render budget = 16ms
 	// A frame with 100 widget mutations should complete well within 16ms
@@ -204,11 +202,12 @@ console.log("\n--- Performance budget (TechSpec targets) ---");
 		}
 		const frameElapsed = performance.now() - frameStart;
 		const frameStatus = frameElapsed < 16 ? "PASS" : "FAIL";
-		console.log(
-			`  300 mutations/frame: ${frameElapsed.toFixed(3)} ms  (target < 16 ms)  [${frameStatus}]`,
-		);
+			console.log(
+				`  300 mutations/frame: ${frameElapsed.toFixed(3)} ms  (target < 16 ms)  [${frameStatus}]`,
+			);
+			if (frameStatus === "FAIL") gatedFail++;
+		}
 	}
-}
 
 // ── Cleanup ─────────────────────────────────────────────────────────────────
 
@@ -216,3 +215,7 @@ if (benchNode > 0) ffi.tui_destroy_node(benchNode);
 ffi.tui_shutdown();
 
 console.log("\nDone.");
+
+if (gatedFail > 0) {
+	process.exit(1);
+}

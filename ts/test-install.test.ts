@@ -7,8 +7,9 @@
  * Run:  bun test ts/test-install.test.ts
  */
 
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { resolve } from "path";
+import { describe, test, expect, afterEach } from "bun:test";
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from "fs";
+import { normalize, resolve } from "path";
 import { resolveLibraryPath, getLibraryName } from "./src/resolver";
 import { formatLoadError } from "./src/diagnostics";
 
@@ -36,6 +37,21 @@ describe("getLibraryName", () => {
 
 describe("resolveLibraryPath", () => {
 	const originalEnv = process.env.KRAKEN_LIB_PATH;
+	const packageRoot = resolve(import.meta.dir, "src", "..");
+	const stagedDir = resolve(
+		packageRoot,
+		"prebuilds",
+		`${process.platform}-${process.arch}`,
+	);
+	const stagedLibPath = resolve(stagedDir, getLibraryName(process.platform));
+	const sourceBuild = resolve(
+		import.meta.dir,
+		`../native/target/release/${getLibraryName(process.platform)}`,
+	);
+	const hiddenStagedLibPath = `${stagedLibPath}.source-build-smoke-hidden-${process.pid}`;
+	let createdStagedDir = false;
+	let createdStagedLib = false;
+	let hidExistingStagedLib = false;
 
 	afterEach(() => {
 		if (originalEnv === undefined) {
@@ -43,32 +59,61 @@ describe("resolveLibraryPath", () => {
 		} else {
 			process.env.KRAKEN_LIB_PATH = originalEnv;
 		}
+
+		if (createdStagedLib && existsSync(stagedLibPath)) {
+			rmSync(stagedLibPath, { force: true });
+		}
+		if (hidExistingStagedLib && existsSync(hiddenStagedLibPath)) {
+			renameSync(hiddenStagedLibPath, stagedLibPath);
+		}
+		if (createdStagedDir && existsSync(stagedDir)) {
+			rmSync(stagedDir, { recursive: true, force: true });
+		}
+		createdStagedDir = false;
+		createdStagedLib = false;
+		hidExistingStagedLib = false;
 	});
 
 	test("resolves source build path in development", () => {
 		delete process.env.KRAKEN_LIB_PATH;
+		if (existsSync(stagedLibPath)) {
+			renameSync(stagedLibPath, hiddenStagedLibPath);
+			hidExistingStagedLib = true;
+		}
+
 		const libPath = resolveLibraryPath();
-		// In this repo, the source build should exist at native/target/release/
-		expect(libPath).toContain("native/target/release/");
-		expect(libPath).toContain("kraken_tui");
+		expect(normalize(libPath)).toBe(normalize(sourceBuild));
 	});
 
 	test("respects KRAKEN_LIB_PATH env override", () => {
 		// Point to the actual source build so it resolves (platform-aware)
-		const sourceBuild = resolve(
-			import.meta.dir,
-			`../native/target/release/${getLibraryName(process.platform)}`,
-		);
 		process.env.KRAKEN_LIB_PATH = sourceBuild;
 		const libPath = resolveLibraryPath();
 		expect(libPath).toBe(sourceBuild);
 	});
 
+	test("prefers staged prebuild artifact when present", () => {
+		delete process.env.KRAKEN_LIB_PATH;
+		const hadStagedDir = existsSync(stagedDir);
+		const hadStagedLib = existsSync(stagedLibPath);
+		if (!hadStagedDir) {
+			mkdirSync(stagedDir, { recursive: true });
+			createdStagedDir = true;
+		}
+		if (!hadStagedLib) {
+			copyFileSync(sourceBuild, stagedLibPath);
+			createdStagedLib = true;
+		}
+
+		const libPath = resolveLibraryPath();
+		expect(libPath).toBe(stagedLibPath);
+	});
+
 	test("throws when KRAKEN_LIB_PATH points to nonexistent file", () => {
 		process.env.KRAKEN_LIB_PATH = "/nonexistent/path/libkraken_tui.so";
-		// Should still resolve via fallback (source build exists)
 		const libPath = resolveLibraryPath();
-		expect(libPath).toContain("native/target/release/");
+		const expectedPath = existsSync(stagedLibPath) ? stagedLibPath : sourceBuild;
+		expect(normalize(libPath)).toBe(normalize(expectedPath));
 	});
 });
 

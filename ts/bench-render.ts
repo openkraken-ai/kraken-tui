@@ -11,9 +11,9 @@
  */
 
 import { dlopen, ptr, type FFIType } from "bun:ffi";
-import { resolve } from "path";
+import { resolveSourceBuildPath } from "./src/resolver";
 
-const LIB_PATH = resolve(import.meta.dir, "../native/target/release/libkraken_tui.so");
+const LIB_PATH = resolveSourceBuildPath();
 
 const lib = dlopen(LIB_PATH, {
 	tui_init_headless: { args: ["u16", "u16"] as FFIType[], returns: "i32" as const },
