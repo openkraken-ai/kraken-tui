@@ -182,11 +182,10 @@ pub enum FollowMode {
     TailWhileNearBottom = 2,
 }
 
-#[repr(u8)]
 pub enum ViewportAnchorKind {
-    Tail = 0,
-    BlockStart = 1,
-    FocusedBlock = 2,
+    Tail,
+    BlockStart { block_id: u64, row_offset: u32 },
+    FocusedBlock { block_id: u64, row_offset: u32 },
 }
 ```
 

@@ -30,6 +30,7 @@ const lib = dlopen(LIB_PATH, {
 });
 
 const ffi = lib.symbols;
+let gatedFail = 0;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -192,6 +193,7 @@ console.log("\n--- Performance budget (TechSpec targets) ---");
 	console.log(
 		`  FFI call overhead:  ${perCallUs.toFixed(3)} μs  (target < 1000 μs)  [${status}]`,
 	);
+	if (status === "FAIL") gatedFail++;
 
 	// Target: 60fps render budget = 16ms
 	// A frame with 100 widget mutations should complete well within 16ms
@@ -204,11 +206,12 @@ console.log("\n--- Performance budget (TechSpec targets) ---");
 		}
 		const frameElapsed = performance.now() - frameStart;
 		const frameStatus = frameElapsed < 16 ? "PASS" : "FAIL";
-		console.log(
-			`  300 mutations/frame: ${frameElapsed.toFixed(3)} ms  (target < 16 ms)  [${frameStatus}]`,
-		);
+			console.log(
+				`  300 mutations/frame: ${frameElapsed.toFixed(3)} ms  (target < 16 ms)  [${frameStatus}]`,
+			);
+			if (frameStatus === "FAIL") gatedFail++;
+		}
 	}
-}
 
 // ── Cleanup ─────────────────────────────────────────────────────────────────
 
@@ -216,3 +219,7 @@ if (benchNode > 0) ffi.tui_destroy_node(benchNode);
 ffi.tui_shutdown();
 
 console.log("\nDone.");
+
+if (gatedFail > 0) {
+	process.exit(1);
+}

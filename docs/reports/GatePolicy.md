@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-This document defines the current blocking quality gates for Kraken TUI release readiness. Gates marked as blocking are enforced in CI via `.github/workflows/ci.yml`. Additional local verification commands are listed where the source tree already provides them but CI does not yet treat them as blocking.
+This document defines the current quality gates for Kraken TUI release readiness. Some gates are blocking in CI, while others are reporting-only guardrails that still require human review. Additional local verification commands are listed where the source tree already provides them but CI does not yet treat them as blocking.
 
 Current CI executes the host test and benchmark surfaces on `ubuntu-latest`. Cross-platform release artifacts are built in the release workflow, but the full host verification matrix is not yet exercised on macOS and Windows in CI.
 
@@ -45,7 +45,8 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 | **Metric** | Writer and text-cache benchmark health |
 | **Threshold** | No materially suspicious regression in the benchmark output for tracked suites |
 | **CI Job** | `native-benchmarks` |
-| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` |
+| **CI Mode** | Reporting-only |
+| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` (results are reported, not threshold-failed by the job) |
 | **Tracked suites** | `writer_compact_*`, `writer_emit_*`, `writer_pipeline_full`, `cache_insert_1000`, `cache_get_hit_1000`, `cache_eviction_pressure` |
 | **Local supplementary check** | `cargo bench --manifest-path native/Cargo.toml --bench devtools_bench` |
 
@@ -83,6 +84,7 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 | **Metric** | Host-side render frame time, mutation cycle time, and render-duration counters |
 | **Threshold** | Remain within the intended `< 16ms` interactive envelope |
 | **CI Job** | `host-benchmarks` |
+| **CI Mode** | Blocking |
 | **Enforcement** | `bun run ts/bench-render.ts` |
 
 ### Gate 8: FFI Call Overhead
@@ -92,6 +94,7 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 | **Metric** | Single FFI call round-trip latency |
 | **Threshold** | `< 1ms` |
 | **CI Job** | `host-benchmarks` |
+| **CI Mode** | Blocking |
 | **Enforcement** | `bun run ts/bench-ffi.ts` |
 
 ---
@@ -104,7 +107,7 @@ CI Trigger
   |-- native-tests ------ native tests + fmt + clippy + writer assertions
   |-- native-benchmarks - writer and text-cache benchmark reporting
   |-- host-tests -------- ffi + jsx + examples + install + runner + bundle
-  |-- host-benchmarks --- ffi bench + render bench
+  |-- host-benchmarks --- ffi bench + render bench (blocking)
   `-- quality-gate ------ aggregate pass/fail result
 ```
 
@@ -139,5 +142,6 @@ When intentional render changes cause golden mismatches:
 ## 6. Benchmark Baseline Notes
 
 - Criterion baselines are machine-local and are not committed to git.
-- CI benchmark jobs are primarily guardrail and reporting mechanisms for the tracked suites.
+- `native-benchmarks` is currently a reporting-only guardrail job for the tracked Criterion suites.
+- `host-benchmarks` is currently blocking for the scripted FFI and render budget checks.
 - `devtools_bench` exists in the source tree and should be used during devtools-sensitive changes even though it is not currently a blocking CI step.
