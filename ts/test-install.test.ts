@@ -8,6 +8,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "fs";
 import { resolve } from "path";
 import { resolveLibraryPath, getLibraryName } from "./src/resolver";
 import { formatLoadError } from "./src/diagnostics";
@@ -36,12 +37,26 @@ describe("getLibraryName", () => {
 
 describe("resolveLibraryPath", () => {
 	const originalEnv = process.env.KRAKEN_LIB_PATH;
+	const packageRoot = resolve(import.meta.dir, "src", "..");
+	const stagedDir = resolve(
+		packageRoot,
+		"prebuilds",
+		`${process.platform}-${process.arch}`,
+	);
+	const stagedLibPath = resolve(stagedDir, getLibraryName(process.platform));
+	const sourceBuild = resolve(
+		import.meta.dir,
+		`../native/target/release/${getLibraryName(process.platform)}`,
+	);
 
 	afterEach(() => {
 		if (originalEnv === undefined) {
 			delete process.env.KRAKEN_LIB_PATH;
 		} else {
 			process.env.KRAKEN_LIB_PATH = originalEnv;
+		}
+		if (existsSync(stagedLibPath)) {
+			rmSync(stagedDir, { recursive: true, force: true });
 		}
 	});
 
@@ -55,13 +70,18 @@ describe("resolveLibraryPath", () => {
 
 	test("respects KRAKEN_LIB_PATH env override", () => {
 		// Point to the actual source build so it resolves (platform-aware)
-		const sourceBuild = resolve(
-			import.meta.dir,
-			`../native/target/release/${getLibraryName(process.platform)}`,
-		);
 		process.env.KRAKEN_LIB_PATH = sourceBuild;
 		const libPath = resolveLibraryPath();
 		expect(libPath).toBe(sourceBuild);
+	});
+
+	test("prefers staged prebuild artifact when present", () => {
+		delete process.env.KRAKEN_LIB_PATH;
+		mkdirSync(stagedDir, { recursive: true });
+		copyFileSync(sourceBuild, stagedLibPath);
+
+		const libPath = resolveLibraryPath();
+		expect(libPath).toBe(stagedLibPath);
 	});
 
 	test("throws when KRAKEN_LIB_PATH points to nonexistent file", () => {

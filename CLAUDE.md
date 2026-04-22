@@ -110,7 +110,7 @@ Rust cdylib (single mutable UI authority)
 ### When changing the host layer
 1. Keep wrappers thin. Rust still owns mutable UI state and performance-critical semantics.
 2. Prefer composites over new native widgets unless the TechSpec or active Tasks plan explicitly justifies native promotion.
-3. Preserve the native library resolver contract: `KRAKEN_LIB_PATH` -> prebuilds -> local Cargo release artifact.
+3. Preserve the native library resolver contract: `KRAKEN_LIB_PATH` -> staged prebuilds -> local Cargo release artifact.
 
 ### When picking what to read
 - Product/scope question -> `docs/PRD.md`

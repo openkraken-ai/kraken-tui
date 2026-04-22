@@ -40,7 +40,7 @@
 
 | Artifact | Format | Source of Truth |
 | --- | --- | --- |
-| Native Core | Shared library (`.so`, `.dylib`, `.dll`) | `native/target/release/` for source builds; GitHub release assets for prebuilds |
+| Native Core | Shared library (`.so`, `.dylib`, `.dll`) | `native/target/release/` for source builds; versioned GitHub release assets for published native binaries |
 | Host Package | ESM TypeScript package | `ts/package.json`, `ts/src/` |
 | Release Artifacts | Versioned platform builds with `.sha256` sidecars | `.github/workflows/release.yml` |
 | Flagship Examples | Bun entrypoints | `examples/agent-console.ts`, `examples/ops-log-console.ts`, `examples/repo-inspector.ts` |
@@ -48,15 +48,15 @@
 
 ### 1.4 Release and Distribution Matrix
 
-| Platform | Architecture | Resolver Target |
-| --- | --- | --- |
-| Linux | x64 | `ts/prebuilds/linux-x64/` |
-| Linux | arm64 | `ts/prebuilds/linux-arm64/` |
-| macOS | arm64 | `ts/prebuilds/darwin-arm64/` |
-| macOS | x64 | `ts/prebuilds/darwin-x64/` |
-| Windows | x64 | `ts/prebuilds/win32-x64/` |
+| Platform | Architecture | Published release asset | Resolver target when a prebuild is staged locally |
+| --- | --- | --- | --- |
+| Linux | x64 | `kraken-tui-<tag>-linux-x64.so` | `ts/prebuilds/linux-x64/<libName>` |
+| Linux | arm64 | `kraken-tui-<tag>-linux-arm64.so` | `ts/prebuilds/linux-arm64/<libName>` |
+| macOS | arm64 | `kraken-tui-<tag>-darwin-arm64.dylib` | `ts/prebuilds/darwin-arm64/<libName>` |
+| macOS | x64 | `kraken-tui-<tag>-darwin-x64.dylib` | `ts/prebuilds/darwin-x64/<libName>` |
+| Windows | x64 | `kraken-tui-<tag>-win32-x64.dll` | `ts/prebuilds/win32-x64/<libName>` |
 
-The release workflow currently builds these targets and uploads versioned artifacts with SHA-256 sidecars. The runtime resolver searches `KRAKEN_LIB_PATH` first, then prebuild paths, then the local Cargo release output.
+The repo-owned release workflow currently publishes **versioned GitHub release assets** with SHA-256 sidecars. It does **not** populate `ts/prebuilds/` in-tree on its own. The resolver still supports `ts/prebuilds/...` as the expected layout for packaged or manually staged prebuilds after those published assets have been downloaded and renamed to the platform-specific `libName`.
 
 ## 2. Architecture Decision Records (ADRs)
 ### 2.1 Active Inherited Decisions
@@ -387,6 +387,9 @@ resolver_search_order:
   - ts/prebuilds/<platform>-<arch>/<libName>
   - native/target/release/<libName>
   - diagnostic_error
+notes:
+  - "GitHub Releases publish versioned assets."
+  - "Staging or renaming those assets into ts/prebuilds/<platform>-<arch>/<libName> is currently a packaging or manual install step outside the repo-owned release workflow."
 release_assets:
   - versioned_native_artifact
   - sha256_sidecar
@@ -520,6 +523,8 @@ cargo build --manifest-path native/Cargo.toml --release && bun run examples/repo
 | Goldens and native correctness | zero failures | `cargo test --manifest-path native/Cargo.toml` |
 | Transcript replay correctness | deterministic anchor, unread, and follow behavior | `ts/test-examples.test.ts` plus transcript-specific native tests |
 | Debug-off overhead | bounded and benchmarked | `native/benches/devtools_bench.rs` |
+
+Current CI validates the host benchmark and install surfaces on Linux. Cross-platform release artifacts are built in the release workflow, and the resolver path for staged prebuilds is covered by install smoke tests, but the full host benchmark matrix is not yet exercised on macOS and Windows in CI.
 
 ### 5.5 Documentation Drift-Prevention Rules
 - `PRD.md` stays conceptual and does not absorb stack or ABI detail.

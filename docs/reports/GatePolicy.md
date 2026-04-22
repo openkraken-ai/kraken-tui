@@ -11,6 +11,8 @@
 
 This document defines the current blocking quality gates for Kraken TUI release readiness. Gates marked as blocking are enforced in CI via `.github/workflows/ci.yml`. Additional local verification commands are listed where the source tree already provides them but CI does not yet treat them as blocking.
 
+Current CI executes the host test and benchmark surfaces on `ubuntu-latest`. Cross-platform release artifacts are built in the release workflow, but the full host verification matrix is not yet exercised on macOS and Windows in CI.
+
 ---
 
 ## 2. Gate Definitions

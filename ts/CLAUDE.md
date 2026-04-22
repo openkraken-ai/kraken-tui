@@ -51,7 +51,7 @@ bun run examples/accessibility-demo.tsx
 | `errors.ts` | `KrakenError` and FFI result translation |
 | `style.ts` | Host-side color and dimension parsing |
 | `theme.ts` | Theme wrapper API and built-in theme handles |
-| `resolver.ts` | Native artifact resolution: `KRAKEN_LIB_PATH` -> prebuilds -> source build |
+| `resolver.ts` | Native artifact resolution: `KRAKEN_LIB_PATH` -> staged prebuilds -> source build |
 | `diagnostics.ts` | Human-readable native-load remediation messages |
 | `dev.ts` | Dev session helper, overlay flags, trace flags, deterministic shutdown behavior |
 | `devtools/inspector.ts` | Widget tree and debug snapshot reader |
@@ -86,7 +86,7 @@ This layer translates developer intent into FFI calls or safe host composites. I
 ### Resolver Contract
 - Search order is deterministic:
   1. `KRAKEN_LIB_PATH`
-  2. `ts/prebuilds/<platform>-<arch>/`
+  2. staged `ts/prebuilds/<platform>-<arch>/`
   3. `native/target/release/`
 - Keep install and diagnostic messaging aligned with `resolver.ts` and `diagnostics.ts`.
 

@@ -10,11 +10,11 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { dlopen, CString, type FFIType } from "bun:ffi";
-import { resolve } from "path";
+import { resolveLibraryPath } from "./src/resolver";
 
 // ── Load native library ─────────────────────────────────────────────────────
 
-const LIB_PATH = resolve(import.meta.dir, "../native/target/release/libkraken_tui.so");
+const LIB_PATH = resolveLibraryPath();
 
 const lib = dlopen(LIB_PATH, {
 	// Lifecycle

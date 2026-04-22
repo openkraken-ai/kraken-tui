@@ -51,7 +51,7 @@ Kraken is aimed at developer tools, agent consoles, log viewers, and dense pane-
 - Runner API with `app.run()` / `createLoop()`
 - Accessibility foundation: roles, labels, descriptions, accessibility events
 - Devtools: overlays, snapshots, traces, perf HUD helpers, and dev sessions
-- Native artifact resolver: `KRAKEN_LIB_PATH` -> prebuilds -> local Cargo build
+- Native artifact resolver: `KRAKEN_LIB_PATH` -> staged prebuilds -> local Cargo build
 
 ## Quick Start (Source Checkout)
 

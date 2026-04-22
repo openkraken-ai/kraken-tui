@@ -13,8 +13,9 @@
 import { dlopen, type FFIType } from "bun:ffi";
 import { mkdirSync, writeFileSync } from "fs";
 import { resolve } from "path";
+import { resolveLibraryPath } from "./src/resolver";
 
-const LIB_PATH = resolve(import.meta.dir, "../native/target/release/libkraken_tui.so");
+const LIB_PATH = resolveLibraryPath();
 const ARTIFACT_DIR = resolve(import.meta.dir, ".artifacts");
 const ARTIFACT_PATH = resolve(ARTIFACT_DIR, "guardrails-latest.json");
 
