@@ -2,9 +2,9 @@ name: CI — Tests, Benchmarks, and Quality Gates
 
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [master, "claude/**"]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read

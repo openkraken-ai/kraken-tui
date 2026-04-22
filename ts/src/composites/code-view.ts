@@ -257,6 +257,12 @@ export class DiffView {
 	getMode(): DiffMode {
 		return this.mode;
 	}
+
+	setLineNumbers(show: boolean): void {
+		this.leftView.setLineNumbers(show);
+		this.rightView?.setLineNumbers(show);
+		this.unifiedView?.setLineNumbers(show);
+	}
 }
 
 /**

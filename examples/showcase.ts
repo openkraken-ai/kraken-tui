@@ -147,6 +147,9 @@ function createSunsetTheme(): Theme {
 }
 
 const app = Kraken.init();
+const initialTerminalSize = app.getTerminalSize();
+const compactLayout =
+  initialTerminalSize.width <= 80 || initialTerminalSize.height <= 24;
 
 const auroraTheme = createAuroraTheme();
 const sunsetTheme = createSunsetTheme();
@@ -546,8 +549,8 @@ const tree = jsxs("Box", {
           key: "control-deck",
           width: "42%",
           border: "rounded",
-          padding: 1,
-          gap: 1,
+          padding: compactLayout ? 0 : 1,
+          gap: compactLayout ? 0 : 1,
           flexDirection: "column",
           flexGrow: 1,
           flexShrink: 1,
@@ -581,7 +584,7 @@ const tree = jsxs("Box", {
               key: "theme-select",
               options: themeModes.map((mode) => mode.name),
               width: "100%",
-              height: 3,
+              height: compactLayout ? 2 : 3,
               border: "single",
               focusable: true,
               role: "list",
@@ -599,7 +602,7 @@ const tree = jsxs("Box", {
               value: textareaSeed,
               wrap: wrapEnabled,
               width: "100%",
-              height: 3,
+              height: compactLayout ? 2 : 3,
               border: "single",
               focusable: true,
               role: "textarea",
@@ -627,7 +630,7 @@ const tree = jsxs("Box", {
               border: "single",
               fg: codeFgColor,
               bg: codeBgColor,
-              height: 2,
+              height: compactLayout ? 1 : 2,
               role: "status",
               "aria-label": "Syntax highlighted Rust snippet",
             }),
@@ -640,14 +643,14 @@ const tree = jsxs("Box", {
           flexGrow: 1,
           flexShrink: 1,
           flexBasis: 0,
-          gap: 1,
+          gap: compactLayout ? 0 : 1,
           children: [
             jsxs("Box", {
               key: "hero",
               border: "rounded",
-              padding: 1,
-              gap: 1,
-              height: 11,
+              padding: compactLayout ? 0 : 1,
+              gap: compactLayout ? 0 : 1,
+              height: compactLayout ? 6 : 11,
               flexDirection: "column",
               flexShrink: 0,
               role: "status",
@@ -716,7 +719,7 @@ const tree = jsxs("Box", {
             jsxs("Box", {
               key: "runtime-host",
               border: "single",
-              padding: [0, 1, 0, 1],
+              padding: compactLayout ? 0 : [0, 1, 0, 1],
               height: 4,
               flexDirection: "column",
               flexShrink: 0,

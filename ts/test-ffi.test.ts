@@ -2616,6 +2616,53 @@ describe("FFI integration", () => {
 			ffi.tui_destroy_subtree(root);
 		});
 
+		test("modal overlay traps focus even when current focus is outside it", () => {
+			const root = ffi.tui_create_node(0);
+			const outsideA = ffi.tui_create_node(2);
+			const outsideB = ffi.tui_create_node(2);
+			const overlay = ffi.tui_create_node(9);
+			const inside = ffi.tui_create_node(2);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, outsideA)).toBe(0);
+			expect(ffi.tui_append_child(root, outsideB)).toBe(0);
+			expect(ffi.tui_append_child(root, overlay)).toBe(0);
+			expect(ffi.tui_append_child(overlay, inside)).toBe(0);
+			expect(ffi.tui_overlay_set_open(overlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(overlay, 1)).toBe(0);
+			expect(ffi.tui_focus(outsideA)).toBe(0);
+
+			expect(ffi.tui_focus_next()).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(inside);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
+		test("hiding a focused child modal keeps focus trapped in its parent modal", () => {
+			const root = ffi.tui_create_node(0);
+			const background = ffi.tui_create_node(2);
+			const parentOverlay = ffi.tui_create_node(9);
+			const parentInput = ffi.tui_create_node(2);
+			const childOverlay = ffi.tui_create_node(9);
+			const childInput = ffi.tui_create_node(2);
+
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, background)).toBe(0);
+			expect(ffi.tui_append_child(root, parentOverlay)).toBe(0);
+			expect(ffi.tui_append_child(parentOverlay, parentInput)).toBe(0);
+			expect(ffi.tui_append_child(parentOverlay, childOverlay)).toBe(0);
+			expect(ffi.tui_append_child(childOverlay, childInput)).toBe(0);
+			expect(ffi.tui_overlay_set_open(parentOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(parentOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_open(childOverlay, 1)).toBe(0);
+			expect(ffi.tui_overlay_set_modal(childOverlay, 1)).toBe(0);
+			expect(ffi.tui_focus(childInput)).toBe(0);
+
+			expect(ffi.tui_set_visible(childOverlay, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(parentInput);
+
+			ffi.tui_destroy_subtree(root);
+		});
+
 		test("closing overlay does not restore focus into hidden parent subtree", () => {
 			const root = ffi.tui_create_node(0);
 			const panel = ffi.tui_create_node(0);

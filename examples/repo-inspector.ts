@@ -344,6 +344,7 @@ let diffLeftContent = "";
 function toggleLineNumbers(): void {
 	showLineNumbers = !showLineNumbers;
 	codeView.setLineNumbers(showLineNumbers);
+	diffView.setLineNumbers(showLineNumbers);
 }
 
 function toggleDevOverlays(): void {

@@ -881,16 +881,13 @@ pub(crate) fn focus_prev(ctx: &mut TuiContext) {
 }
 
 /// Collect focusable nodes in depth-first tree order.
-/// If the currently focused node is inside a modal open overlay,
-/// only nodes within that overlay's subtree are returned (focus trapping).
+/// If any modal open overlay is active, only nodes within that overlay's
+/// subtree are returned (focus trapping).
 fn collect_focusable_order(ctx: &TuiContext) -> Vec<u32> {
-    // Check if focus is inside a modal overlay — if so, trap focus within it.
-    if let Some(focused) = ctx.focused {
-        if let Some(modal_root) = find_modal_overlay_ancestor(ctx, focused) {
-            let mut result = Vec::new();
-            collect_focusable_recursive(ctx, modal_root, &mut result);
-            return result;
-        }
+    if let Some(modal_root) = find_active_modal_root(ctx) {
+        let mut result = Vec::new();
+        collect_focusable_recursive(ctx, modal_root, &mut result);
+        return result;
     }
 
     let mut result = Vec::new();
@@ -909,6 +906,15 @@ fn collect_focusable_recursive(ctx: &TuiContext, handle: u32, result: &mut Vec<u
         if node.node_type == NodeType::Overlay {
             if let Some(ref ov) = node.overlay_state {
                 if !ov.open {
+                    return;
+                }
+            }
+        }
+        // After at least one render, skip nodes whose computed layout has
+        // collapsed to zero area so focus cannot land in invisible panes.
+        if ctx.frame_seq > 0 {
+            if let Ok((_, _, width, height)) = crate::layout::get_layout(ctx, handle) {
+                if width <= 0 || height <= 0 {
                     return;
                 }
             }
@@ -952,6 +958,46 @@ fn find_modal_overlay_ancestor(ctx: &TuiContext, handle: u32) -> Option<u32> {
         }
         current = node.parent?;
     }
+}
+
+/// Find the top-most active modal overlay in tree/render order.
+fn find_active_modal_root(ctx: &TuiContext) -> Option<u32> {
+    let root = ctx.root?;
+    find_active_modal_root_recursive(ctx, root)
+}
+
+fn find_active_modal_root_recursive(ctx: &TuiContext, handle: u32) -> Option<u32> {
+    let node = ctx.nodes.get(&handle)?;
+    if !node.visible {
+        return None;
+    }
+    if node.node_type == NodeType::Overlay {
+        if let Some(ref ov) = node.overlay_state {
+            if !ov.open {
+                return None;
+            }
+        }
+    }
+
+    let mut active = None;
+    for &child in &node.children {
+        if let Some(child_modal) = find_active_modal_root_recursive(ctx, child) {
+            active = Some(child_modal);
+        }
+    }
+    if active.is_some() {
+        return active;
+    }
+
+    if node.node_type == NodeType::Overlay {
+        if let Some(ref ov) = node.overlay_state {
+            if ov.modal && ov.open {
+                return Some(handle);
+            }
+        }
+    }
+
+    None
 }
 
 /// Check if `handle` is a descendant of `ancestor`.
@@ -1130,6 +1176,7 @@ mod tests {
     use crate::terminal::MockBackend;
     use crate::tree;
     use crate::types::{NodeType, TuiEventType};
+    use taffy::style_helpers::{length, percent};
 
     fn test_ctx() -> TuiContext {
         TuiContext::new(Box::new(MockBackend::new(80, 24)))
@@ -1159,6 +1206,59 @@ mod tests {
 
         focus_prev(&mut ctx);
         assert_eq!(ctx.focused, Some(input2));
+    }
+
+    #[test]
+    fn test_focus_order_skips_zero_width_splitpane_descendants() {
+        let mut ctx = test_ctx();
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let splitpane = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let left = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let left_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let right = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let right_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+        let outside_input = tree::create_node(&mut ctx, NodeType::Input).unwrap();
+
+        tree::append_child(&mut ctx, root, splitpane).unwrap();
+        tree::append_child(&mut ctx, root, outside_input).unwrap();
+        tree::append_child(&mut ctx, splitpane, left).unwrap();
+        tree::append_child(&mut ctx, left, left_input).unwrap();
+        tree::append_child(&mut ctx, splitpane, right).unwrap();
+        tree::append_child(&mut ctx, right, right_input).unwrap();
+        ctx.root = Some(root);
+
+        {
+            let root_taffy = ctx.nodes[&root].taffy_node;
+            let mut style = ctx.tree.style(root_taffy).unwrap().clone();
+            style.size.width = length(80.0);
+            style.size.height = length(24.0);
+            style.flex_direction = taffy::FlexDirection::Column;
+            ctx.tree.set_style(root_taffy, style).unwrap();
+        }
+        for handle in [left, left_input, right, right_input] {
+            let taffy = ctx.nodes[&handle].taffy_node;
+            let mut style = ctx.tree.style(taffy).unwrap().clone();
+            style.size.width = percent(1.0);
+            style.size.height = percent(1.0);
+            ctx.tree.set_style(taffy, style).unwrap();
+        }
+        {
+            let taffy = ctx.nodes[&outside_input].taffy_node;
+            let mut style = ctx.tree.style(taffy).unwrap().clone();
+            style.size.width = length(10.0);
+            style.size.height = length(1.0);
+            ctx.tree.set_style(taffy, style).unwrap();
+        }
+
+        crate::splitpane::set_ratio(&mut ctx, splitpane, 0).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+        ctx.frame_seq = 1;
+
+        let (_, _, width, _) = crate::layout::get_layout(&ctx, left_input).unwrap();
+        assert_eq!(width, 0);
+
+        let order = collect_focusable_order(&ctx);
+        assert_eq!(order, vec![outside_input]);
     }
 
     #[test]
