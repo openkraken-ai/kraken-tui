@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, afterEach } from "bun:test";
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from "fs";
 import { normalize, resolve } from "path";
 import { resolveLibraryPath, getLibraryName } from "./src/resolver";
 import { formatLoadError } from "./src/diagnostics";
@@ -48,8 +48,10 @@ describe("resolveLibraryPath", () => {
 		import.meta.dir,
 		`../native/target/release/${getLibraryName(process.platform)}`,
 	);
+	const hiddenStagedLibPath = `${stagedLibPath}.source-build-smoke-hidden-${process.pid}`;
 	let createdStagedDir = false;
 	let createdStagedLib = false;
+	let hidExistingStagedLib = false;
 
 	afterEach(() => {
 		if (originalEnv === undefined) {
@@ -61,18 +63,26 @@ describe("resolveLibraryPath", () => {
 		if (createdStagedLib && existsSync(stagedLibPath)) {
 			rmSync(stagedLibPath, { force: true });
 		}
+		if (hidExistingStagedLib && existsSync(hiddenStagedLibPath)) {
+			renameSync(hiddenStagedLibPath, stagedLibPath);
+		}
 		if (createdStagedDir && existsSync(stagedDir)) {
 			rmSync(stagedDir, { recursive: true, force: true });
 		}
 		createdStagedDir = false;
 		createdStagedLib = false;
+		hidExistingStagedLib = false;
 	});
 
 	test("resolves source build path in development", () => {
 		delete process.env.KRAKEN_LIB_PATH;
+		if (existsSync(stagedLibPath)) {
+			renameSync(stagedLibPath, hiddenStagedLibPath);
+			hidExistingStagedLib = true;
+		}
+
 		const libPath = resolveLibraryPath();
-		const expectedPath = existsSync(stagedLibPath) ? stagedLibPath : sourceBuild;
-		expect(normalize(libPath)).toBe(normalize(expectedPath));
+		expect(normalize(libPath)).toBe(normalize(sourceBuild));
 	});
 
 	test("respects KRAKEN_LIB_PATH env override", () => {

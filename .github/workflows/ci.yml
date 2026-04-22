@@ -41,10 +41,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Run writer benchmarks
-        run: cargo bench --manifest-path native/Cargo.toml --bench writer_bench 2>&1 | tee /tmp/writer_bench.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench --manifest-path native/Cargo.toml --bench writer_bench 2>&1 | tee /tmp/writer_bench.txt
 
       - name: Run text cache benchmarks
-        run: cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench 2>&1 | tee /tmp/cache_bench.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench 2>&1 | tee /tmp/cache_bench.txt
 
       - name: Report benchmark results
         run: |

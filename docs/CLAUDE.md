@@ -61,5 +61,5 @@
 ## Current Repo-Specific Notes
 
 - `TechSpec.md` is now a **current-state Brownfield spec**, not a future-phase memo.
-- `Tasks.md` has a small active docs/drift-control wave and a large archived v6/v4 delivery appendix.
+- `Tasks.md` currently marks the active plan as intentionally idle until a new post-v4 backlog is ratified, while preserving the large archived v6/v4 delivery appendix.
 - `reports/GatePolicy.md` reflects the current CI host test surface, including install smoke and runner tests.

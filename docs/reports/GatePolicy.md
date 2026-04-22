@@ -11,6 +11,8 @@
 
 This document defines the current quality gates for Kraken TUI release readiness. Some gates are blocking in CI, while others are reporting-only guardrails that still require human review. Additional local verification commands are listed where the source tree already provides them but CI does not yet treat them as blocking.
 
+For reporting-only benchmark jobs, the benchmark commands themselves are still expected to compile and run successfully in CI. "Reporting-only" means the job does not currently parse the emitted numbers into an automatic regression threshold failure.
+
 Current CI executes the host test and benchmark surfaces on `ubuntu-latest`. Cross-platform release artifacts are built in the release workflow, but the full host verification matrix is not yet exercised on macOS and Windows in CI.
 
 Repo-side host verification entrypoints that `dlopen` directly are expected to validate the local Cargo-built artifact rather than a staged prebuild, so branch verification is tied to the code under review.
@@ -46,7 +48,7 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 | **Threshold** | No materially suspicious regression in the benchmark output for tracked suites |
 | **CI Job** | `native-benchmarks` |
 | **CI Mode** | Reporting-only |
-| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` (results are reported, not threshold-failed by the job) |
+| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` must complete successfully in CI; the reported numbers are not yet parsed into an automatic regression threshold failure |
 | **Tracked suites** | `writer_compact_*`, `writer_emit_*`, `writer_pipeline_full`, `cache_insert_1000`, `cache_get_hit_1000`, `cache_eviction_pressure` |
 | **Local supplementary check** | `cargo bench --manifest-path native/Cargo.toml --bench devtools_bench` |
 
