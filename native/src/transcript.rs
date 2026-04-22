@@ -252,6 +252,7 @@ fn recompute_anchor_after_hidden_change(
     target_row: u32,
     was_tail_attached: bool,
 ) {
+    let previous_anchor = state.anchor_kind.clone();
     let total = compute_total_visible_rows(state);
     if total == 0 {
         state.anchor_kind = ViewportAnchorKind::Tail;
@@ -265,6 +266,50 @@ fn recompute_anchor_after_hidden_change(
         state.anchor_kind = ViewportAnchorKind::Tail;
         state.tail_attached = true;
         return;
+    }
+
+    match previous_anchor {
+        ViewportAnchorKind::BlockStart {
+            block_id,
+            row_offset,
+        } => {
+            if let Some(&idx) = state.block_index.get(&block_id) {
+                if !is_block_hidden(state, &state.blocks[idx]) {
+                    let block_rows = if state.blocks[idx].collapsed {
+                        1
+                    } else {
+                        state.blocks[idx].rendered_rows
+                    };
+                    state.anchor_kind = ViewportAnchorKind::BlockStart {
+                        block_id,
+                        row_offset: row_offset.min(block_rows.saturating_sub(1)),
+                    };
+                    state.tail_attached = false;
+                    return;
+                }
+            }
+        }
+        ViewportAnchorKind::FocusedBlock {
+            block_id,
+            row_offset,
+        } => {
+            if let Some(&idx) = state.block_index.get(&block_id) {
+                if !is_block_hidden(state, &state.blocks[idx]) {
+                    let block_rows = if state.blocks[idx].collapsed {
+                        1
+                    } else {
+                        state.blocks[idx].rendered_rows
+                    };
+                    state.anchor_kind = ViewportAnchorKind::FocusedBlock {
+                        block_id,
+                        row_offset: row_offset.min(block_rows.saturating_sub(1)),
+                    };
+                    state.tail_attached = false;
+                    return;
+                }
+            }
+        }
+        ViewportAnchorKind::Tail => {}
     }
 
     let max_row = total.saturating_sub(state.viewport_rows);
@@ -568,17 +613,29 @@ pub(crate) fn jump_to_block(
         _ => return Err(format!("Invalid align: {align}")),
     };
 
-    // Set anchor to the target block. For simplicity we always anchor at the
-    // block's start (row_offset=0). Center and bottom alignment are handled
-    // by adjusting the viewport computation, but the anchor block is the same.
-    state.anchor_kind = ViewportAnchorKind::BlockStart {
-        block_id,
-        row_offset: 0,
+    let block_row = block_start_row(state, block_id).unwrap_or(0);
+    let block_rows = if state.blocks[idx].collapsed {
+        1
+    } else {
+        state.blocks[idx].rendered_rows
     };
+    let target_row = match align {
+        0 => block_row,
+        1 => {
+            let offset = state.viewport_rows.saturating_sub(block_rows) / 2;
+            block_row.saturating_sub(offset)
+        }
+        2 => {
+            let offset = state.viewport_rows.saturating_sub(block_rows);
+            block_row.saturating_sub(offset)
+        }
+        _ => unreachable!(),
+    };
+    let max_row = compute_total_visible_rows(state).saturating_sub(state.viewport_rows);
+    set_anchor_to_row(state, target_row.min(max_row));
 
     // Check if we landed at the tail
     let total = compute_total_visible_rows(state);
-    let block_row = block_start_row(state, block_id).unwrap_or(0);
     if block_row + state.viewport_rows >= total {
         state.tail_attached = true;
         state.anchor_kind = ViewportAnchorKind::Tail;
@@ -622,7 +679,9 @@ pub(crate) fn jump_to_unread(ctx: &mut TuiContext, handle: u32) -> Result<(), St
         // Clear unread state for blocks now visible
         let (start, end) = compute_visible_range(state);
         for i in start..end.min(state.blocks.len()) {
-            state.blocks[i].unread = false;
+            if !is_block_hidden(state, &state.blocks[i]) {
+                state.blocks[i].unread = false;
+            }
         }
         // Recompute unread count and anchor
         recompute_unread_state(state);
@@ -1524,6 +1583,30 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_jump_to_block_respects_align() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 5;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        jump_to_block(&mut ctx, handle, 5, 0).unwrap();
+        assert_eq!(anchor_to_row(validate_transcript(&ctx, handle).unwrap()), 4);
+
+        jump_to_block(&mut ctx, handle, 5, 1).unwrap();
+        assert_eq!(anchor_to_row(validate_transcript(&ctx, handle).unwrap()), 2);
+
+        jump_to_block(&mut ctx, handle, 5, 2).unwrap();
+        assert_eq!(anchor_to_row(validate_transcript(&ctx, handle).unwrap()), 0);
+    }
+
     // ====================================================================
     // TASK-I2: Anchor and Follow Mode Tests
     // ====================================================================
@@ -2398,6 +2481,60 @@ mod tests {
     }
 
     #[test]
+    fn test_jump_to_unread_keeps_hidden_unread_blocks_marked_unread() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 3;
+        }
+
+        for i in 1..=9 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        jump_to_block(&mut ctx, handle, 1, 0).unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            10,
+            TranscriptBlockKind::Message,
+            2,
+            "visible",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            11,
+            TranscriptBlockKind::Message,
+            2,
+            "hidden",
+        )
+        .unwrap();
+        append_block(
+            &mut ctx,
+            handle,
+            12,
+            TranscriptBlockKind::Message,
+            2,
+            "visible",
+        )
+        .unwrap();
+        set_hidden(&mut ctx, handle, 11, true).unwrap();
+
+        jump_to_unread(&mut ctx, handle).unwrap();
+
+        let state = validate_transcript(&ctx, handle).unwrap();
+        assert!(!state.blocks[9].unread);
+        assert!(state.blocks[10].unread);
+        assert!(!state.blocks[11].unread);
+        assert_eq!(state.unread_count, 1);
+        assert_eq!(state.unread_anchor, Some(11));
+    }
+
+    #[test]
     fn test_mark_read_clears_hidden_unread_blocks() {
         let mut ctx = test_ctx();
         let handle = create_transcript(&mut ctx);
@@ -2426,6 +2563,51 @@ mod tests {
 
         mark_read(&mut ctx, handle).unwrap();
         assert_eq!(get_unread_count(&ctx, handle).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_hidden_toggle_preserves_anchor_block() {
+        let mut ctx = test_ctx();
+        let handle = create_transcript(&mut ctx);
+
+        {
+            let state = validate_transcript_mut(&mut ctx, handle).unwrap();
+            state.viewport_rows = 3;
+        }
+
+        for i in 1..=10 {
+            append_block(&mut ctx, handle, i, TranscriptBlockKind::Message, 2, "msg").unwrap();
+        }
+
+        jump_to_block(&mut ctx, handle, 5, 0).unwrap();
+
+        set_hidden(&mut ctx, handle, 1, true).unwrap();
+        match &validate_transcript(&ctx, handle).unwrap().anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => assert_eq!(*block_id, 5),
+            other => panic!(
+                "Expected BlockStart at 5 after hiding block 1, got {:?}",
+                other
+            ),
+        }
+
+        set_hidden(&mut ctx, handle, 2, true).unwrap();
+        match &validate_transcript(&ctx, handle).unwrap().anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => assert_eq!(*block_id, 5),
+            other => panic!(
+                "Expected BlockStart at 5 after hiding block 2, got {:?}",
+                other
+            ),
+        }
+
+        set_hidden(&mut ctx, handle, 1, false).unwrap();
+        set_hidden(&mut ctx, handle, 2, false).unwrap();
+        match &validate_transcript(&ctx, handle).unwrap().anchor_kind {
+            ViewportAnchorKind::BlockStart { block_id, .. } => assert_eq!(*block_id, 5),
+            other => panic!(
+                "Expected BlockStart at 5 after restoring filters, got {:?}",
+                other
+            ),
+        }
     }
 
     #[test]

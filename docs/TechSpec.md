@@ -446,12 +446,19 @@ pub struct TuiContext {
 
 All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and debug/devtools symbols without breaking the existing runner, widget, theme, or diagnostics contracts.
 
-### 4.3 v4 Additions (New Symbols)
-
-#### 4.3.1 Transcript Surface (+12)
+The carried-forward layout surface also includes:
 
 | Function | Signature | Returns | Description |
 | -------- | --------- | ------- | ----------- |
+| `tui_set_layout_flex_factor` | `(u32 handle, u32 prop, f32 value) -> i32` | 0 / -1 | Set `flex_grow`, `flex_shrink`, or fixed `flex_basis`; `prop`: 0=grow, 1=shrink, 2=basis |
+
+### 4.3 v4 Additions (New Symbols)
+
+#### 4.3.1 Transcript Surface (+14)
+
+| Function | Signature | Returns | Description |
+| -------- | --------- | ------- | ----------- |
+| `tui_transcript_clear` | `(u32 handle) -> i32` | 0 / -1 | Clear all transcript blocks and reset viewport/unread state |
 | `tui_transcript_append_block` | `(u32 handle, u64 block_id, u8 kind, u8 role, *const u8 ptr, u32 len) -> i32` | 0 / -1 | Append a new logical block |
 | `tui_transcript_patch_block` | `(u32 handle, u64 block_id, u8 patch_mode, *const u8 ptr, u32 len) -> i32` | 0 / -1 | `patch_mode`: 0=append text, 1=replace text |
 | `tui_transcript_finish_block` | `(u32 handle, u64 block_id) -> i32` | 0 / -1 | Mark a streaming block as complete |
@@ -462,6 +469,7 @@ All implemented v3 symbols remain valid. v4 adds transcript, split-pane, and deb
 | `tui_transcript_jump_to_unread` | `(u32 handle) -> i32` | 0 / -1 | Jump to the earliest unread anchor |
 | `tui_transcript_set_follow_mode` | `(u32 handle, u8 mode) -> i32` | 0 / -1 | Set `FollowMode` |
 | `tui_transcript_get_follow_mode` | `(u32 handle) -> i32` | mode / -1 | Read current `FollowMode` |
+| `tui_transcript_set_role_color` | `(u32 handle, u8 role, u32 color) -> i32` | 0 / -1 | Override the foreground color for one transcript role; `role`: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning |
 | `tui_transcript_mark_read` | `(u32 handle) -> i32` | 0 / -1 | Mark all unread blocks in the transcript as read |
 | `tui_transcript_get_unread_count` | `(u32 handle) -> i32` | count / -1 | Read unread block count |
 
@@ -509,13 +517,13 @@ Counters `0..13` remain unchanged from the v3 baseline. v4 adds:
 
 ### 4.6 Symbol Count
 
-- Current implemented baseline at end of v3: **142**
-- v4 additions in this spec: **+25**
-- Projected total after v4 MVP: **167**
+- Current implemented baseline at end of v3: **143**
+- v4 additions in this spec: **+27**
+- Current implemented total after v4 MVP: **170**
 
 Breakdown of v4 additions:
 
-- Transcript: +12
+- Transcript: +14
 - SplitPane: +6
 - Debug/devtools: +7
 
@@ -525,6 +533,8 @@ Breakdown of v4 additions:
 
 ```ts
 class TranscriptView extends Widget {
+  clear(): void;
+
   appendBlock(input: {
     id: bigint | number;
     kind: "message" | "toolCall" | "toolResult" | "reasoning" | "activity" | "divider";
@@ -542,7 +552,12 @@ class TranscriptView extends Widget {
   setCollapsed(id: bigint | number, collapsed: boolean): void;
   setHidden(id: bigint | number, hidden: boolean): void;
   setFollowMode(mode: "manual" | "tailLocked" | "tailWhileNearBottom"): void;
+  getFollowMode(): "manual" | "tailLocked" | "tailWhileNearBottom";
+  jumpToBlock(id: bigint | number, align?: "top" | "center" | "bottom"): void;
   jumpToUnread(): void;
+  markRead(): void;
+  getUnreadCount(): number;
+  setRoleColor(role: "system" | "user" | "assistant" | "tool" | "reasoning", color: string | number): void;
 }
 ```
 

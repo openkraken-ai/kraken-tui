@@ -1,8 +1,8 @@
 /**
  * Audit harness: loads an example with Kraken.init() intercepted into
  * Kraken.initHeadless(cols, rows). Sets KRAKEN_AUDIT_RENDER_ONCE so the
- * example's event loop renders once and exits. Prints the layout tree
- * and a list of detected issues.
+ * example's event loop renders a small deterministic number of ticks and
+ * exits. Prints the layout tree and a list of detected issues.
  *
  * Usage: bun run audit/run-example.ts <example-path> [cols] [rows]
  */
@@ -12,6 +12,7 @@ import { Kraken } from "../ts/src/app";
 import { ffi } from "../ts/src/ffi";
 
 process.env.KRAKEN_AUDIT_RENDER_ONCE = "1";
+process.env.KRAKEN_AUDIT_TICKS ??= "8";
 
 const rawPath = process.argv[2];
 const cols = parseInt(process.argv[3] ?? "100", 10);

@@ -314,7 +314,12 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
             }
         };
 
-        // Primary child: fixed percentage, shrinkable under pressure
+        let exact_primary = (usable * (state.primary_ratio_permille as f32) / 1000.0).round();
+        let exact_primary = exact_primary.clamp(0.0, usable);
+        let exact_secondary = (usable - exact_primary).max(0.0);
+
+        // Primary child: use exact cell lengths after layout is known so the
+        // ratio remains stable even when children carry width/height: 100%.
         if let Some(primary) = ctx.nodes.get(&children[0]) {
             let primary_taffy = primary.taffy_node;
             let mut style = ctx
@@ -322,7 +327,11 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .style(primary_taffy)
                 .map_err(|e| format!("Taffy style read failed: {e:?}"))?
                 .clone();
-            style.flex_basis = percent(ratio_pct / 100.0);
+            style.flex_basis = if available > 0.0 {
+                length(exact_primary)
+            } else {
+                percent(ratio_pct / 100.0)
+            };
             style.flex_grow = 0.0;
             style.flex_shrink = 1.0;
 
@@ -349,7 +358,9 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .map_err(|e| format!("Taffy set_style failed: {e:?}"))?;
         }
 
-        // Secondary child: takes remaining space, shrinkable under pressure
+        // Secondary child: explicitly reserve the remaining cells once the
+        // container size is known so its own width/height styles do not skew
+        // the requested ratio.
         if let Some(secondary) = ctx.nodes.get(&children[1]) {
             let secondary_taffy = secondary.taffy_node;
             let mut style = ctx
@@ -357,8 +368,12 @@ pub(crate) fn sync_children_layout(ctx: &mut TuiContext, handle: u32) -> Result<
                 .style(secondary_taffy)
                 .map_err(|e| format!("Taffy style read failed: {e:?}"))?
                 .clone();
-            style.flex_basis = auto();
-            style.flex_grow = 1.0;
+            style.flex_basis = if available > 0.0 {
+                length(exact_secondary)
+            } else {
+                percent((100.0 - ratio_pct) / 100.0)
+            };
+            style.flex_grow = 0.0;
             style.flex_shrink = 1.0;
 
             // Set min size based on axis
@@ -1123,6 +1138,49 @@ mod tests {
         assert_eq!(delta_200, 50);
         // Different widths produce different permille deltas
         assert_ne!(delta_100, delta_200);
+    }
+
+    #[test]
+    fn test_ratio_stays_close_with_full_size_children() {
+        let mut ctx = test_ctx();
+        let sp = tree::create_node(&mut ctx, NodeType::SplitPane).unwrap();
+        let c1 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let c2 = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        ctx.root = Some(sp);
+        tree::append_child(&mut ctx, sp, c1).unwrap();
+        tree::append_child(&mut ctx, sp, c2).unwrap();
+
+        {
+            let tn = ctx.nodes[&sp].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = length(100.0);
+            s.size.height = length(24.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        for child in [c1, c2] {
+            let tn = ctx.nodes[&child].taffy_node;
+            let mut s = ctx.tree.style(tn).unwrap().clone();
+            s.size.width = percent(1.0);
+            s.size.height = percent(1.0);
+            ctx.tree.set_style(tn, s).unwrap();
+        }
+
+        set_ratio(&mut ctx, sp, 700).unwrap();
+        crate::layout::compute_layout(&mut ctx).unwrap();
+
+        let left = ctx.tree.layout(ctx.nodes[&c1].taffy_node).unwrap();
+        let right = ctx.tree.layout(ctx.nodes[&c2].taffy_node).unwrap();
+        let usable = left.size.width + right.size.width;
+        let left_ratio = if usable > 0.0 {
+            left.size.width / usable
+        } else {
+            0.0
+        };
+
+        assert!((usable + 1.0 - 100.0).abs() <= 0.5);
+        assert!((left_ratio - 0.70).abs() <= 0.02, "left_ratio={left_ratio}");
+        assert!(left.size.width > right.size.width);
     }
 
     // ================================================================

@@ -785,6 +785,33 @@ pub(crate) fn maybe_emit_accessibility_event(ctx: &mut TuiContext, new_focus: u3
     }
 }
 
+/// Restore focus after the previously focused widget became unavailable.
+/// Picks the first remaining focusable node in depth-first order and emits
+/// the expected FocusChange / Accessibility events. If nothing is focusable,
+/// emits a FocusChange to 0.
+pub(crate) fn refocus_after_loss(ctx: &mut TuiContext, old_focus: u32) {
+    let focusable_order = collect_focusable_order(ctx);
+    if let Some(&new_focus) = focusable_order.first() {
+        ctx.focused = Some(new_focus);
+        ctx.event_buffer
+            .push(TuiEvent::focus_change(old_focus, new_focus));
+        if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+            let detail = format!("Focus({old_focus}->{new_focus})");
+            crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, new_focus, detail);
+        }
+        maybe_emit_accessibility_event(ctx, new_focus);
+    } else {
+        ctx.focused = None;
+        if old_focus != 0 {
+            ctx.event_buffer.push(TuiEvent::focus_change(old_focus, 0));
+            if ctx.debug_mode && (ctx.debug_trace_flags & 0x2) != 0 {
+                let detail = format!("Focus({old_focus}->0)");
+                crate::devtools::push_trace(ctx, crate::types::trace_kind::FOCUS, 0, detail);
+            }
+        }
+    }
+}
+
 /// Advance focus to the next focusable node (depth-first tree order).
 pub(crate) fn focus_next(ctx: &mut TuiContext) {
     let focusable_order = collect_focusable_order(ctx);

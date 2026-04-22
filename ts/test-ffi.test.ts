@@ -54,6 +54,7 @@ const lib = dlopen(LIB_PATH, {
 	// Layout
 	tui_set_layout_dimension: { args: ["u32", "u32", "f32", "u8"] as FFIType[],  returns: "i32" as const },
 	tui_set_layout_flex:      { args: ["u32", "u32", "u32"] as FFIType[],        returns: "i32" as const },
+	tui_set_layout_flex_factor: { args: ["u32", "u32", "f32"] as FFIType[],      returns: "i32" as const },
 	tui_set_layout_edges:     { args: ["u32", "u32", "f32", "f32", "f32", "f32"] as FFIType[], returns: "i32" as const },
 	tui_set_layout_gap:       { args: ["u32", "f32", "f32"] as FFIType[],        returns: "i32" as const },
 	tui_get_layout:           { args: ["u32", "ptr", "ptr", "ptr", "ptr"] as FFIType[], returns: "i32" as const },
@@ -206,6 +207,8 @@ const lib = dlopen(LIB_PATH, {
 	tui_transcript_jump_to_unread:{ args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_set_follow_mode:{ args: ["u32", "u8"] as FFIType[],                           returns: "i32" as const },
 	tui_transcript_get_follow_mode:{ args: ["u32"] as FFIType[],                                 returns: "i32" as const },
+	tui_transcript_clear:         { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
+	tui_transcript_set_role_color:{ args: ["u32", "u8", "u32"] as FFIType[],                     returns: "i32" as const },
 	tui_transcript_mark_read:     { args: ["u32"] as FFIType[],                                  returns: "i32" as const },
 	tui_transcript_get_unread_count:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
 
@@ -507,6 +510,15 @@ describe("FFI integration", () => {
 		test("invalid dimension property returns -1", () => {
 			const h = ffi.tui_create_node(0);
 			expect(ffi.tui_set_layout_dimension(h, 99, 10, 1)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("flex factors accept grow, shrink, and basis", () => {
+			const h = ffi.tui_create_node(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 0, 1.5)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 1, 0.5)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 2, 12)).toBe(0);
+			expect(ffi.tui_set_layout_flex_factor(h, 99, 1)).toBe(-1);
 			ffi.tui_destroy_node(h);
 		});
 
@@ -1265,6 +1277,33 @@ describe("FFI integration", () => {
 			ffi.tui_set_focusable(h, 0);
 			expect(ffi.tui_is_focusable(h)).toBe(0);
 			ffi.tui_destroy_node(h);
+		});
+
+		test("hiding a focused subtree restores focus and emits FocusChange", () => {
+			const root = ffi.tui_create_node(0);
+			const fallback = ffi.tui_create_node(2);
+			const pane = ffi.tui_create_node(0);
+			const focused = ffi.tui_create_node(2);
+			expect(ffi.tui_set_root(root)).toBe(0);
+			expect(ffi.tui_append_child(root, fallback)).toBe(0);
+			expect(ffi.tui_append_child(root, pane)).toBe(0);
+			expect(ffi.tui_append_child(pane, focused)).toBe(0);
+			expect(ffi.tui_focus(focused)).toBe(0);
+
+			const eventBuf = new ArrayBuffer(24);
+			const eventView = new DataView(eventBuf);
+			while (ffi.tui_next_event(eventBuf) === 1) {
+				// Drain the focus event from the explicit tui_focus() call.
+			}
+
+			expect(ffi.tui_set_visible(pane, 0)).toBe(0);
+			expect(ffi.tui_get_focused()).toBe(fallback);
+			expect(ffi.tui_next_event(eventBuf)).toBe(1);
+			expect(eventView.getUint32(0, true)).toBe(4); // FocusChange
+			expect(eventView.getUint32(8, true)).toBe(focused);
+			expect(eventView.getUint32(12, true)).toBe(fallback);
+
+			ffi.tui_destroy_subtree(root);
 		});
 	});
 
@@ -2774,6 +2813,28 @@ describe("FFI integration", () => {
 			const h = ffi.tui_create_node(10);
 			// No unread — should succeed (no-op)
 			expect(ffi.tui_transcript_jump_to_unread(h)).toBe(0);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("clear resets blocks and unread state", () => {
+			const h = ffi.tui_create_node(10);
+			const c = new TextEncoder().encode("content");
+			for (let i = 1n; i <= 5n; i++) {
+				expect(ffi.tui_transcript_append_block(h, i, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			}
+			expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(0);
+			expect(ffi.tui_transcript_append_block(h, 6n, 0, 2, Buffer.from(c), c.length)).toBe(0);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(1);
+			expect(ffi.tui_transcript_clear(h)).toBe(0);
+			expect(ffi.tui_transcript_get_unread_count(h)).toBe(0);
+			expect(ffi.tui_transcript_jump_to_block(h, 1n, 0)).toBe(-1);
+			ffi.tui_destroy_node(h);
+		});
+
+		test("role color setter validates role indices", () => {
+			const h = ffi.tui_create_node(10);
+			expect(ffi.tui_transcript_set_role_color(h, 2, 0x01ff8800)).toBe(0);
+			expect(ffi.tui_transcript_set_role_color(h, 99, 0x01ff8800)).toBe(-1);
 			ffi.tui_destroy_node(h);
 		});
 

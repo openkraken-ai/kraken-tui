@@ -238,6 +238,10 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
         let mut ctx = context_write()?;
         ctx.validate_handle(handle)?;
         let is_visible = visible != 0;
+        let old_focus = ctx.focused.unwrap_or(0);
+        let focused_under = ctx
+            .focused
+            .is_some_and(|focused| crate::tree::is_self_or_descendant(&ctx, focused, handle));
         if !is_visible {
             crate::tree::clear_focus_if_under(&mut ctx, handle);
         }
@@ -262,6 +266,9 @@ pub extern "C" fn tui_set_visible(handle: u32, visible: u8) -> i32 {
         ctx.tree
             .set_style(taffy_node, style)
             .map_err(|e| format!("Failed to set style: {e:?}"))?;
+        if !is_visible && focused_under && ctx.focused.is_none() {
+            event::refocus_after_loss(&mut ctx, old_focus);
+        }
         Ok(0)
     })
 }
