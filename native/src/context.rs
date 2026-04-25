@@ -12,6 +12,8 @@ use std::time::Instant;
 
 use crate::animation::{Animation, ChoreographyGroup};
 use crate::terminal::TerminalBackend;
+use crate::text_buffer::TextBuffer;
+use crate::text_view::TextView;
 use crate::theme::Theme;
 use crate::types::{Buffer, DebugFrameSnapshot, DebugTraceEntry, TextCache, TuiEvent, TuiNode};
 use crate::writer::WriterState;
@@ -39,6 +41,11 @@ pub struct TuiContext {
     pub syntax_set: syntect::parsing::SyntaxSet,
     pub theme_set: syntect::highlighting::ThemeSet,
     pub text_cache: TextCache,
+
+    // Native Text Substrate (ADR-T37, Epic M)
+    pub text_buffers: HashMap<u32, TextBuffer>,
+    pub text_views: HashMap<u32, TextView>,
+    pub next_substrate_handle: u32,
 
     // Theme Module
     pub themes: HashMap<u32, Theme>,
@@ -106,6 +113,10 @@ impl TuiContext {
             theme_set: syntect::highlighting::ThemeSet::load_defaults(),
             text_cache: TextCache::default(),
 
+            text_buffers: HashMap::new(),
+            text_views: HashMap::new(),
+            next_substrate_handle: 1, // Handle(0) reserved as invalid sentinel
+
             themes: {
                 let mut t = HashMap::new();
                 crate::theme::create_builtin_themes(&mut t);
@@ -163,6 +174,18 @@ impl TuiContext {
         if self.debug_mode {
             eprintln!("[kraken-tui] {msg}");
         }
+    }
+
+    /// Allocate a fresh handle for a substrate object (`TextBuffer`,
+    /// `TextView`, `EditBuffer`). Substrate handles share a counter so a
+    /// handle from one map is never confused with one from another.
+    pub fn alloc_substrate_handle(&mut self) -> Result<u32, String> {
+        let h = self.next_substrate_handle;
+        self.next_substrate_handle = self
+            .next_substrate_handle
+            .checked_add(1)
+            .ok_or_else(|| "Substrate handle counter overflow".to_string())?;
+        Ok(h)
     }
 }
 

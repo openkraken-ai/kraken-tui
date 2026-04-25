@@ -1,6 +1,7 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.2.0 - Promoted the Native Text Substrate sections from "target state" to current Brownfield reality: `TextBuffer`, `TextView`, and the unified text renderer have shipped under Epic M with their documented ABI surfaces, structural gates, and Unicode test coverage; `EditBuffer` remains target state pending CORE-N2.
 - v7.1.0 - Ratified the Native Text/Cell/View Substrate scope: added ADRs for substrate ownership, operation-based edit history, transcript content backing, and deferral of terminal capability hardening; added state, ABI, and structural acceptance gates for `TextBuffer`, `TextView`, and `EditBuffer`.
 - v7.0.0 - Converted the prior forward-looking delta spec into the canonical brownfield implementation contract and reconciled transcript, devtools, split-pane, and flagship-example scope with the current source tree.
 - v6.0.0 - Reoriented the next planned phase around transcript-first UX, developer tooling, minimal native expansion, and flagship examples for developer and agent workflows.
@@ -130,7 +131,7 @@ The repo-owned release workflow currently publishes **versioned GitHub release a
 ### 2.2 Brownfield Reality Note
 - The prior v6 TechSpec described transcript, devtools, split-pane, and flagship examples as future work. The current source tree implements them.
 - This v7 artifact is therefore intentionally present-tense and canonical rather than future-tense and phase-only.
-- ADR-T37 through ADR-T40 introduce explicitly forward-looking scope (the Native Text/Cell/View Substrate and its migration). Sections 3.4 and 4.4 document the target-state state model and ABI for that substrate; they are not yet present in the source tree and become Brownfield reality as Epic M and Epic N tickets land.
+- ADR-T37 through ADR-T40 introduce explicitly forward-looking scope (the Native Text/Cell/View Substrate and its migration). Sections 3.4 and 4.4 now describe Brownfield reality for `TextBuffer`, `TextView`, and the unified text renderer (Epic M shipped). `EditBuffer` and the rebased surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) remain target state pending Epic N.
 
 ## 3. State & Data Modeling
 ### 3.1 Native UI State Model
@@ -319,7 +320,7 @@ pub struct TuiContext {
 }
 ```
 
-### 3.4 Native Text Substrate (target state, Epic M)
+### 3.4 Native Text Substrate
 - **Purpose:** Own all substantial text content and its viewport projections inside the Native Core so widget code stops re-implementing measurement, wrapping, clipping, and Unicode handling.
 - **Storage Shape:**
   - `TextBuffer` — chunked/rope content storage keyed by an opaque `u32` Handle, with content epoch, line-start markers, cached width metrics, grapheme boundaries, tab expansion policy, style spans, selection ranges, highlights, and dirty ranges.
@@ -338,7 +339,7 @@ pub struct TuiContext {
   - `edit_buffers: HashMap<u32, EditBuffer>` keyed by edit-buffer Handle, each referencing a buffer Handle
   - Per-buffer `Vec<usize>` line-start index and `Vec<DirtyRange>` dirty-range list
   - Per-view `Vec<VisualLine>` wrap cache plus the cache key
-- **Migration Notes:** During Epic N, existing `TextNode`-style text storage, `TranscriptBlock.content: String`, and `TextArea` snapshot history are migrated onto the substrate. Replay fixtures (transcript fixtures and example replay tests) must remain green throughout the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
+- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`); the matching `tui_text_buffer_*` and `tui_text_view_*` ABI is exposed today. `EditBuffer` storage and the substrate-rebased surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) are migrated under Epic N. Replay fixtures (transcript fixtures and example replay tests) remain green throughout the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
 
 ```rust
 pub struct TextBuffer {
@@ -477,7 +478,7 @@ supported_release_targets:
   - win32-x64
 ```
 
-### 4.4 Native Text Substrate ABI (target state, Epic M)
+### 4.4 Native Text Substrate ABI
 - **Style:** Library API / C ABI (additive)
 - **Authentication / Authorization:** Not applicable
 - **Compatibility Strategy:** New substrate symbols are added additively under the existing `tui_` prefix. They follow the same conventions as the existing ABI: `u32` Handles with `0` invalid, copy-out for outbound strings and metrics, and the `0 / -1 / -2` error model.
@@ -563,10 +564,11 @@ ownership:
 │       ├── scroll.rs
 │       ├── text.rs
 │       ├── text_cache.rs
-│       ├── text_buffer.rs        # Epic M target
-│       ├── text_view.rs          # Epic M target
-│       ├── edit_buffer.rs        # Epic M target
-│       ├── text_renderer.rs      # Epic M target
+│       ├── text_buffer.rs
+│       ├── text_view.rs
+│       ├── text_renderer.rs
+│       ├── substrate_gates.rs    # CORE-M4 §5.4.1 gate suite
+│       ├── edit_buffer.rs        # Epic N target (CORE-N2)
 │       ├── theme.rs
 │       ├── animation.rs
 │       ├── textarea.rs

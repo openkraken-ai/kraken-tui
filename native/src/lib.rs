@@ -27,10 +27,15 @@ mod render;
 mod scroll;
 mod splitpane;
 mod style;
+#[cfg(test)]
+mod substrate_gates;
 mod terminal;
 mod text;
+mod text_buffer;
 pub mod text_cache;
+mod text_renderer;
 mod text_utils;
+mod text_view;
 mod textarea;
 mod theme;
 #[cfg(feature = "threaded-render")]
@@ -79,6 +84,23 @@ fn ffi_wrap(f: impl FnOnce() -> Result<i32, String>) -> i32 {
         Err(_) => {
             set_last_error("internal panic".to_string());
             -2
+        }
+    }
+}
+
+/// Wrap an FFI function that returns a u64. Returns 0 on error.
+/// Used by substrate epoch / cache-key getters where 0 is a valid initial
+/// state and errors are surfaced through `tui_get_last_error()`.
+fn ffi_wrap_u64(f: impl FnOnce() -> Result<u64, String>) -> u64 {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(Ok(v)) => v,
+        Ok(Err(msg)) => {
+            set_last_error(msg);
+            0
+        }
+        Err(_) => {
+            set_last_error("internal panic".to_string());
+            0
         }
     }
 }
@@ -2995,6 +3017,309 @@ pub extern "C" fn tui_splitpane_set_resizable(handle: u32, enabled: u8) -> i32 {
         splitpane::set_resizable(&mut ctx, handle, enabled != 0)?;
         Ok(0)
     })
+}
+
+// ============================================================================
+// Native Text Substrate FFI (ADR-T37, TechSpec §4.4 `text_buffer`, `text_view`)
+// ============================================================================
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_create() -> u32 {
+    ffi_wrap_handle(|| {
+        let mut ctx = context_write()?;
+        text_buffer::create(&mut ctx)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_destroy(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::destroy(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_replace_range(
+    handle: u32,
+    start_byte: u32,
+    end_byte: u32,
+    ptr: *const u8,
+    len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let payload = read_utf8_payload(ptr, len)?;
+        let mut ctx = context_write()?;
+        text_buffer::replace_range(
+            &mut ctx,
+            handle,
+            start_byte as usize,
+            end_byte as usize,
+            &payload,
+        )?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_append(handle: u32, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let payload = read_utf8_payload(ptr, len)?;
+        let mut ctx = context_write()?;
+        text_buffer::append(&mut ctx, handle, &payload)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_get_epoch(handle: u32) -> u64 {
+    ffi_wrap_u64(|| {
+        let ctx = context_read()?;
+        let buf = ctx
+            .text_buffers
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+        Ok(buf.epoch())
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_get_byte_len(handle: u32) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_read()?;
+        let buf = ctx
+            .text_buffers
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+        Ok(buf.byte_len() as u32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_get_line_count(handle: u32) -> u32 {
+    ffi_wrap_handle(|| {
+        let ctx = context_read()?;
+        let buf = ctx
+            .text_buffers
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+        Ok(buf.line_count() as u32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_set_style_span(
+    handle: u32,
+    start_byte: u32,
+    end_byte: u32,
+    fg: u32,
+    bg: u32,
+    attrs: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::set_style_span(
+            &mut ctx,
+            handle,
+            start_byte as usize,
+            end_byte as usize,
+            fg,
+            bg,
+            attrs,
+        )?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_clear_style_spans(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::clear_style_spans(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_set_selection(
+    handle: u32,
+    start_byte: u32,
+    end_byte: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::set_selection(&mut ctx, handle, start_byte as usize, end_byte as usize)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_clear_selection(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::clear_selection(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_set_highlight(
+    handle: u32,
+    start_byte: u32,
+    end_byte: u32,
+    kind: u8,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::set_highlight(
+            &mut ctx,
+            handle,
+            start_byte as usize,
+            end_byte as usize,
+            kind,
+        )?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_clear_highlights(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::clear_highlights(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_create(buffer_handle: u32) -> u32 {
+    ffi_wrap_handle(|| {
+        let mut ctx = context_write()?;
+        text_view::create(&mut ctx, buffer_handle)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_destroy(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_view::destroy(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_set_wrap(handle: u32, width: u32, mode: u8, tab_width: u8) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_view::set_wrap(&mut ctx, handle, width, mode, tab_width)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_set_viewport(
+    handle: u32,
+    rows: u32,
+    scroll_row: u32,
+    scroll_col: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_view::set_viewport(&mut ctx, handle, rows, scroll_row, scroll_col)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_set_cursor(handle: u32, byte_offset: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_view::set_cursor(&mut ctx, handle, byte_offset as usize)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_clear_cursor(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_view::clear_cursor(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_get_visual_line_count(handle: u32) -> u32 {
+    ffi_wrap_handle(|| {
+        let mut ctx = context_write()?;
+        text_view::get_visual_line_count(&mut ctx, handle)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_byte_to_visual(
+    handle: u32,
+    byte_offset: u32,
+    out_row: *mut u32,
+    out_col: *mut u32,
+) -> i32 {
+    ffi_wrap(|| {
+        if out_row.is_null() || out_col.is_null() {
+            return Err("Null out-pointer".to_string());
+        }
+        let mut ctx = context_write()?;
+        let (row, col) = text_view::byte_to_visual(&mut ctx, handle, byte_offset as usize)?;
+        unsafe {
+            *out_row = row;
+            *out_col = col;
+        }
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_visual_to_byte(
+    handle: u32,
+    row: u32,
+    col: u32,
+    out_byte: *mut u32,
+) -> i32 {
+    ffi_wrap(|| {
+        if out_byte.is_null() {
+            return Err("Null out-pointer".to_string());
+        }
+        let mut ctx = context_write()?;
+        let byte = text_view::visual_to_byte(&mut ctx, handle, row, col)?;
+        unsafe {
+            *out_byte = byte as u32;
+        }
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_view_get_cache_epoch(handle: u32) -> u64 {
+    ffi_wrap_u64(|| {
+        let ctx = context_read()?;
+        text_view::get_cache_epoch(&ctx, handle)
+    })
+}
+
+/// Read a UTF-8 payload from a (ptr, len) pair, or accept a null pointer
+/// only when `len == 0`. Used by substrate FFI mutation entry points.
+fn read_utf8_payload(ptr: *const u8, len: u32) -> Result<String, String> {
+    if len == 0 {
+        return Ok(String::new());
+    }
+    if ptr.is_null() {
+        return Err("Null payload pointer".to_string());
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+    std::str::from_utf8(bytes)
+        .map(|s| s.to_string())
+        .map_err(|e| format!("Payload is not valid UTF-8: {e}"))
 }
 
 #[cfg(test)]

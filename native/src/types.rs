@@ -865,6 +865,65 @@ impl Default for SplitPaneState {
 }
 
 // ============================================================================
+// Native Text Substrate (ADR-T37, target state Epic M)
+// ============================================================================
+
+/// Soft-wrap mode for `TextView`.
+///
+/// Locked in `docs/spikes/CORE-M0-substrate-contract.md`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WrapMode {
+    None = 0,
+    Char = 1,
+    Word = 2,
+}
+
+impl WrapMode {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::None),
+            1 => Some(Self::Char),
+            2 => Some(Self::Word),
+            _ => None,
+        }
+    }
+}
+
+/// Inclusive-exclusive byte range with style data attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StyleSpan {
+    pub start: usize,
+    pub end: usize,
+    pub fg: u32,
+    pub bg: u32,
+    pub attrs: CellAttrs,
+}
+
+/// Inclusive-exclusive byte range describing the active selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectionRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Inclusive-exclusive byte range marked with an arbitrary `kind` discriminant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HighlightRange {
+    pub start: usize,
+    pub end: usize,
+    pub kind: u8,
+}
+
+/// Inclusive-exclusive byte range that has changed since the buffer was created
+/// or last had its dirty list consumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyRange {
+    pub start: usize,
+    pub end: usize,
+}
+
+// ============================================================================
 // Debug / Devtools Types (ADR-T34)
 // ============================================================================
 
