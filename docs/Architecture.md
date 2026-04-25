@@ -1,9 +1,9 @@
 # Solution Architecture
 
 ## 0. Version History & Changelog
+- v3.2.1 - Clarified the Text and Transcript bounded-context responsibilities so the substrate work ratified downstream is recognized as a deepening of existing logical contexts rather than a new container.
 - v3.2.0 - Reformatted to the current stage-2 framework skeleton and clarified logical boundaries without changing the approved cross-language architecture.
 - v3.1.0 - Clarified the architectural emphasis around transcript-heavy surfaces, anchor-aware viewports, developer tooling, and pane-oriented workflows.
-- v3.0.0 - Aligned architecture with the v3 implementation wave around writer throughput, text caching, runner ergonomics, staple widgets, release UX, and benchmark gates.
 - ... [Older history truncated, refer to git logs]
 
 ## 1. Architectural Strategy & Archetype Alignment
@@ -67,9 +67,9 @@
 | **Theme** | Named style defaults, subtree bindings, and inherited theme resolution | Tree |
 | **Style** | Explicit style application plus resolution against theme defaults | Tree, Theme |
 | **Animation** | Time-based property transitions and animation-state progression | Tree, Style |
-| **Text** | Rich text parsing, syntax highlighting, and wrap resolution | Style, Text Cache |
-| **Text Cache** | Bounded reuse of parse, highlight, and wrap artifacts | Text |
-| **Transcript** | Ordered logical blocks, streaming patch semantics, collapse state, unread markers, and viewport anchor semantics | Tree, Text, Scroll, Render |
+| **Text** | Content storage, parsing, syntax highlighting, viewport projection, and wrap resolution for substantial text surfaces | Style, Text Cache |
+| **Text Cache** | Bounded reuse of parse, highlight, wrap, and viewport-projection artifacts | Text |
+| **Transcript** | Ordered logical blocks, streaming patch semantics, collapse state, unread markers, and viewport anchor semantics, with block content storage and projection delegated to Text | Tree, Text, Scroll, Render |
 | **Render** | Buffer generation, dirty diffing, clipping, and render-pass orchestration | Tree, Layout, Style, Text, Scroll |
 | **Writer** | Terminal-intent compaction and efficient emission of cursor and style deltas | Render |
 | **Event** | Input capture, classification, focus management, and buffered event delivery | Tree, Layout |
