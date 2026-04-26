@@ -133,7 +133,17 @@ pub(crate) fn render_text_view(
             // Right clip: wide glyph spilling past rect → render space
             let glyph_clipped = advance >= 2 && screen_col + (advance as i32) > rect.x + rect.w;
 
-            // Determine the visual character for this cell
+            // Determine the visual character for this cell.
+            //
+            // KNOWN LIMITATION: `Cell.ch` is a single `char`, so multi-scalar
+            // grapheme clusters (ZWJ family emoji, flags, keycaps, skin-tone
+            // sequences) are reduced here to their first scalar. The cluster
+            // is segmented and advances the column by its measured width,
+            // which is correct for layout, hit-testing, wrap, and selection,
+            // but the visible glyph is not the composed cluster. Widening
+            // the cell model to carry a full grapheme string is tracked as
+            // post-Epic-N work; until then, callers that need composed
+            // emoji should expect first-scalar fallback rendering.
             let display_char: char = if g == "\t" {
                 ' '
             } else if advance == 0 {

@@ -131,3 +131,7 @@ pub extern "C" fn tui_something(handle: u32) -> i32 {
 - Transcript anchors, unread behavior, and transcript-specific input handling are implemented
 - `SplitPane` native layout and resize behavior are implemented
 - No `TODO` / `FIXME` markers are expected in production code paths
+
+### Known Substrate Limitations
+- `Cell.ch` is a single `char`. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) segment correctly and advance the column by their measured cell width — layout, hit-testing, soft wrap, and selection are right — but the visible glyph emitted into the cell grid is the cluster's first scalar. Widening the cell model is post-Epic-N work and is not blocked by the substrate ABI.
+- `tui_text_view_set_cursor` requires byte offsets that are both UTF-8 boundaries and grapheme cluster boundaries; offsets inside a cluster are rejected at the API boundary so the cursor never silently disappears.

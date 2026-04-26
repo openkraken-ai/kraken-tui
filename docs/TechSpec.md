@@ -1,6 +1,7 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.2.1 - Reconciled §3.4 storage shape with the shipped flat-`String` `TextBuffer` (rope/chunked storage is a future option, not current reality) and tightened the §5.4.1 G3 row to describe the actual name-based source-grep gate; behavioral wrap-math coverage is owned by widget golden tests under Epic N.
 - v7.2.0 - Promoted the Native Text Substrate sections from "target state" to current Brownfield reality: `TextBuffer`, `TextView`, and the unified text renderer have shipped under Epic M with their documented ABI surfaces, structural gates, and Unicode test coverage; `EditBuffer` remains target state pending CORE-N2.
 - v7.1.0 - Ratified the Native Text/Cell/View Substrate scope: added ADRs for substrate ownership, operation-based edit history, transcript content backing, and deferral of terminal capability hardening; added state, ABI, and structural acceptance gates for `TextBuffer`, `TextView`, and `EditBuffer`.
 - v7.0.0 - Converted the prior forward-looking delta spec into the canonical brownfield implementation contract and reconciled transcript, devtools, split-pane, and flagship-example scope with the current source tree.
@@ -323,15 +324,16 @@ pub struct TuiContext {
 ### 3.4 Native Text Substrate
 - **Purpose:** Own all substantial text content and its viewport projections inside the Native Core so widget code stops re-implementing measurement, wrapping, clipping, and Unicode handling.
 - **Storage Shape:**
-  - `TextBuffer` — chunked/rope content storage keyed by an opaque `u32` Handle, with content epoch, line-start markers, cached width metrics, grapheme boundaries, tab expansion policy, style spans, selection ranges, highlights, and dirty ranges.
+  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight changes), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, `dirty_ranges`, and a configurable `tab_width`. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
   - `TextView` — viewport projection over a `TextBuffer`, parameterized by wrap width, wrap mode, tab width, viewport rows, scroll row and column, and optional cursor position. Holds a soft-wrap visual-line cache keyed by content epoch and wrap parameters.
-  - `EditBuffer` — wraps a `TextBuffer` with an operation history (`insert`, `delete`, `replace`, selection move, cursor move) plus coalescing rules for ordinary single-edit operations.
+  - `EditBuffer` — wraps a `TextBuffer` with an operation history (`insert`, `delete`, `replace`, selection move, cursor move) plus coalescing rules for ordinary single-edit operations. Target state, lands under CORE-N2.
 - **Constraints / Invariants:**
   - Every substantial text surface routes through this substrate; widget code holds no parallel text-rendering path.
   - Content epochs increase monotonically per buffer mutation; an append affects views over only that buffer.
   - Visual-line caches are keyed by `(content_epoch, wrap_width, wrap_mode, tab_width, style_fingerprint, viewport_rows)`. Wrap parameters changing invalidates only affected cache entries.
   - Resize invalidates view projections, not buffer storage.
   - Buffer mutation occurs only through the substrate API; widget code does not hold mutable string aliases into buffer contents.
+  - Cursor byte offsets must be UTF-8 boundaries AND grapheme cluster boundaries; the renderer only places the cursor at grapheme starts, so non-grapheme offsets are rejected at the API boundary rather than silently rendered as no-ops.
   - `Handle(0)` remains the invalid sentinel for buffer, view, and edit-buffer Handles.
 - **Indexes / Access Paths:**
   - `text_buffers: HashMap<u32, TextBuffer>` keyed by buffer Handle
@@ -340,16 +342,22 @@ pub struct TuiContext {
   - Per-buffer `Vec<usize>` line-start index and `Vec<DirtyRange>` dirty-range list
   - Per-view `Vec<VisualLine>` wrap cache plus the cache key
 - **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`); the matching `tui_text_buffer_*` and `tui_text_view_*` ABI is exposed today. `EditBuffer` storage and the substrate-rebased surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) are migrated under Epic N. Replay fixtures (transcript fixtures and example replay tests) remain green throughout the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
+- **Known Limitations (Brownfield):** The shared `Cell` model (`types.rs`) stores a single `char` per cell. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) are segmented and advance the column by their measured cell width, so layout, hit-testing, soft wrap, and selection are correct, but the visible glyph emitted into the cell grid is the cluster's first scalar rather than the composed cluster. Widening the cell model to carry full grapheme strings is post-Epic-N work and is not blocked by the substrate ABI.
 
 ```rust
 pub struct TextBuffer {
-    pub epoch: u64,
+    // Content and metadata stored in the flat-`String` shape shipped under M.
+    pub epoch: u64,                  // bumped on byte mutations only
+    pub style_fingerprint: u64,      // bumped on style / selection / highlight changes
     pub line_starts: Vec<usize>,
+    pub line_widths: Vec<u32>,
     pub style_spans: Vec<StyleSpan>,
-    pub selections: Vec<SelectionRange>,
+    pub selection: Option<SelectionRange>,
     pub highlights: Vec<HighlightRange>,
     pub dirty_ranges: Vec<DirtyRange>,
-    // chunked/rope storage internals are private
+    pub tab_width: u8,
+    // The content `String` itself is a private implementation detail; the
+    // substrate API mediates all reads and writes.
 }
 
 pub struct TextView {
@@ -664,14 +672,14 @@ Current CI validates the host benchmark and install surfaces on Linux. Cross-pla
 
 #### 5.4.1 Structural Substrate Gates (Epic M and N)
 
-These structural rules become enforceable invariants once Epic M ships and apply to every later change. Verification is by native test, code review against the listed source modules, and golden replay coverage. Violations are not acceptable trade-offs; they require either contract revision through ADR-T37/T38/T39 or rework.
+These structural rules become enforceable invariants once the substrate work that backs them ships, and they apply to every later change. Verification mixes named native tests, source-review/source-grep gates against listed modules, and golden replay coverage; the per-row "Verification path" describes which mechanism is active today. Gates that depend on a target-state component (notably `EditBuffer` for the `TextArea` history rule) become test-enforceable when that component lands. Violations are not acceptable trade-offs; they require either contract revision through ADR-T37/T38/T39 or rework.
 
 | Gate | Verification path |
 | --- | --- |
 | No transcript render path clones visible block content into temporary owned `String`s. | Native render-path tests assert no `String::from` or `to_owned` over block content; review of `transcript.rs` and `render.rs`. |
 | No `TextArea` undo/redo path stores a full-content snapshot for ordinary single-edit operations. | Native `EditBuffer` tests assert O(1) history growth per single-character edit; review of `edit_buffer.rs` and `textarea.rs`. |
-| No widget computes wrapped row counts independently of `TextView`. | Native test scans for non-substrate wrap math in widget modules; review of every widget that displays substantial text. |
-| No substantial text-rendering widget bypasses the unified text renderer. | Code review against `text_renderer.rs` as the sole entry point; widget golden tests cover the renderer path. |
+| No widget computes wrapped row counts independently of `TextView`. | Native test (`gate_g3_no_widget_local_wrap_math_in_substrate_modules`) scans the source tree and fails if a `compute_visual_lines` helper appears outside the substrate-allowed modules. The check is a name-based proxy: behavioral coverage that no widget recomputes wrap math under a different symbol is owned by the per-widget golden tests added when each surface migrates to `text_renderer::render_text_view` under Epic N. |
+| No substantial text-rendering widget bypasses the unified text renderer. | Code review against `text_renderer.rs` as the sole entry point; widget golden tests cover the renderer path. Tracked as a source-review gate today; behavioral enforcement lands incrementally as Epic N migrates each widget. |
 | Appending streamed transcript content invalidates only affected buffer and view epochs. | Native test asserts unrelated buffer epochs remain stable across an append; transcript replay fixtures cover streaming patches. |
 | Resize invalidates visual-line projections, not content storage. | Native test asserts buffer epoch is unchanged across width changes while view cache key advances. |
 | Mixed-width Unicode behavior (combining marks, ZWJ emoji, CJK, tabs, zero-width, wide-glyph clipping, selection across grapheme boundaries) is covered by native tests. | `cargo test` Unicode/wrapping suite per CORE-M4. |

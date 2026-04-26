@@ -195,14 +195,33 @@ pub(crate) fn set_cursor(
             buf.byte_len()
         ));
     }
-    if !buf.content().is_char_boundary(byte_offset) {
+    let content = buf.content();
+    if !content.is_char_boundary(byte_offset) {
         return Err(format!(
             "Cursor byte offset {byte_offset} is not a UTF-8 boundary"
+        ));
+    }
+    // Reject offsets that fall inside a grapheme cluster. The renderer only
+    // draws the cursor at grapheme boundaries (matching by `byte_start` or at
+    // end-of-line), so accepting an interior offset would silently hide the
+    // cursor. Callers must align to a boundary before calling.
+    if !is_grapheme_boundary(content, byte_offset) {
+        return Err(format!(
+            "Cursor byte offset {byte_offset} is not a grapheme boundary"
         ));
     }
     let view = view_mut(ctx, handle)?;
     view.cursor = Some(CursorPos { byte_offset });
     Ok(())
+}
+
+fn is_grapheme_boundary(content: &str, byte_offset: usize) -> bool {
+    if byte_offset == 0 || byte_offset == content.len() {
+        return true;
+    }
+    content
+        .grapheme_indices(true)
+        .any(|(start, _)| start == byte_offset)
 }
 
 pub(crate) fn clear_cursor(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
@@ -326,17 +345,18 @@ fn view_mut(ctx: &mut TuiContext, handle: u32) -> Result<&mut TextView, String> 
 
 /// Ensure the cached projection matches the current buffer + view parameters.
 /// Recomputes lazily if the composite cache key has changed.
+///
+/// Cache hits return without copying buffer content; recomputation reads the
+/// buffer in place. This keeps repeated `byte_to_visual` / `visual_to_byte`
+/// / `render_text_view` calls O(1) on stable buffers, which is the common
+/// transcript-streaming workload.
 pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let buffer_handle = view(ctx, handle)?.buffer;
-    let (epoch, fingerprint, content) = {
+    let (epoch, fingerprint) = {
         let buf = ctx.text_buffers.get(&buffer_handle).ok_or_else(|| {
             format!("TextView {handle} references missing buffer {buffer_handle}")
         })?;
-        (
-            buf.epoch(),
-            buf.style_fingerprint(),
-            buf.content().to_string(),
-        )
+        (buf.epoch(), buf.style_fingerprint())
     };
 
     let v = ctx.text_views.get_mut(&handle).unwrap();
@@ -349,15 +369,13 @@ pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(),
         viewport_rows: v.viewport_rows,
     };
 
-    if v.cached_key == key && !v.visual_lines.is_empty() {
+    if v.cached_key == key {
         return Ok(());
-    }
-    if v.cached_key == key && content.is_empty() {
-        // Empty content with a key match: still produce a single empty visual line.
     }
 
     let buf_ref = ctx.text_buffers.get(&buffer_handle).unwrap();
     let lines = compute_visual_lines(buf_ref, v.wrap_width, v.wrap_mode, v.tab_width);
+    let max_byte = buf_ref.byte_len();
     let v = ctx.text_views.get_mut(&handle).unwrap();
     v.visual_lines = lines;
     v.cached_key = key;
@@ -365,8 +383,7 @@ pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(),
 
     // Reconcile cursor against new buffer byte length (stable anchor rule).
     if let Some(c) = v.cursor {
-        let max = ctx.text_buffers.get(&buffer_handle).unwrap().byte_len();
-        let clamped = c.byte_offset.min(max);
+        let clamped = c.byte_offset.min(max_byte);
         v.cursor = Some(CursorPos {
             byte_offset: clamped,
         });
@@ -735,6 +752,32 @@ mod tests {
                 let g_count = UnicodeSegmentation::graphemes(segment, true).count();
                 assert!(g_count <= 2);
             }
+        });
+    }
+
+    #[test]
+    fn set_cursor_rejects_offset_inside_grapheme_cluster() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // 'a' (1 byte) + 'e' + combining acute U+0301 (2 bytes for the
+            // combining mark) + 'b'. Bytes [1..4) is one grapheme cluster.
+            // Offset 2 is a UTF-8 boundary but NOT a grapheme boundary.
+            text_buffer::append(ctx, buf, "ae\u{0301}b").unwrap();
+            create(ctx, buf).unwrap()
+        });
+        with_ctx(|ctx| {
+            // Boundaries at 0, 1, 4, 5 should accept.
+            assert!(set_cursor(ctx, view, 0).is_ok());
+            assert!(set_cursor(ctx, view, 1).is_ok());
+            assert!(set_cursor(ctx, view, 4).is_ok());
+            assert!(set_cursor(ctx, view, 5).is_ok());
+            // Byte 2 sits inside the e+combining grapheme cluster.
+            let err = set_cursor(ctx, view, 2).unwrap_err();
+            assert!(
+                err.contains("grapheme boundary"),
+                "expected grapheme-boundary error, got: {err}"
+            );
         });
     }
 

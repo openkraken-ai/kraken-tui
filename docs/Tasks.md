@@ -1,6 +1,7 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.3.1 - Reconciled `CORE-M4` description and acceptance with what the Epic-M gate suite actually enforces: G3/G5/G6/G7/G8 are covered by named native tests, G1/G4 are tracked as source-review gates, and G2 (TextArea undo without full snapshots) is deferred to `CORE-N2` along with `EditBuffer`. Reflects review-wave 1 against PR #35.
 - v7.3.0 - Archived Epic M (Native Text Substrate) as completed: `CORE-M0` through `CORE-M4` shipped the contract memo, `TextBuffer`, `TextView`, the unified text renderer, and the §5.1 Unicode/wrapping gate suite. Active wave narrows to Epic N (Substrate Surface Rebase).
 - v7.2.0 - Ratified Epic M (Native Text Substrate) and Epic N (Substrate Surface Rebase) as the active wave; documented Epic O (Terminal Capability Hardening) as deferred future scope; preserved the v6 and v7 archived appendices.
 - v7.1.0 - Archived the completed docs-normalization wave and marked the active plan as intentionally idle until a post-v4 backlog is ratified.
@@ -159,14 +160,15 @@ And no widget-local code computes wrapped row counts
 - **Status:** Done
 - **Dependencies:** CORE-M3
 - **Capability / Contract Mapping:** TechSpec §5.4.1
-- **Description:** Add a native test suite under `cargo test` covering grapheme segmentation, `wcwidth` behavior, soft-wrapping, tab expansion, resize-driven wrap invalidation, cursor mapping, selection across grapheme boundaries, ZWJ emoji, CJK width, zero-width codepoints, and wide-glyph clipping. Each gate listed in TechSpec §5.4.1 must be enforced by at least one named native test.
-- **Implementation Notes:** New `#[cfg(test)]` module `native/src/substrate_gates.rs` enforces every gate in TechSpec §5.4.1 with a transparently named test. G5 (cross-buffer epoch isolation), G6 (resize invalidates view only, not buffer storage), G7 (ZWJ family emoji, CJK width, soft-wrap byte boundaries, tab expansion against `tab_width`, resize-driven wrap invalidation, byte/visual round-trip, selection across grapheme boundary, zero-width codepoint handling, wide-glyph clip-boundary replacement), G3 (source-grep gate that no module outside the substrate defines a `compute_visual_lines` helper), and G8 (substrate modules present and correctness tested in Rust). G1 / G4 are tracked as source-review gates and covered indirectly by the surface migrations in Epic N. Suite runs as 13 named tests; full `cargo test` passes 476 tests with `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
+- **Description:** Add a native test suite under `cargo test` covering grapheme segmentation, `wcwidth` behavior, soft-wrapping, tab expansion, resize-driven wrap invalidation, cursor mapping, selection across grapheme boundaries, ZWJ emoji, CJK width, zero-width codepoints, and wide-glyph clipping. Cover the structural gates in TechSpec §5.4.1 that are enforceable from Epic M's deliverables: G3 / G5 / G6 / G7 / G8. G1 (no transcript clone-into-`String`) and G4 (no widget bypasses the unified renderer) remain source-review gates whose behavioral coverage is owned by the per-widget golden tests added during Epic N migrations. G2 (no full-content snapshot per single-edit op) is deferred until `EditBuffer` lands in `CORE-N2`.
+- **Implementation Notes:** New `#[cfg(test)]` module `native/src/substrate_gates.rs` enforces the Epic-M-shipping gates with transparently named tests. G5 (cross-buffer epoch isolation), G6 (resize invalidates view only, not buffer storage), G7 (ZWJ family emoji segmentation, CJK width, soft-wrap byte boundaries, tab expansion against `tab_width`, resize-driven wrap invalidation, byte/visual round-trip, selection across grapheme boundary, zero-width codepoint handling, wide-glyph clip-boundary replacement), G3 (source-grep gate that no module outside the substrate defines a `compute_visual_lines` helper — name-based proxy; behavioral coverage lives in widget golden tests under Epic N), and G8 (substrate modules present and correctness tested in Rust). G1 and G4 stay as source-review gates here; G2 is intentionally deferred to `CORE-N2` along with `EditBuffer` and is documented as such in the module preamble. Suite runs as 13 named tests; full `cargo test` passes with `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate test suite
 When cargo test runs in the native crate
 Then grapheme, wcwidth, wrap, tab, resize, cursor, and selection edge cases are covered by named tests
-And each structural gate listed in TechSpec section 5.4.1 is enforced by at least one native test
+And each TechSpec §5.4.1 gate that depends only on Epic M deliverables (G3, G5, G6, G7, G8) is enforced by at least one named native test
+And gates that depend on later substrate components or per-widget migrations (G1, G2, G4) are documented as source-review or deferred-test gates with the responsible epic identified
 And the suite fails when any documented Unicode behavior regresses
 ```
 
