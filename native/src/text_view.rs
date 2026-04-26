@@ -376,20 +376,50 @@ pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(),
     let buf_ref = ctx.text_buffers.get(&buffer_handle).unwrap();
     let lines = compute_visual_lines(buf_ref, v.wrap_width, v.wrap_mode, v.tab_width);
     let max_byte = buf_ref.byte_len();
+    // Take a snapshot of buffer content for cursor reconciliation. The
+    // snapshot scope ends before we mutate `v`, so we don't hold a borrow
+    // across the second `get_mut`.
+    let reconciled_cursor = v.cursor.map(|c| {
+        let clamped = c.byte_offset.min(max_byte);
+        let snapped = snap_to_grapheme_start(buf_ref.content(), clamped);
+        CursorPos {
+            byte_offset: snapped,
+        }
+    });
     let v = ctx.text_views.get_mut(&handle).unwrap();
     v.visual_lines = lines;
     v.cached_key = key;
     v.cache_key_epoch = v.cache_key_epoch.wrapping_add(1);
 
-    // Reconcile cursor against new buffer byte length (stable anchor rule).
-    if let Some(c) = v.cursor {
-        let clamped = c.byte_offset.min(max_byte);
-        v.cursor = Some(CursorPos {
-            byte_offset: clamped,
-        });
+    // Reconcile cursor against the new buffer. `set_cursor` rejects offsets
+    // that aren't both UTF-8 boundaries and grapheme boundaries, but a
+    // width-changing edit before the cursor can strand a previously valid
+    // offset inside a code point or cluster. Snap to the nearest grapheme
+    // start at or before the clamped position so the cursor stays on a
+    // boundary the renderer will actually draw.
+    if reconciled_cursor.is_some() {
+        v.cursor = reconciled_cursor;
     }
 
     Ok(())
+}
+
+/// Snap `byte_offset` backward to the nearest grapheme cluster start in
+/// `content`. Used when the buffer mutated under a previously valid cursor
+/// and the cursor must remain on a grapheme boundary.
+fn snap_to_grapheme_start(content: &str, byte_offset: usize) -> usize {
+    let len = content.len();
+    if byte_offset >= len {
+        return len;
+    }
+    let mut last = 0;
+    for (g_start, _) in content.grapheme_indices(true) {
+        if g_start > byte_offset {
+            return last;
+        }
+        last = g_start;
+    }
+    last
 }
 
 fn compute_visual_lines(
@@ -778,6 +808,31 @@ mod tests {
                 err.contains("grapheme boundary"),
                 "expected grapheme-boundary error, got: {err}"
             );
+        });
+    }
+
+    #[test]
+    fn cursor_reconciled_to_grapheme_boundary_after_width_changing_edit() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "ab").unwrap();
+            let v = create(ctx, buf).unwrap();
+            (buf, v)
+        });
+        with_ctx(|ctx| {
+            // Cursor at 1 is a valid grapheme boundary in "ab".
+            set_cursor(ctx, view, 1).unwrap();
+            // Replace 'a' (1 byte) with 'é' (2 bytes). New content "éb".
+            // Old cursor offset 1 now sits inside the multi-byte 'é'.
+            text_buffer::replace_range(ctx, buf, 0, 1, "é").unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let c = ctx.text_views.get(&view).unwrap().cursor.unwrap();
+            // Snapped backward to the nearest grapheme start (start of 'é').
+            assert_eq!(c.byte_offset, 0);
+            // Round-trip: byte_to_visual must accept the reconciled offset.
+            let (row, col) = byte_to_visual(ctx, view, c.byte_offset).unwrap();
+            assert_eq!((row, col), (0, 0));
         });
     }
 

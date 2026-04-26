@@ -1,6 +1,7 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.2.2 - Reflects PR #35 review wave 2. §4.4 now documents the actual error model used by substrate value-returning getters (return `0` on error, diagnostic via `tui_get_last_error()`; `0` is also a valid initial-state value, so callers needing to distinguish must consult last_error). Added an explicit cursor-reconciliation invariant: width-changing buffer edits snap the stored cursor to the nearest grapheme start at or before the clamped position so it never lands inside a code point or cluster.
 - v7.2.1 - Reconciled §3.4 storage shape with the shipped flat-`String` `TextBuffer` (rope/chunked storage is a future option, not current reality) and tightened the §5.4.1 G3 row to describe the actual name-based source-grep gate; behavioral wrap-math coverage is owned by widget golden tests under Epic N.
 - v7.2.0 - Promoted the Native Text Substrate sections from "target state" to current Brownfield reality: `TextBuffer`, `TextView`, and the unified text renderer have shipped under Epic M with their documented ABI surfaces, structural gates, and Unicode test coverage; `EditBuffer` remains target state pending CORE-N2.
 - v7.1.0 - Ratified the Native Text/Cell/View Substrate scope: added ADRs for substrate ownership, operation-based edit history, transcript content backing, and deferral of terminal capability hardening; added state, ABI, and structural acceptance gates for `TextBuffer`, `TextView`, and `EditBuffer`.
@@ -333,7 +334,7 @@ pub struct TuiContext {
   - Visual-line caches are keyed by `(content_epoch, wrap_width, wrap_mode, tab_width, style_fingerprint, viewport_rows)`. Wrap parameters changing invalidates only affected cache entries.
   - Resize invalidates view projections, not buffer storage.
   - Buffer mutation occurs only through the substrate API; widget code does not hold mutable string aliases into buffer contents.
-  - Cursor byte offsets must be UTF-8 boundaries AND grapheme cluster boundaries; the renderer only places the cursor at grapheme starts, so non-grapheme offsets are rejected at the API boundary rather than silently rendered as no-ops.
+  - Cursor byte offsets must be UTF-8 boundaries AND grapheme cluster boundaries; the renderer only places the cursor at grapheme starts, so non-grapheme offsets are rejected at the API boundary rather than silently rendered as no-ops. After a buffer mutation, the substrate reconciles the stored cursor by clamping to the new `byte_len` and then snapping backward to the nearest grapheme start, so a width-changing edit before the cursor cannot strand it inside a code point or cluster.
   - `Handle(0)` remains the invalid sentinel for buffer, view, and edit-buffer Handles.
 - **Indexes / Access Paths:**
   - `text_buffers: HashMap<u32, TextBuffer>` keyed by buffer Handle
@@ -489,8 +490,10 @@ supported_release_targets:
 ### 4.4 Native Text Substrate ABI
 - **Style:** Library API / C ABI (additive)
 - **Authentication / Authorization:** Not applicable
-- **Compatibility Strategy:** New substrate symbols are added additively under the existing `tui_` prefix. They follow the same conventions as the existing ABI: `u32` Handles with `0` invalid, copy-out for outbound strings and metrics, and the `0 / -1 / -2` error model.
-- **Error model:** `0` for success, `-1` for explicit error retrievable through `tui_get_last_error()`, `-2` for panic caught at the boundary.
+- **Compatibility Strategy:** New substrate symbols are added additively under the existing `tui_` prefix. They follow the same conventions as the existing ABI: `u32` Handles with `0` invalid and copy-out for outbound strings and metrics. Status-returning entry points (`-> i32`) follow the standard `0 / -1 / -2` error model below; value-returning getters (`-> u32` / `-> u64`) follow the sentinel pattern documented under "Getter error model" below because they have no separate channel for a status code.
+- **Error model (status-returning calls):** `0` for success, `-1` for explicit error retrievable through `tui_get_last_error()`, `-2` for panic caught at the boundary. Applies to: `tui_text_buffer_destroy`, `tui_text_buffer_replace_range`, `tui_text_buffer_append`, `tui_text_buffer_set_style_span`, `tui_text_buffer_clear_style_spans`, `tui_text_buffer_set_selection`, `tui_text_buffer_clear_selection`, `tui_text_buffer_set_highlight`, `tui_text_buffer_clear_highlights`, `tui_text_view_destroy`, `tui_text_view_set_wrap`, `tui_text_view_set_viewport`, `tui_text_view_set_cursor`, `tui_text_view_clear_cursor`, `tui_text_view_byte_to_visual`, `tui_text_view_visual_to_byte`.
+- **Handle constructors:** `tui_text_buffer_create`, `tui_text_view_create`, and the future `tui_edit_buffer_create` return a `u32` handle. `0` is the invalid handle sentinel; on error the call returns `0` and `tui_get_last_error()` carries the diagnostic string. The host's `checkResult()` cannot distinguish a `0` handle from a `0` status, so host code must use a handle-aware helper that checks for `handle == 0` and consults `tui_get_last_error()`.
+- **Getter error model (value-returning calls):** `tui_text_buffer_get_epoch`, `tui_text_buffer_get_byte_len`, `tui_text_buffer_get_line_count`, `tui_text_view_get_visual_line_count`, and `tui_text_view_get_cache_epoch` return their value directly. Because these functions have no separate status channel, errors are signalled by returning `0` and setting `tui_get_last_error()`. `0` is also a valid value for some states — a freshly created buffer's `epoch` is `0`, an empty buffer's `byte_len` is `0`, and a freshly created view's `cache_epoch` is `0` — so callers that need to distinguish a real `0` from an error MUST consult `tui_get_last_error()` after the call. Callers that already hold a known-valid handle can treat `0` as a valid value without checking. The host's standard `checkResult()` helper (which only flags negative codes) does not apply to these getters.
 
 ```yaml
 text_buffer:
