@@ -1,11 +1,15 @@
 //! Substrate Gate Test Suite (CORE-M4).
 //!
-//! Every structural rule listed in TechSpec §5.4.1 is enforced by at least
-//! one named native test in this module. The tests deliberately use
-//! transparent names that include the gate they enforce so reviewers can
-//! map a failing test back to the spec without indirection.
+//! Enforces the structural rules in TechSpec §5.4.1 that the Epic-M
+//! deliverables can mechanically check today: G3, G5, G6, G7, and G8 each
+//! get at least one named test below. G1 and G4 remain source-review gates
+//! whose behavioral coverage is owned by the per-widget golden tests added
+//! during the Epic N migrations; G2 is deferred to CORE-N2 along with
+//! `EditBuffer`. The tests use transparent names that include the gate
+//! they enforce so reviewers can map a failing test back to the spec
+//! without indirection.
 //!
-//! Gates enforced (TechSpec §5.4.1):
+//! Gates (TechSpec §5.4.1):
 //! - G1: no transcript render path clones visible block content into
 //!   temporary owned `String`s (source-grep gate).
 //! - G2: no `TextArea` undo/redo path stores a full-content snapshot for

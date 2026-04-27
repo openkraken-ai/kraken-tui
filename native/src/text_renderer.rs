@@ -207,18 +207,26 @@ pub(crate) fn render_text_view(
                     target.set(screen_col as u16, screen_y as u16, primary);
                 }
                 if !glyph_clipped && advance >= 2 {
-                    let trailing_col = screen_col + 1;
-                    if trailing_col < rect.x + rect.w
-                        && trailing_col >= 0
-                        && trailing_col < target.width as i32
-                    {
-                        let trailing = Cell {
-                            ch: ' ',
-                            fg,
-                            bg,
-                            attrs,
-                        };
-                        target.set(trailing_col as u16, screen_y as u16, trailing);
+                    // Fill every cell the grapheme advances through so
+                    // selection / highlight / background coverage applies
+                    // uniformly. Wide glyphs (advance == 2) get a single
+                    // trailing space; tabs (advance up to tab_width) get a
+                    // full run of spaces. Each cell carries the merged
+                    // style of the grapheme's primary cell.
+                    for offset in 1..(advance as i32) {
+                        let trailing_col = screen_col + offset;
+                        if trailing_col >= rect.x + rect.w {
+                            break;
+                        }
+                        if trailing_col >= 0 && trailing_col < target.width as i32 {
+                            let trailing = Cell {
+                                ch: ' ',
+                                fg,
+                                bg,
+                                attrs,
+                            };
+                            target.set(trailing_col as u16, screen_y as u16, trailing);
+                        }
                     }
                 }
             }
@@ -555,6 +563,56 @@ mod tests {
             .unwrap();
         });
         crate::golden::assert_golden_buffer(&target, "text_renderer_unicode_mixed").unwrap();
+    }
+
+    #[test]
+    fn tab_expansion_fills_every_intermediate_cell_with_style() {
+        // Selection or highlight that spans a tab must color every cell the
+        // tab advances through, not just the first trailing cell. Otherwise
+        // tab-expanded text leaves uncolored holes in coverage.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(20, 1);
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // "a\tb" with tab_width=4: 'a' at col 0, tab fills cols 1..4,
+            // 'b' lands at col 4. Select bytes [0..3) covers all three
+            // graphemes.
+            text_buffer::append(ctx, buf, "a\tb").unwrap();
+            text_buffer::set_selection(ctx, buf, 0, 3).unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 0, WrapMode::None as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 1, 0, 0).unwrap();
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 20,
+                    h: 1,
+                },
+                BaseStyle {
+                    fg: 0x01_FF_FF_FF,
+                    bg: 0x01_00_00_00,
+                    attrs: CellAttrs::empty(),
+                },
+            )
+            .unwrap();
+        });
+        // Selection inverts fg/bg. Cells 0..5 should all carry the inverted
+        // selection style: 'a' (col 0), tab fill (cols 1..4), 'b' (col 4).
+        for x in 0..5 {
+            let c = target.get(x, 0).unwrap();
+            assert_eq!(
+                c.fg, 0x01_00_00_00,
+                "cell {x} fg must be inverted by selection"
+            );
+            assert_eq!(
+                c.bg, 0x01_FF_FF_FF,
+                "cell {x} bg must be inverted by selection"
+            );
+        }
     }
 
     #[test]

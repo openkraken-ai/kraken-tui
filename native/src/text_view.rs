@@ -260,8 +260,18 @@ pub(crate) fn byte_to_visual(
             buf.byte_len()
         ));
     }
-    if !buf.content().is_char_boundary(byte_offset) {
+    let content = buf.content();
+    if !content.is_char_boundary(byte_offset) {
         return Err(format!("Byte offset {byte_offset} is not a UTF-8 boundary"));
+    }
+    // The substrate treats grapheme boundaries as the canonical addressable
+    // positions. `visual_to_byte` snaps to grapheme starts, so accepting
+    // interior offsets here would break the byte<->visual round-trip.
+    // `set_cursor` enforces the same rule; reject here for consistency.
+    if !is_grapheme_boundary(content, byte_offset) {
+        return Err(format!(
+            "Byte offset {byte_offset} is not a grapheme boundary"
+        ));
     }
 
     for (row, line) in view.visual_lines.iter().enumerate() {
@@ -738,6 +748,35 @@ mod tests {
             assert_eq!(byte_to_visual(ctx, view, 3).unwrap(), (1, 0));
             assert_eq!(byte_to_visual(ctx, view, 6).unwrap(), (1, 3));
             assert_eq!(visual_to_byte(ctx, view, 1, 2).unwrap(), 5);
+        });
+    }
+
+    #[test]
+    fn byte_to_visual_rejects_offset_inside_grapheme_cluster() {
+        // byte_to_visual must reject non-grapheme offsets so it stays
+        // round-trippable with visual_to_byte (which snaps to grapheme
+        // starts) and consistent with set_cursor.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // 'a' + 'e' + combining acute U+0301 (2 bytes) + 'b'.
+            // Bytes [1..4) is one grapheme cluster; offset 2 is a UTF-8
+            // boundary but NOT a grapheme boundary.
+            text_buffer::append(ctx, buf, "ae\u{0301}b").unwrap();
+            create(ctx, buf).unwrap()
+        });
+        with_ctx(|ctx| {
+            // Boundaries 0, 1, 4, 5 round-trip cleanly.
+            let (r, c) = byte_to_visual(ctx, view, 1).unwrap();
+            assert_eq!(visual_to_byte(ctx, view, r, c).unwrap(), 1);
+            let (r, c) = byte_to_visual(ctx, view, 4).unwrap();
+            assert_eq!(visual_to_byte(ctx, view, r, c).unwrap(), 4);
+            // Interior offset 2 must be rejected.
+            let err = byte_to_visual(ctx, view, 2).unwrap_err();
+            assert!(
+                err.contains("grapheme boundary"),
+                "expected grapheme-boundary error, got: {err}"
+            );
         });
     }
 

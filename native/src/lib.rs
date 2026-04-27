@@ -74,9 +74,16 @@ thread_local! {
 // ============================================================================
 
 /// Wrap an FFI function body. Returns 0 on success, -1 on error, -2 on panic.
+///
+/// Success paths clear `last_error` so callers that disambiguate a returned
+/// `0` via `tui_get_last_error()` (notably substrate value-returning getters,
+/// per TechSpec §4.4) cannot observe a stale diagnostic from a prior call.
 fn ffi_wrap(f: impl FnOnce() -> Result<i32, String>) -> i32 {
     match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(Ok(code)) => code,
+        Ok(Ok(code)) => {
+            clear_last_error();
+            code
+        }
         Ok(Err(msg)) => {
             set_last_error(msg);
             -1
@@ -90,10 +97,15 @@ fn ffi_wrap(f: impl FnOnce() -> Result<i32, String>) -> i32 {
 
 /// Wrap an FFI function that returns a u64. Returns 0 on error.
 /// Used by substrate epoch / cache-key getters where 0 is a valid initial
-/// state and errors are surfaced through `tui_get_last_error()`.
+/// state and errors are surfaced through `tui_get_last_error()`. Success
+/// paths clear `last_error` so callers can disambiguate a real `0` from
+/// a stale failure.
 fn ffi_wrap_u64(f: impl FnOnce() -> Result<u64, String>) -> u64 {
     match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(Ok(v)) => v,
+        Ok(Ok(v)) => {
+            clear_last_error();
+            v
+        }
         Ok(Err(msg)) => {
             set_last_error(msg);
             0
@@ -106,9 +118,14 @@ fn ffi_wrap_u64(f: impl FnOnce() -> Result<u64, String>) -> u64 {
 }
 
 /// Wrap an FFI function that returns a u32 handle. Returns 0 on error.
+/// Success paths clear `last_error` so callers consulting it after a
+/// successful zero-sentinel return see a clean slate.
 fn ffi_wrap_handle(f: impl FnOnce() -> Result<u32, String>) -> u32 {
     match catch_unwind(AssertUnwindSafe(f)) {
-        Ok(Ok(handle)) => handle,
+        Ok(Ok(handle)) => {
+            clear_last_error();
+            handle
+        }
         Ok(Err(msg)) => {
             set_last_error(msg);
             0
@@ -3358,6 +3375,46 @@ mod tests {
             "Error pointer should be null after clear"
         );
 
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_successful_call_clears_stale_last_error() {
+        // Reproduces the wave-3 review finding: after a failing call latches
+        // a diagnostic, a subsequent successful zero-sentinel getter must
+        // leave `last_error` clean. Otherwise callers cannot distinguish a
+        // legitimate `0` (empty buffer, fresh epoch, etc.) from an error.
+        let _guard = ffi_test_guard();
+
+        tui_init_headless(80, 24);
+
+        // 1. Trigger a failure so last_error is latched.
+        assert_eq!(tui_destroy_node(99_999), -1);
+        let ptr = tui_get_last_error();
+        assert!(
+            !ptr.is_null(),
+            "last_error must carry the diagnostic after a failed call"
+        );
+
+        // 2. Make a successful zero-sentinel getter call. An empty buffer
+        //    legitimately has byte_len = 0 and epoch = 0, so the return
+        //    value alone cannot distinguish success from error.
+        let buf = tui_text_buffer_create();
+        assert_ne!(buf, 0);
+        let byte_len = tui_text_buffer_get_byte_len(buf);
+        assert_eq!(byte_len, 0, "empty buffer byte_len is a valid 0");
+        let epoch = tui_text_buffer_get_epoch(buf);
+        assert_eq!(epoch, 0, "fresh buffer epoch is a valid 0");
+
+        // 3. Per the TechSpec §4.4 contract, last_error must now be cleared.
+        let ptr_after = tui_get_last_error();
+        assert!(
+            ptr_after.is_null(),
+            "last_error must be cleared on a successful FFI call so callers \
+             can disambiguate a real 0 from a stale failure"
+        );
+
+        let _ = tui_text_buffer_destroy(buf);
         tui_shutdown();
     }
 
