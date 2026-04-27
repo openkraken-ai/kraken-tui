@@ -1,6 +1,7 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.3.4 - Reflects review-wave 4 against PR #35. Word-wrap no longer emits phantom zero-length visual rows when consumed inter-word whitespace precedes a long unbreakable token (the `last_ws` tracker is now scoped to the active run and the wrap branch refuses zero-length pushes). `is_grapheme_boundary` is now O(grapheme-position) instead of O(content) on no-match, removing a hidden quadratic in transcript-streaming workloads. Cursor `UNDERLINE` is restricted to the primary cell so wide-glyph and tab cursors don't smear the underline across trailing cells. `is_ws_grapheme`'s ASCII-only word-break set is documented. CORE-N3 is gated on a CORE-N5 append-cost benchmark before rebase ships, so the substrate's flat-`String` recompute-on-every-mutation cost cannot regress the transcript streaming path silently.
 - v7.3.3 - Reflects review-wave 3 against PR #35. The substrate FFI now clears `last_error` on every successful call (via `ffi_wrap` / `ffi_wrap_handle` / `ffi_wrap_u64`), so the zero-sentinel getter contract is reliable in practice; added a Rust regression test for the stale-error-after-success path. `byte_to_visual` rejects non-grapheme offsets (matching `set_cursor` / `visual_to_byte`), making the byte<->visual mapping round-trippable for every accepted input. The unified renderer now fills every cell a tab grapheme advances through with the merged cell style, so selection / highlight / background coverage no longer leaves uncolored holes inside tab-expanded text. The `substrate_gates.rs` lede now matches the §5.4.1 reality (G3/G5/G6/G7/G8 enforced by named tests; G1/G4 source-review; G2 deferred to CORE-N2).
 - v7.3.2 - Reflects review-wave 2 against PR #35. Documented the reality that substrate value-returning getters (`tui_text_buffer_get_*`, `tui_text_view_get_*`) cannot use the `0/-1/-2` status model and instead return `0` on error with the diagnostic surfaced through `tui_get_last_error()`; corrected stale §5.1 / "Appendix E" navigation references in the archived Epic M summary; updated `CORE-M2` notes to match shipped reality (10 `tui_text_view_*` FFI exports, expanded text_view test suite). Cursor reconciliation in `TextView` now snaps to a grapheme boundary, not just `byte_len`, so width-changing edits cannot strand the cursor inside a cluster.
 - v7.3.1 - Reconciled `CORE-M4` description and acceptance with what the Epic-M gate suite actually enforces: G3/G5/G6/G7/G8 are covered by named native tests, G1/G4 are tracked as source-review gates, and G2 (TextArea undo without full snapshots) is deferred to `CORE-N2` along with `EditBuffer`. Reflects review-wave 1 against PR #35.
@@ -216,9 +217,10 @@ Then the public host API and keyboard behavior remain unchanged from the prior T
 **CORE-N3 Rebase Transcript Block Content Onto Substrate**
 - **Type:** Feature
 - **Effort:** 8
-- **Dependencies:** Substrate foundation (Epic M, shipped)
+- **Dependencies:** Substrate foundation (Epic M, shipped); CORE-N5 append-cost benchmark must exist before this rebase ships (see "Pre-Rebase Performance Gate" below)
 - **Capability / Contract Mapping:** TechSpec ADR-T39, §3.4
 - **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable.
+- **Pre-Rebase Performance Gate:** The shipped substrate stores buffer content in a flat `String` and `recompute_line_metadata` rescans the entire content per mutation, so per-token streaming `append` is O(N) and cumulative cost is O(N²) in buffer size. Transcript streaming is the headline workload that this rebase will lean on, so before this rebase merges, the CORE-N5 benchmark gate (see below) must report append cost as a function of buffer size; if the curve is unacceptable, this ticket is blocked on incremental line-metadata invalidation in `text_buffer.rs` (separate ticket if needed) before proceeding.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a streaming transcript with a visible reading position
@@ -230,6 +232,10 @@ Given the canonical transcript replay fixtures (append, patch, collapse, unread,
 When the rebased transcript runs them
 Then anchor, follow, unread, and collapse behavior matches the prior fixture outputs
 And the host TranscriptView public API behaves identically to the pre-rebase contract
+
+Given the CORE-N5 append-cost benchmark
+When CORE-N3 ships
+Then the recorded append-cost-vs-buffer-size curve is documented and within the bound CORE-N5 establishes
 ```
 
 **CORE-N4 Re-Evaluate CodeView and DiffView Posture**
@@ -246,12 +252,12 @@ Then a written measurement exists describing whether native promotion is warrant
 And the recommendation is reflected in TechSpec ADR status if it changes the prior posture
 ```
 
-**CORE-N5 Add Substrate Replay and Golden Coverage**
+**CORE-N5 Add Substrate Replay, Golden, and Append-Cost Coverage**
 - **Type:** Chore
 - **Effort:** 5
 - **Dependencies:** CORE-N1, CORE-N2, CORE-N3
 - **Capability / Contract Mapping:** TechSpec §5.4.1, ADR-T36
-- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green.
+- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green. Add a Criterion benchmark gate in `native/benches/` (or extend an existing one) that measures `tui_text_buffer_append` cost as a function of pre-existing buffer size at 1 KiB, 16 KiB, 256 KiB, and 4 MiB. The benchmark output goes into `docs/reports/` so the curve is reviewable, and CORE-N3's pre-rebase gate consumes it.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate-driven Text, TextArea, and Transcript surfaces
@@ -259,6 +265,11 @@ When the replay and golden suite runs in CI
 Then large-transcript, long-code, nested-scroll, collapse and expand, tail-follow, resize, and selection and cursor scenarios all pass
 And the existing flagship example replay tests in ts/test-examples.test.ts remain green
 And any regression in the structural gates listed in TechSpec section 5.4.1 fails the suite
+
+Given a Criterion benchmark of tui_text_buffer_append at increasing buffer sizes
+When the benchmark runs locally and in CI
+Then the recorded append-cost-vs-buffer-size curve is published under docs/reports/
+And the curve sets the bound that CORE-N3's pre-rebase gate enforces
 ```
 
 ## 5. Ticket Summary Table (Active Wave)

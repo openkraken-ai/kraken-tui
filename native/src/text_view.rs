@@ -219,8 +219,13 @@ fn is_grapheme_boundary(content: &str, byte_offset: usize) -> bool {
     if byte_offset == 0 || byte_offset == content.len() {
         return true;
     }
+    // Bound the scan: stop once we walk past `byte_offset`. Without
+    // `take_while`, a no-match would traverse the entire buffer, making
+    // every set_cursor / byte_to_visual call O(N) on transcript-sized
+    // content.
     content
         .grapheme_indices(true)
+        .take_while(|(start, _)| *start <= byte_offset)
         .any(|(start, _)| start == byte_offset)
 }
 
@@ -535,9 +540,16 @@ fn wrap_segment(
                 g_off
             };
 
-            let segment_run = &segment[run_start..break_at];
-            let cell_width = line_cell_width(segment_run, tab_width);
-            runs.push((run_start, break_at, cell_width));
+            // Refuse to emit a zero-length run. This can otherwise happen
+            // when the word-wrap break-point lands exactly on the current
+            // run_start (e.g. after consumed inter-word whitespace before a
+            // long unbreakable token). The phantom row would inflate
+            // get_visual_line_count and misroute byte_to_visual mappings.
+            if break_at > run_start {
+                let segment_run = &segment[run_start..break_at];
+                let cell_width = line_cell_width(segment_run, tab_width);
+                runs.push((run_start, break_at, cell_width));
+            }
             run_start = break_at;
             // Skip leading whitespace at the start of the new run for word mode
             if matches!(mode, WrapMode::Word) {
@@ -558,7 +570,11 @@ fn wrap_segment(
             // (no-op since run starts at column 0)
         }
 
-        if is_ws_grapheme(g) {
+        // Only track whitespace boundaries inside the active run. Without
+        // this guard, whitespace already consumed by the leading-skip above
+        // would still update `last_ws`, and the next wrap break-point could
+        // land at or before `run_start`, emitting a zero-length phantom row.
+        if is_ws_grapheme(g) && g_off >= run_start {
             last_ws = Some((g_off, run_col));
         }
 
@@ -582,6 +598,13 @@ fn wrap_segment(
     runs
 }
 
+/// Whitespace characters that act as word-wrap break points.
+///
+/// Intentionally limited to ASCII space and tab in v1. NBSP (U+00A0),
+/// ideographic space (U+3000), and Unicode line separators are not
+/// treated as break points; if a future surface needs broader Unicode
+/// whitespace it should land alongside its own coverage so the wrap
+/// behavior change is visible in the gate suite.
 fn is_ws_grapheme(g: &str) -> bool {
     g == " " || g == "\t"
 }
@@ -680,6 +703,79 @@ mod tests {
             for vl in &lines {
                 assert!(vl.cell_width <= 10);
             }
+        });
+    }
+
+    #[test]
+    fn word_wrap_does_not_emit_phantom_zero_length_row() {
+        // Regression for wave-4 P1: with consumed inter-word whitespace
+        // before the next word, the wrap trigger must not push a
+        // (run_start, run_start, 0) phantom row. The minimum case uses a
+        // word that fits cleanly so the only failure mode is the phantom.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcd     ef").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run: {vl:?}"
+                );
+            }
+            // After the fix: 2 rows ("abcd", "ef"). Before the fix this
+            // produced 3 rows with an empty middle row.
+            assert_eq!(lines.len(), 2);
+            let buf_h = ctx.text_views.get(&view).unwrap().buffer;
+            let buf = ctx.text_buffers.get(&buf_h).unwrap();
+            assert_eq!(
+                &buf.content()[lines[0].byte_start..lines[0].byte_end],
+                "abcd"
+            );
+            assert_eq!(&buf.content()[lines[1].byte_start..lines[1].byte_end], "ef");
+            // byte_to_visual on the first byte of "ef" must land on row 1,
+            // not on a phantom row 1 with row 2 holding the actual content.
+            assert_eq!(byte_to_visual(ctx, view, 9).unwrap(), (1, 0));
+        });
+    }
+
+    #[test]
+    fn word_wrap_long_unbreakable_word_falls_back_to_char_break() {
+        // Document the word-wrap fallback: when a word does not fit and
+        // there is no whitespace boundary within the active run, break at
+        // the cell boundary (char-mode behavior). This keeps layout
+        // predictable instead of letting a single grapheme overflow the
+        // wrap width.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcd     efghi").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run: {vl:?}"
+                );
+                assert!(
+                    vl.cell_width <= 4,
+                    "row {i} cell_width {} exceeds wrap width 4",
+                    vl.cell_width
+                );
+            }
+            // 3 rows: "abcd", "efgh" (char-broken from "efghi"), "i".
+            assert_eq!(lines.len(), 3);
         });
     }
 

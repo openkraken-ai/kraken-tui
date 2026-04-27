@@ -218,6 +218,48 @@ fn gate_g7_cursor_mapping_byte_to_visual_round_trip() {
 }
 
 #[test]
+fn gate_g7_cursor_mapping_round_trip_in_wrap_mode() {
+    // Locks in the wrap-mode round-trip: every grapheme start in a
+    // soft-wrapped buffer must round-trip through byte_to_visual /
+    // visual_to_byte without drift. Buffer "abcdefghij" wrapped at width
+    // 4 produces visual rows ("abcd", "efgh", "ij"). A byte offset that
+    // sits on a row boundary (e.g. byte 4 is both end-of-row-0 and
+    // start-of-row-1) is a single canonical visual position; this test
+    // documents which side byte_to_visual chooses and confirms the two
+    // sides resolve to the same byte through visual_to_byte.
+    let _g = fresh_ctx();
+    let view = with_ctx(|ctx| {
+        let buf = text_buffer::create(ctx).unwrap();
+        text_buffer::append(ctx, buf, "abcdefghij").unwrap();
+        let v = text_view::create(ctx, buf).unwrap();
+        text_view::set_wrap(ctx, v, 4, WrapMode::Char as u8, 4).unwrap();
+        v
+    });
+    with_ctx(|ctx| {
+        // Round-trip every grapheme start.
+        for byte_offset in 0..=10 {
+            let (row, col) = text_view::byte_to_visual(ctx, view, byte_offset).unwrap();
+            let back = text_view::visual_to_byte(ctx, view, row, col).unwrap();
+            assert_eq!(
+                back, byte_offset,
+                "round-trip drift at byte {byte_offset}: got (row={row}, col={col}) -> {back}"
+            );
+        }
+        // Boundary equivalence: (row 0, col 4) and (row 1, col 0) both
+        // resolve to byte 4 through visual_to_byte, so a click on either
+        // side of the wrap boundary lands on the same cursor position.
+        let end_of_row_0 = text_view::visual_to_byte(ctx, view, 0, 4).unwrap();
+        let start_of_row_1 = text_view::visual_to_byte(ctx, view, 1, 0).unwrap();
+        assert_eq!(end_of_row_0, 4);
+        assert_eq!(start_of_row_1, 4);
+        // byte_to_visual prefers the row that contains the offset
+        // (offset 4 == byte_end of row 0).
+        let (row, col) = text_view::byte_to_visual(ctx, view, 4).unwrap();
+        assert_eq!((row, col), (0, 4));
+    });
+}
+
+#[test]
 fn gate_g7_selection_spans_grapheme_boundaries() {
     let _g = fresh_ctx();
     let mut target = Buffer::new(20, 1);

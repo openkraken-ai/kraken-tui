@@ -106,7 +106,12 @@ pub(crate) fn render_text_view(
         let line = &visual_lines[start_idx + screen_row_offset];
         let segment = &content[line.byte_start..line.byte_end];
         let screen_y = rect.y + screen_row_offset as i32;
-        if screen_y < 0 || screen_y >= rect.y + rect.h {
+        // Defensive bound against `rect` extending past the target buffer.
+        // The loop bounds already keep `screen_y` inside `[rect.y, rect.y +
+        // rect.h)`, so the only way this branch fires is if the caller
+        // supplied a rect whose rows fall outside the target. Skipping
+        // keeps the inner `target.set` calls safe without panicking.
+        if screen_y < 0 || screen_y >= target.height as i32 {
             continue;
         }
 
@@ -190,10 +195,17 @@ pub(crate) fn render_text_view(
                 std::mem::swap(&mut fg, &mut bg);
             }
 
+            // Cursor underline applies to the primary cell only. Trailing
+            // cells (wide-glyph trail or tab fill) carry the rest of the
+            // merged style so selection / highlight / background coverage
+            // is uniform, but the underline marker stays a single cell so
+            // it isn't visually smeared across a wide glyph or a full tab.
             let at_cursor = cursor_byte.map(|c| c == g_byte_start).unwrap_or(false);
-            if at_cursor {
-                attrs |= CellAttrs::UNDERLINE;
-            }
+            let primary_attrs = if at_cursor {
+                attrs | CellAttrs::UNDERLINE
+            } else {
+                attrs
+            };
 
             // Place the cell(s)
             if screen_col >= rect.x && screen_col < rect.x + rect.w {
@@ -202,7 +214,7 @@ pub(crate) fn render_text_view(
                         ch: display_char,
                         fg,
                         bg,
-                        attrs,
+                        attrs: primary_attrs,
                     };
                     target.set(screen_col as u16, screen_y as u16, primary);
                 }
@@ -211,8 +223,8 @@ pub(crate) fn render_text_view(
                     // selection / highlight / background coverage applies
                     // uniformly. Wide glyphs (advance == 2) get a single
                     // trailing space; tabs (advance up to tab_width) get a
-                    // full run of spaces. Each cell carries the merged
-                    // style of the grapheme's primary cell.
+                    // full run of spaces. Trailing cells carry the merged
+                    // style WITHOUT the cursor underline.
                     for offset in 1..(advance as i32) {
                         let trailing_col = screen_col + offset;
                         if trailing_col >= rect.x + rect.w {
@@ -563,6 +575,51 @@ mod tests {
             .unwrap();
         });
         crate::golden::assert_golden_buffer(&target, "text_renderer_unicode_mixed").unwrap();
+    }
+
+    #[test]
+    fn cursor_underline_does_not_propagate_to_trailing_cells() {
+        // Wide-glyph cursor: only the primary cell carries UNDERLINE.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(10, 1);
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // 'a' (1 cell) + '漢' (2 cells). Cursor at byte 1 = start of '漢'.
+            text_buffer::append(ctx, buf, "a漢").unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 0, WrapMode::None as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 1, 0, 0).unwrap();
+            text_view::set_cursor(ctx, view, 1).unwrap();
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 1,
+                },
+                BaseStyle::default(),
+            )
+            .unwrap();
+        });
+        assert!(
+            target
+                .get(1, 0)
+                .unwrap()
+                .attrs
+                .contains(CellAttrs::UNDERLINE),
+            "cursor primary cell must have UNDERLINE"
+        );
+        assert!(
+            !target
+                .get(2, 0)
+                .unwrap()
+                .attrs
+                .contains(CellAttrs::UNDERLINE),
+            "wide-glyph trailing cell must not carry the cursor underline"
+        );
     }
 
     #[test]
