@@ -141,8 +141,17 @@ pub(crate) fn render_text_view(
             // Compute screen column relative to rect after scroll
             let screen_col = rect.x + (col as i32 - scroll_col as i32);
 
-            // Right clip: wide glyph spilling past rect → render space
-            let glyph_clipped = advance >= 2 && screen_col + (advance as i32) > rect.x + rect.w;
+            // Right clip: a wide glyph (CJK, emoji) spilling past the rect
+            // is replaced with a single placeholder space — splitting the
+            // grapheme is wrong. Tabs are NOT routed through this path
+            // even though their advance is >= 2: a tab is a column-advance
+            // directive that expands to spaces, and clipped tab cells
+            // inside the rect should still be filled by the trailing-fill
+            // loop with the merged style. Routing tabs through
+            // `glyph_clipped` would skip the trailing fill and leave
+            // tab-expanded cells unstyled at the right edge.
+            let glyph_clipped =
+                g != "\t" && advance >= 2 && screen_col + (advance as i32) > rect.x + rect.w;
 
             // Determine the visual character for this cell.
             //
@@ -270,14 +279,19 @@ pub(crate) fn render_text_view(
 
         // Cursor at end-of-line: place a marker at the trailing column if
         // it falls inside the rect. Skip when the next visual line starts
-        // at the same byte offset (soft-wrap boundary): the cursor is one
-        // logical position with two visual representations, and the inner
-        // grapheme loop on the next row will draw it at (next_row, 0).
-        // Drawing both would render two cursors for one logical position.
+        // at the same byte offset AND that next row is within the rendered
+        // window (soft-wrap boundary): the cursor is one logical position
+        // with two visual representations, and the inner grapheme loop on
+        // the next row will draw it at (next_row, 0). When the next row
+        // is clipped by the viewport, the inner loop never runs there, so
+        // suppressing the marker on this row would silently drop the
+        // cursor — fall back to drawing the marker.
         let row_idx = start_idx + screen_row_offset;
-        let next_starts_here = visual_lines
-            .get(row_idx + 1)
-            .is_some_and(|next| next.byte_start == line.byte_end);
+        let next_row_is_visible = row_idx + 1 < start_idx + visible_rows;
+        let next_starts_here = next_row_is_visible
+            && visual_lines
+                .get(row_idx + 1)
+                .is_some_and(|next| next.byte_start == line.byte_end);
         if let Some(cb) = cursor_byte {
             if cb == line.byte_end && !next_starts_here {
                 let cursor_col_abs = line.cell_width;
@@ -604,6 +618,50 @@ mod tests {
     }
 
     #[test]
+    fn cursor_at_wrap_boundary_renders_when_next_row_clipped() {
+        // Regression for wave-7 P1: wave-5 suppressed the end-of-line
+        // marker whenever the next visual line started at the same byte,
+        // assuming the next row's inner loop would draw the cursor. When
+        // the next row sits outside the viewport (rect.h cuts it off),
+        // that inner loop never runs — suppressing the marker too would
+        // drop the cursor entirely. With "abcdefgh" wrapped at 4 and
+        // rect.h=1 starting at row 0, byte 4 is row 0's byte_end and
+        // row 1's byte_start, but row 1 is clipped, so the marker on
+        // row 0 must fire.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(10, 1);
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcdefgh").unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 1, 0, 0).unwrap();
+            text_view::set_cursor(ctx, view, 4).unwrap();
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 1,
+                },
+                BaseStyle::default(),
+            )
+            .unwrap();
+        });
+        assert!(
+            target
+                .get(4, 0)
+                .unwrap()
+                .attrs
+                .contains(CellAttrs::UNDERLINE),
+            "end-of-line marker must fire when the next visual row is outside the viewport"
+        );
+    }
+
+    #[test]
     fn cursor_at_wrap_boundary_renders_once() {
         // Regression for wave-5 P2: with "abcdefghij" wrapped at 4 and the
         // cursor at byte 4 (== byte_end of row 0 == byte_start of row 1),
@@ -751,6 +809,61 @@ mod tests {
                 .contains(CellAttrs::UNDERLINE),
             "wide-glyph trailing cell must not carry the cursor underline"
         );
+    }
+
+    #[test]
+    fn clipped_tab_with_selection_fills_visible_cells() {
+        // Regression for wave-7 P2: tabs were routed through the
+        // `glyph_clipped` path because their advance is >= 2, but a tab
+        // is a column-advance directive — its expansion is spaces, and
+        // every visible cell it advances through inside the rect should
+        // be filled with the merged style. Treating it like a wide glyph
+        // skipped the trailing-fill loop and left clipped tab cells
+        // unstyled.
+        // Setup: "a\tb" at tab_width=4. 'a' at col 0, '\t' at col 1
+        // advances 3 cells (to col 4), 'b' at col 4. With rect.w=3 the
+        // tab spills past the right edge: cols 0, 1, 2 are inside the
+        // rect; col 3 is clipped. Selection covers all three graphemes.
+        // Every visible cell (0, 1, 2) must carry the inverted selection
+        // style.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(10, 1);
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "a\tb").unwrap();
+            text_buffer::set_selection(ctx, buf, 0, 3).unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 0, WrapMode::None as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 1, 0, 0).unwrap();
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 3,
+                    h: 1,
+                },
+                BaseStyle {
+                    fg: 0x01_FF_FF_FF,
+                    bg: 0x01_00_00_00,
+                    attrs: CellAttrs::empty(),
+                },
+            )
+            .unwrap();
+        });
+        for x in 0..3 {
+            let c = target.get(x, 0).unwrap();
+            assert_eq!(
+                c.fg, 0x01_00_00_00,
+                "cell {x} fg must be inverted by selection (clipped tab fill)"
+            );
+            assert_eq!(
+                c.bg, 0x01_FF_FF_FF,
+                "cell {x} bg must be inverted by selection (clipped tab fill)"
+            );
+        }
     }
 
     #[test]
