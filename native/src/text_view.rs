@@ -272,7 +272,13 @@ pub(crate) fn get_visual_line_count(ctx: &mut TuiContext, handle: u32) -> Result
     Ok(ctx.text_views.get(&handle).unwrap().visual_lines.len() as u32)
 }
 
-pub(crate) fn get_cache_epoch(ctx: &TuiContext, handle: u32) -> Result<u64, String> {
+pub(crate) fn get_cache_epoch(ctx: &mut TuiContext, handle: u32) -> Result<u64, String> {
+    // Refresh the projection first so callers polling this for cache
+    // invalidation observe a fresh epoch after `set_wrap` / `set_viewport`
+    // / buffer mutation, even if no other read has run yet. Without this,
+    // the stored epoch lags behind the cache key until some other call
+    // (e.g. byte_to_visual, render_text_view) triggers ensure_projection.
+    ensure_projection(ctx, handle)?;
     Ok(view(ctx, handle)?.cache_key_epoch)
 }
 
@@ -981,6 +987,34 @@ mod tests {
             let k2 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
             assert_eq!(k1, k2);
         });
+    }
+
+    #[test]
+    fn get_cache_epoch_refreshes_projection_before_returning() {
+        // Regression for wave-9 P2: get_cache_epoch must reflect the
+        // current projection state. Before the fix, it returned the
+        // stored cache_key_epoch without running ensure_projection, so
+        // host code polling for cache invalidation could miss a changed
+        // view until some other call happened to project.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "hello world").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 5, WrapMode::Char as u8, 4).unwrap();
+            v
+        });
+        let baseline = with_ctx(|ctx| get_cache_epoch(ctx, view).unwrap());
+        // Change wrap_width: this dirties the cache key but does not
+        // itself project. A naive getter would still report `baseline`.
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+        });
+        let after = with_ctx(|ctx| get_cache_epoch(ctx, view).unwrap());
+        assert!(
+            after > baseline,
+            "get_cache_epoch must observe the post-set_wrap epoch ({after}) > {baseline}"
+        );
     }
 
     #[test]

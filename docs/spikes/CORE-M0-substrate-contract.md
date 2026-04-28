@@ -31,9 +31,18 @@ holds an interior alias into buffer contents.
 | `set_highlight(...)`   | Append a highlight range with a `kind` discriminator.                                                         |
 | `clear_highlights`     | Drop all highlights.                                                                                          |
 
-All payload pointers are copied at the boundary (`(ptr, len)` -> owned `Vec<u8>`).
-No interior pointer escapes Rust. UTF-8 validity is enforced at the boundary;
-non-UTF-8 input is rejected with `-1`.
+All payload pointers are validated at the boundary (`(ptr, len)` -> borrowed
+`&str` via `read_utf8_payload`). No interior pointer escapes Rust. UTF-8
+validity is enforced at the boundary; non-UTF-8 input is rejected with `-1`.
+The single boundary copy happens when the validated `&str` is written into
+buffer storage (`buf.content.replace_range`).
+
+> **Update (PR #35 review wave 6, TechSpec v7.2.6):** the original draft of
+> this section said payloads were copied "at the boundary into an owned
+> `Vec<u8>`", which would have meant TWO copies on the streaming-append path
+> (one at the boundary, one when writing into `TextBuffer`). The shipped
+> implementation collapses that to a single copy by passing a borrowed
+> `&str` through to the buffer write.
 
 ## Content Epoch Model
 

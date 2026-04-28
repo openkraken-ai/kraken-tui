@@ -3332,8 +3332,8 @@ pub extern "C" fn tui_text_view_visual_to_byte(
 #[no_mangle]
 pub extern "C" fn tui_text_view_get_cache_epoch(handle: u32) -> u64 {
     ffi_wrap_u64(|| {
-        let ctx = context_read()?;
-        text_view::get_cache_epoch(&ctx, handle)
+        let mut ctx = context_write()?;
+        text_view::get_cache_epoch(&mut ctx, handle)
     })
 }
 
