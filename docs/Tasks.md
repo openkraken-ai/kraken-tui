@@ -1,6 +1,7 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.3.5 - Reflects review-wave 5 against PR #35. Three substrate correctness fixes: (1) `wrap_segment` no longer emits visual lines whose `cell_width` exceeds `wrap_width` when the wrap break-point lands earlier in the segment than the for-loop's current grapheme — `run_col` is now recomputed against the iterated prefix after each wrap reset; (2) the renderer no longer double-draws the cursor at a soft-wrap boundary (end-of-row N marker is suppressed when row N+1 starts at the same byte); (3) left-clipped wide glyphs and tabs now paint their visible trailing cells, mirroring the right-edge clip path. New ABI: `tui_text_buffer_clear_dirty_ranges` lets consumers drain the dirty list so it doesn't grow unbounded; CORE-N3 picks up the wiring requirement. CORE-N1/N2/N3 acceptance criteria now require explicit substrate-routing assertions per migrated surface (G3/G4 behavioral coverage) and CORE-N1 picks up theme integration for highlight backgrounds. CORE-N5 benchmark scope expanded to include cursor-mapping cost as a function of prefix length so the wave-4 line-bounded scan question is measured before transcript-tail interactions ship.
 - v7.3.4 - Reflects review-wave 4 against PR #35. Word-wrap no longer emits phantom zero-length visual rows when consumed inter-word whitespace precedes a long unbreakable token (the `last_ws` tracker is now scoped to the active run and the wrap branch refuses zero-length pushes). `is_grapheme_boundary` is now O(grapheme-position) instead of O(content) on no-match, removing a hidden quadratic in transcript-streaming workloads. Cursor `UNDERLINE` is restricted to the primary cell so wide-glyph and tab cursors don't smear the underline across trailing cells. `is_ws_grapheme`'s ASCII-only word-break set is documented. CORE-N3 is gated on a CORE-N5 append-cost benchmark before rebase ships, so the substrate's flat-`String` recompute-on-every-mutation cost cannot regress the transcript streaming path silently.
 - v7.3.3 - Reflects review-wave 3 against PR #35. The substrate FFI now clears `last_error` on every successful call (via `ffi_wrap` / `ffi_wrap_handle` / `ffi_wrap_u64`), so the zero-sentinel getter contract is reliable in practice; added a Rust regression test for the stale-error-after-success path. `byte_to_visual` rejects non-grapheme offsets (matching `set_cursor` / `visual_to_byte`), making the byte<->visual mapping round-trippable for every accepted input. The unified renderer now fills every cell a tab grapheme advances through with the merged cell style, so selection / highlight / background coverage no longer leaves uncolored holes inside tab-expanded text. The `substrate_gates.rs` lede now matches the §5.4.1 reality (G3/G5/G6/G7/G8 enforced by named tests; G1/G4 source-review; G2 deferred to CORE-N2).
 - v7.3.2 - Reflects review-wave 2 against PR #35. Documented the reality that substrate value-returning getters (`tui_text_buffer_get_*`, `tui_text_view_get_*`) cannot use the `0/-1/-2` status model and instead return `0` on error with the diagnostic surfaced through `tui_get_last_error()`; corrected stale §5.1 / "Appendix E" navigation references in the archived Epic M summary; updated `CORE-M2` notes to match shipped reality (10 `tui_text_view_*` FFI exports, expanded text_view test suite). Cursor reconciliation in `TextView` now snaps to a grapheme boundary, not just `byte_len`, so width-changing edits cannot strand the cursor inside a cluster.
@@ -182,17 +183,22 @@ And the suite fails when any documented Unicode behavior regresses
 - **Effort:** 5
 - **Dependencies:** Substrate foundation (Epic M, shipped)
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §5.4.1
-- **Description:** Migrate `Text`, `Markdown`, and code-style span rendering paths onto `TextBuffer` content and `TextView` projections drawn through the unified renderer. Remove ad-hoc width and wrap math from the migrated widgets. Public host API for these widgets remains unchanged.
+- **Description:** Migrate `Text`, `Markdown`, and code-style span rendering paths onto `TextBuffer` content and `TextView` projections drawn through the unified renderer. Remove ad-hoc width and wrap math from the migrated widgets. Public host API for these widgets remains unchanged. Each migrated surface adds a substrate-routing assertion (e.g. inspecting that the widget's render path calls `text_renderer::render_text_view` rather than recomputing geometry) so the §5.4.1 G3/G4 gates have behavioral coverage and not just visual goldens. Search-match highlight colors emitted via `tui_text_buffer_set_highlight` route through the active theme rather than the hard-coded `highlight_kind_bg` palette in the renderer; this avoids a follow-on visual regression once Markdown and code-search surfaces start using highlights.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a Text or Markdown widget
 When its content is set or replaced through the existing host API
 Then the widget stores its content in a TextBuffer and its projection in a TextView
 And no widget-local code computes wrapped row counts
+And the widget's render path is asserted (by test, not by review) to call text_renderer::render_text_view
 
 Given existing widget golden snapshots
 When the migrated widgets render the same content
 Then snapshots match the documented baseline
+
+Given a search-match or syntax highlight applied via tui_text_buffer_set_highlight
+When the surface renders under a non-default theme
+Then the highlight background routes through theme bindings rather than the renderer's v1 hard-coded palette
 ```
 
 **CORE-N2 Rebase TextArea Onto EditBuffer and TextView**
@@ -200,7 +206,7 @@ Then snapshots match the documented baseline
 - **Effort:** 8
 - **Dependencies:** Substrate foundation (Epic M, shipped)
 - **Capability / Contract Mapping:** TechSpec ADR-T38, §3.4, §4.4 `edit_buffer`
-- **Description:** Move `TextArea` state onto an `EditBuffer` wrapping a `TextBuffer` with a `TextView` projection. Replace the existing snapshot-based undo and redo with an operation history plus coalescing rules for ordinary single-edit operations. Preserve the host `TextArea` public API and the existing keyboard behavior.
+- **Description:** Move `TextArea` state onto an `EditBuffer` wrapping a `TextBuffer` with a `TextView` projection. Replace the existing snapshot-based undo and redo with an operation history plus coalescing rules for ordinary single-edit operations. Preserve the host `TextArea` public API and the existing keyboard behavior. Adds a substrate-routing assertion that `TextArea::render` reaches `text_renderer::render_text_view` (G3/G4 behavioral coverage) so a future regression that reintroduces widget-local wrap math fails in CI rather than slipping past G3's name-based source grep.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a TextArea editing several pages of content
@@ -212,6 +218,10 @@ And undo and redo recover the prior cursor and selection state
 Given the existing TextArea host wrapper and keyboard tests
 When the rebased widget is loaded
 Then the public host API and keyboard behavior remain unchanged from the prior TechSpec contract
+
+Given the rebased TextArea
+When its render path is exercised in tests
+Then a behavioral assertion confirms the widget routes through text_renderer::render_text_view
 ```
 
 **CORE-N3 Rebase Transcript Block Content Onto Substrate**
@@ -219,7 +229,7 @@ Then the public host API and keyboard behavior remain unchanged from the prior T
 - **Effort:** 8
 - **Dependencies:** Substrate foundation (Epic M, shipped); CORE-N5 append-cost benchmark must exist before this rebase ships (see "Pre-Rebase Performance Gate" below)
 - **Capability / Contract Mapping:** TechSpec ADR-T39, §3.4
-- **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable.
+- **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable. The rebase wires `tui_text_buffer_clear_dirty_ranges` into the per-frame render path so `dirty_ranges` does not grow unbounded across the session lifetime, and adds a substrate-routing assertion that the transcript visible-block render reaches `text_renderer::render_text_view`.
 - **Pre-Rebase Performance Gate:** The shipped substrate stores buffer content in a flat `String` and `recompute_line_metadata` rescans the entire content per mutation, so per-token streaming `append` is O(N) and cumulative cost is O(N²) in buffer size. Transcript streaming is the headline workload that this rebase will lean on, so before this rebase merges, the CORE-N5 benchmark gate (see below) must report append cost as a function of buffer size; if the curve is unacceptable, this ticket is blocked on incremental line-metadata invalidation in `text_buffer.rs` (separate ticket if needed) before proceeding.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
@@ -236,6 +246,11 @@ And the host TranscriptView public API behaves identically to the pre-rebase con
 Given the CORE-N5 append-cost benchmark
 When CORE-N3 ships
 Then the recorded append-cost-vs-buffer-size curve is documented and within the bound CORE-N5 establishes
+
+Given a long-running transcript session that issues thousands of append / patch operations
+When the per-frame render path runs
+Then tui_text_buffer_clear_dirty_ranges is called once per buffer per frame
+And dirty_ranges memory stays bounded across the session
 ```
 
 **CORE-N4 Re-Evaluate CodeView and DiffView Posture**
@@ -257,7 +272,7 @@ And the recommendation is reflected in TechSpec ADR status if it changes the pri
 - **Effort:** 5
 - **Dependencies:** CORE-N1, CORE-N2, CORE-N3
 - **Capability / Contract Mapping:** TechSpec §5.4.1, ADR-T36
-- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green. Add a Criterion benchmark gate in `native/benches/` (or extend an existing one) that measures `tui_text_buffer_append` cost as a function of pre-existing buffer size at 1 KiB, 16 KiB, 256 KiB, and 4 MiB. The benchmark output goes into `docs/reports/` so the curve is reviewable, and CORE-N3's pre-rebase gate consumes it.
+- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green. Add a Criterion benchmark gate in `native/benches/` (or extend an existing one) that measures `tui_text_buffer_append` cost as a function of pre-existing buffer size at 1 KiB, 16 KiB, 256 KiB, and 4 MiB. The benchmark output goes into `docs/reports/` so the curve is reviewable, and CORE-N3's pre-rebase gate consumes it. The same benchmark file also measures `tui_text_view_set_cursor` and `tui_text_view_byte_to_visual` as a function of the offset's distance from byte 0, so the wave-4 grapheme-boundary scan (currently bounded but still O(prefix-length)) is measured before transcript-tail interactions ship. If the curve is unacceptable, the optimization is "scan from the containing line via `line_starts` instead of from byte 0", tracked as a separate ticket.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate-driven Text, TextArea, and Transcript surfaces
@@ -270,6 +285,11 @@ Given a Criterion benchmark of tui_text_buffer_append at increasing buffer sizes
 When the benchmark runs locally and in CI
 Then the recorded append-cost-vs-buffer-size curve is published under docs/reports/
 And the curve sets the bound that CORE-N3's pre-rebase gate enforces
+
+Given a Criterion benchmark of tui_text_view_set_cursor and tui_text_view_byte_to_visual at increasing prefix lengths
+When the benchmark runs
+Then the grapheme-boundary scan cost as a function of offset is published under docs/reports/
+And the curve informs whether the line-bounded scan optimization is required before transcript-tail interactions ship
 ```
 
 ## 5. Ticket Summary Table (Active Wave)

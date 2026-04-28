@@ -291,6 +291,23 @@ pub(crate) fn clear_highlights(ctx: &mut TuiContext, handle: u32) -> Result<(), 
     Ok(())
 }
 
+/// Drain `dirty_ranges` after a consumer has processed them.
+///
+/// Mutations append to `dirty_ranges` indefinitely; without a drain call
+/// the list grows unboundedly across the session lifetime. Consumers
+/// (e.g. the unified renderer once Epic N wires it up) must call this
+/// after each pass that uses the ranges. Does NOT bump the content epoch
+/// or style fingerprint — clearing the dirty list is purely a consumer
+/// signal, not a buffer mutation.
+pub(crate) fn clear_dirty_ranges(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let buf = ctx
+        .text_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+    buf.dirty_ranges.clear();
+    Ok(())
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -522,6 +539,30 @@ mod tests {
             let b = ctx.text_buffers.get(&h).unwrap();
             assert_eq!(b.epoch(), 0);
             assert!(b.dirty_ranges().is_empty());
+        });
+    }
+
+    #[test]
+    fn clear_dirty_ranges_drains_without_bumping_epoch() {
+        // Wave-5 investigate-flag follow-up: dirty_ranges accumulates
+        // unbounded without a consumer drain, so the substrate exposes
+        // an explicit clear path. Draining must not be observable as a
+        // mutation: epoch and style_fingerprint stay put.
+        let _g = fresh_ctx();
+        let h = with_ctx(|ctx| create(ctx).unwrap());
+        with_ctx(|ctx| {
+            append(ctx, h, "abc").unwrap();
+            replace_range(ctx, h, 0, 1, "X").unwrap();
+            let (epoch_before, fp_before, dirty_before) = {
+                let b = ctx.text_buffers.get(&h).unwrap();
+                (b.epoch(), b.style_fingerprint(), b.dirty_ranges().len())
+            };
+            assert!(dirty_before > 0, "setup: at least one dirty range expected");
+            clear_dirty_ranges(ctx, h).unwrap();
+            let b = ctx.text_buffers.get(&h).unwrap();
+            assert!(b.dirty_ranges().is_empty());
+            assert_eq!(b.epoch(), epoch_before);
+            assert_eq!(b.style_fingerprint(), fp_before);
         });
     }
 

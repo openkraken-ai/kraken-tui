@@ -3209,6 +3209,19 @@ pub extern "C" fn tui_text_buffer_clear_highlights(handle: u32) -> i32 {
     })
 }
 
+/// Drain the buffer's `dirty_ranges` list after a consumer has processed
+/// them. Without this drain call, `dirty_ranges` grows unbounded across
+/// the session lifetime as `replace_range` / `append` keeps appending.
+/// Returns 0 on success; negative codes per the standard error model.
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_clear_dirty_ranges(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::clear_dirty_ranges(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
 #[no_mangle]
 pub extern "C" fn tui_text_view_create(buffer_handle: u32) -> u32 {
     ffi_wrap_handle(|| {

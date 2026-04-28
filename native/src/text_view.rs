@@ -564,10 +564,21 @@ fn wrap_segment(
                 }
                 run_start = new_start;
             }
-            run_col = 0;
+            // After the wrap reset, recover the cell-width of any graphemes
+            // already iterated past `run_start` but belonging to the new
+            // run (this happens whenever the word-wrap break_at lands
+            // earlier than the for-loop's current g_off). Without this
+            // recompute, the iterated-but-uncounted prefix would silently
+            // belong to the new run without contributing to run_col, and
+            // the next wrap trigger could fire late — emitting a row whose
+            // cell_width exceeds wrap_width and violating the substrate
+            // contract.
+            run_col = if g_off > run_start {
+                line_cell_width(&segment[run_start..g_off], tab_width)
+            } else {
+                0
+            };
             last_ws = None;
-            // Recompute starting column from run_start
-            // (no-op since run starts at column 0)
         }
 
         // Only track whitespace boundaries inside the active run. Without
@@ -742,6 +753,40 @@ mod tests {
             // byte_to_visual on the first byte of "ef" must land on row 1,
             // not on a phantom row 1 with row 2 holding the actual content.
             assert_eq!(byte_to_visual(ctx, view, 9).unwrap(), (1, 0));
+        });
+    }
+
+    #[test]
+    fn word_wrap_respects_width_when_break_lands_before_iterator() {
+        // Regression for wave-5 P1: "  abcdefgh" at wrap_width=4 word mode.
+        // The wrap trigger at 'c' breaks at byte 2 (after the second
+        // space), but the for-loop has already iterated past 'a' and 'b'
+        // (g_off=4). Before the fix, run_col was reset to 0 and the
+        // iterated prefix wasn't counted, so the next wrap fired late and
+        // emitted (2, 8, 6) — a 6-cell row in a 4-cell wrap. Every visual
+        // line must satisfy cell_width <= wrap_width.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "  abcdefgh").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert!(
+                    vl.cell_width <= 4,
+                    "row {i} cell_width {} exceeds wrap_width 4: {vl:?}",
+                    vl.cell_width
+                );
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run"
+                );
+            }
         });
     }
 

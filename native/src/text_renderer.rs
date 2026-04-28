@@ -207,38 +207,50 @@ pub(crate) fn render_text_view(
                 attrs
             };
 
-            // Place the cell(s)
-            if screen_col >= rect.x && screen_col < rect.x + rect.w {
-                if screen_col >= 0 && screen_col < target.width as i32 {
-                    let primary = Cell {
-                        ch: display_char,
-                        fg,
-                        bg,
-                        attrs: primary_attrs,
-                    };
-                    target.set(screen_col as u16, screen_y as u16, primary);
-                }
-                if !glyph_clipped && advance >= 2 {
-                    // Fill every cell the grapheme advances through so
-                    // selection / highlight / background coverage applies
-                    // uniformly. Wide glyphs (advance == 2) get a single
-                    // trailing space; tabs (advance up to tab_width) get a
-                    // full run of spaces. Trailing cells carry the merged
-                    // style WITHOUT the cursor underline.
-                    for offset in 1..(advance as i32) {
-                        let trailing_col = screen_col + offset;
-                        if trailing_col >= rect.x + rect.w {
-                            break;
-                        }
-                        if trailing_col >= 0 && trailing_col < target.width as i32 {
-                            let trailing = Cell {
-                                ch: ' ',
-                                fg,
-                                bg,
-                                attrs,
-                            };
-                            target.set(trailing_col as u16, screen_y as u16, trailing);
-                        }
+            // Primary cell placement: only when the primary column is
+            // visible inside the rect AND the target buffer.
+            if screen_col >= rect.x
+                && screen_col < rect.x + rect.w
+                && screen_col >= 0
+                && screen_col < target.width as i32
+            {
+                let primary = Cell {
+                    ch: display_char,
+                    fg,
+                    bg,
+                    attrs: primary_attrs,
+                };
+                target.set(screen_col as u16, screen_y as u16, primary);
+            }
+
+            // Trailing cell fill: gated independently of the primary cell.
+            // This covers two cases the previous nested gate missed:
+            //   - Right-clip: existing path; trailing cells past
+            //     rect.x + rect.w are skipped via the inner break.
+            //   - Left-clip: a wide glyph or tab whose primary cell sits
+            //     left of the rect (screen_col < rect.x) but whose
+            //     advance crosses into the rect. Without this, the
+            //     visible trailing portion was an unwritten hole.
+            // Cells fill with a placeholder space carrying the merged
+            // style (without the cursor underline, mirroring the right
+            // clip path).
+            if !glyph_clipped && advance >= 2 {
+                for offset in 1..(advance as i32) {
+                    let trailing_col = screen_col + offset;
+                    if trailing_col < rect.x {
+                        continue;
+                    }
+                    if trailing_col >= rect.x + rect.w {
+                        break;
+                    }
+                    if trailing_col >= 0 && trailing_col < target.width as i32 {
+                        let trailing = Cell {
+                            ch: ' ',
+                            fg,
+                            bg,
+                            attrs,
+                        };
+                        target.set(trailing_col as u16, screen_y as u16, trailing);
                     }
                 }
             }
@@ -250,10 +262,18 @@ pub(crate) fn render_text_view(
             }
         }
 
-        // Cursor at end-of-line: place a marker at the trailing column if it
-        // falls inside the rect.
+        // Cursor at end-of-line: place a marker at the trailing column if
+        // it falls inside the rect. Skip when the next visual line starts
+        // at the same byte offset (soft-wrap boundary): the cursor is one
+        // logical position with two visual representations, and the inner
+        // grapheme loop on the next row will draw it at (next_row, 0).
+        // Drawing both would render two cursors for one logical position.
+        let row_idx = start_idx + screen_row_offset;
+        let next_starts_here = visual_lines
+            .get(row_idx + 1)
+            .is_some_and(|next| next.byte_start == line.byte_end);
         if let Some(cb) = cursor_byte {
-            if cb == line.byte_end {
+            if cb == line.byte_end && !next_starts_here {
                 let cursor_col_abs = line.cell_width;
                 if cursor_col_abs >= scroll_col {
                     let screen_col = rect.x + (cursor_col_abs as i32 - scroll_col as i32);
@@ -575,6 +595,111 @@ mod tests {
             .unwrap();
         });
         crate::golden::assert_golden_buffer(&target, "text_renderer_unicode_mixed").unwrap();
+    }
+
+    #[test]
+    fn cursor_at_wrap_boundary_renders_once() {
+        // Regression for wave-5 P2: with "abcdefghij" wrapped at 4 and the
+        // cursor at byte 4 (== byte_end of row 0 == byte_start of row 1),
+        // only the next row's inner-loop placement should fire. Both
+        // row 0 col 4 (end-of-line marker) and row 1 col 0 (inner loop)
+        // would otherwise carry UNDERLINE.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(10, 4);
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcdefghij").unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 4, 0, 0).unwrap();
+            text_view::set_cursor(ctx, view, 4).unwrap();
+            // Use a wider rect than wrap_width so the row-0 trailing
+            // position is visible in the target buffer.
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 4,
+                },
+                BaseStyle::default(),
+            )
+            .unwrap();
+        });
+        // Row 1 col 0 must have the cursor underline ('e' at byte 4).
+        assert!(
+            target
+                .get(0, 1)
+                .unwrap()
+                .attrs
+                .contains(CellAttrs::UNDERLINE),
+            "next-row inner-loop placement must carry UNDERLINE"
+        );
+        // Row 0 col 4 must NOT carry the end-of-line marker — that would
+        // be a duplicate cursor for the same logical position.
+        assert!(
+            !target
+                .get(4, 0)
+                .unwrap()
+                .attrs
+                .contains(CellAttrs::UNDERLINE),
+            "row 0 end-of-line marker must be suppressed when the next row starts at the same byte"
+        );
+    }
+
+    #[test]
+    fn left_clipped_wide_glyph_paints_visible_trailing_cell() {
+        // Regression for wave-5 P2: rendering "漢b" with scroll_col=1
+        // puts the wide glyph's primary cell at screen_col = rect.x - 1
+        // (off-screen left). The trailing cell should land at rect.x and
+        // be painted as a placeholder space; before the fix it stayed
+        // unwritten.
+        let _g = fresh_ctx();
+        let mut target = Buffer::new(10, 1);
+        // Pre-paint a sentinel character at col 0 so an unwritten cell
+        // fails the assert deterministically.
+        target.set(
+            0,
+            0,
+            Cell {
+                ch: '!',
+                fg: 0,
+                bg: 0,
+                attrs: CellAttrs::empty(),
+            },
+        );
+        with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "漢b").unwrap();
+            let view = text_view::create(ctx, buf).unwrap();
+            text_view::set_wrap(ctx, view, 0, WrapMode::None as u8, 4).unwrap();
+            text_view::set_viewport(ctx, view, 1, 0, 1).unwrap();
+            render_text_view(
+                ctx,
+                view,
+                &mut target,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 10,
+                    h: 1,
+                },
+                BaseStyle::default(),
+            )
+            .unwrap();
+        });
+        // Col 0 is the visible trailing half of '漢'. It must be a space
+        // placeholder, not the original sentinel.
+        assert_eq!(
+            target.get(0, 0).unwrap().ch,
+            ' ',
+            "left-clipped wide glyph trailing cell must be painted as space"
+        );
+        // Col 1 holds 'b' as the next grapheme.
+        assert_eq!(target.get(1, 0).unwrap().ch, 'b');
     }
 
     #[test]
