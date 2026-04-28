@@ -186,7 +186,7 @@ text_buffer:
   ownership:
     create: Native owns; host gets opaque Handle.
     destroy: Host calls explicit destroy; Native frees backing storage.
-    pointer_in:  "(ptr, len) copied into Vec<u8> at boundary; no aliasing"
+    pointer_in:  "(ptr, len) validated as borrowed &str at boundary; single copy when written into TextBuffer storage; no aliasing"
     pointer_out: "Out-pointer integers (epoch, byte_len, line_count) only"
   utf8: "Validated at the boundary; invalid input returns -1"
 
