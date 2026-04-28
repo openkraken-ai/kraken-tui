@@ -68,8 +68,14 @@ pub(crate) fn render_text_view(
 ) -> Result<(), String> {
     text_view::ensure_projection(ctx, view_handle)?;
 
-    // Snapshot the projection state so we can release the read borrows
-    // before mutating `target`.
+    // Borrow view + buffer immutably together. `ctx.text_views` and
+    // `ctx.text_buffers` are disjoint fields, so the borrow checker
+    // allows simultaneous immutable access. `target: &mut Buffer` is an
+    // external argument and does not conflict with these borrows, so
+    // there is no need to snapshot the projection state into owned
+    // `Vec`s — that allocation paid an O(visual_lines + style_spans +
+    // highlights) cost per render call without any borrow-checker
+    // benefit.
     let view = ctx
         .text_views
         .get(&view_handle)
@@ -79,16 +85,16 @@ pub(crate) fn render_text_view(
     let scroll_col = view.scroll_col();
     let tab_width = view.tab_width().max(1) as u32;
     let cursor_byte = view.cursor().map(|c| c.byte_offset);
-    let visual_lines: Vec<_> = view.visual_lines().to_vec();
+    let visual_lines: &[crate::text_view::VisualLine] = view.visual_lines();
 
     let buf = ctx
         .text_buffers
         .get(&buffer_handle)
         .ok_or_else(|| format!("Buffer {buffer_handle} missing for view {view_handle}"))?;
     let content = buf.content();
-    let style_spans: Vec<StyleSpan> = buf.style_spans().to_vec();
+    let style_spans: &[StyleSpan] = buf.style_spans();
     let selection: Option<SelectionRange> = buf.selection();
-    let highlights: Vec<HighlightRange> = buf.highlights().to_vec();
+    let highlights: &[HighlightRange] = buf.highlights();
 
     let row_count = visual_lines.len();
     let mut visible_rows = (rect.h.max(0)) as usize;
@@ -174,7 +180,7 @@ pub(crate) fn render_text_view(
             let mut bg = base.bg;
             let mut attrs = base.attrs;
 
-            for span in &style_spans {
+            for span in style_spans {
                 if g_byte_end > span.start && g_byte_start < span.end {
                     fg = span.fg;
                     bg = span.bg;
@@ -182,7 +188,7 @@ pub(crate) fn render_text_view(
                 }
             }
 
-            for hl in &highlights {
+            for hl in highlights {
                 if g_byte_end > hl.start && g_byte_start < hl.end {
                     bg = highlight_kind_bg(hl.kind);
                 }

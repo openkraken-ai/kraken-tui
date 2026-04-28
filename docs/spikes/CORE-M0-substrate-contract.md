@@ -60,10 +60,15 @@ non-UTF-8 input is rejected with `-1`.
 - Style, selection, and highlight mutations do NOT add to the dirty range list;
   they bump the style fingerprint (see view cache key) instead.
 - The dirty range list is informational. Consumers (notably `TextView`) read
-  it to invalidate only affected wrap cache entries. There is no "consume"
-  API in v1 — the substrate clears the list on the next mutation cycle if it
-  becomes useful for performance. v1 keeps the list strictly append-only and
-  size-bounded only by mutation count between reads.
+  it to invalidate only affected wrap cache entries.
+- **Update (PR #35 review wave 5, TechSpec v7.2.5):** an explicit consume API
+  shipped — `tui_text_buffer_clear_dirty_ranges` — because the original
+  "append-only, size-bounded by mutation count between reads" policy turned
+  out to leak unboundedly in practice (no Epic-M consumer drained the list,
+  and the wave-5 reviewer caught the unbounded growth before Epic N's
+  transcript-streaming workload could amplify it). Consumers (renderer
+  integration in Epic N) must call this drain after each pass that uses the
+  ranges. Drain does not bump `epoch` or `style_fingerprint`.
 
 ## Line Start Markers
 

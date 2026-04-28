@@ -3066,14 +3066,14 @@ pub extern "C" fn tui_text_buffer_replace_range(
     len: u32,
 ) -> i32 {
     ffi_wrap(|| {
-        let payload = read_utf8_payload(ptr, len)?;
+        let payload = unsafe { read_utf8_payload(ptr, len) }?;
         let mut ctx = context_write()?;
         text_buffer::replace_range(
             &mut ctx,
             handle,
             start_byte as usize,
             end_byte as usize,
-            &payload,
+            payload,
         )?;
         Ok(0)
     })
@@ -3082,9 +3082,9 @@ pub extern "C" fn tui_text_buffer_replace_range(
 #[no_mangle]
 pub extern "C" fn tui_text_buffer_append(handle: u32, ptr: *const u8, len: u32) -> i32 {
     ffi_wrap(|| {
-        let payload = read_utf8_payload(ptr, len)?;
+        let payload = unsafe { read_utf8_payload(ptr, len) }?;
         let mut ctx = context_write()?;
-        text_buffer::append(&mut ctx, handle, &payload)?;
+        text_buffer::append(&mut ctx, handle, payload)?;
         Ok(0)
     })
 }
@@ -3339,17 +3339,27 @@ pub extern "C" fn tui_text_view_get_cache_epoch(handle: u32) -> u64 {
 
 /// Read a UTF-8 payload from a (ptr, len) pair, or accept a null pointer
 /// only when `len == 0`. Used by substrate FFI mutation entry points.
-fn read_utf8_payload(ptr: *const u8, len: u32) -> Result<String, String> {
+///
+/// Returns a borrowed `&str` instead of an owned `String` so substrate
+/// callees can write the bytes directly into buffer storage with one
+/// boundary copy. Previously this function allocated an owned `String`
+/// that `text_buffer::replace_range` / `append` then copied into
+/// `buf.content`, doubling the work on the hot streaming-append path.
+///
+/// # Safety
+/// Caller must ensure `ptr` is non-null when `len > 0` and remains
+/// valid for at least `len` bytes for the duration of the returned
+/// slice's use. FFI entry points satisfy this because the caller
+/// (Bun/Node FFI) keeps the buffer alive for the call.
+unsafe fn read_utf8_payload<'a>(ptr: *const u8, len: u32) -> Result<&'a str, String> {
     if len == 0 {
-        return Ok(String::new());
+        return Ok("");
     }
     if ptr.is_null() {
         return Err("Null payload pointer".to_string());
     }
-    let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
-    std::str::from_utf8(bytes)
-        .map(|s| s.to_string())
-        .map_err(|e| format!("Payload is not valid UTF-8: {e}"))
+    let bytes = std::slice::from_raw_parts(ptr, len as usize);
+    std::str::from_utf8(bytes).map_err(|e| format!("Payload is not valid UTF-8: {e}"))
 }
 
 #[cfg(test)]

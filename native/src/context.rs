@@ -387,9 +387,24 @@ pub fn set_last_error(msg: String) {
 }
 
 /// Clear the context-bound error message.
+///
+/// Fast path: peek under a read lock first and skip the write lock when
+/// `last_error` is already empty. Every successful FFI call (substrate
+/// getters, mutators, handle constructors) calls this, so avoiding the
+/// write-lock acquisition on the common case (clean slate) reduces
+/// contention and per-call cost on hot getters polled in a host render
+/// loop. The read-lock check plus dropped guard is far cheaper than
+/// reacquiring the write lock.
 pub fn clear_last_error() {
     if ensure_thread_affinity().is_err() {
         return;
+    }
+    if let Ok(guard) = context_lock().read() {
+        match guard.as_ref() {
+            Some(ctx) if ctx.last_error.is_empty() => return,
+            None => return,
+            _ => {}
+        }
     }
     if let Ok(mut guard) = context_lock().write() {
         if let Some(ctx) = guard.as_mut() {
