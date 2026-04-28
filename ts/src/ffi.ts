@@ -636,6 +636,109 @@ const symbols = {
 		args: [] as FFIType[],
 		returns: "i32" as const,
 	},
+
+	// Native Text Substrate — TextBuffer (ADR-T37, TechSpec §4.4)
+	// Handle constructor: 0 = invalid handle / error (consult tui_get_last_error).
+	tui_text_buffer_create: { args: [] as FFIType[], returns: "u32" as const },
+	tui_text_buffer_destroy: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_replace_range: {
+		args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_append: {
+		args: ["u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	// Value-returning getters: 0 may be a valid value AND an error sentinel.
+	// Disambiguate via tui_get_last_error(); successful FFI calls clear it.
+	tui_text_buffer_get_epoch: {
+		args: ["u32"] as FFIType[],
+		returns: "u64" as const,
+	},
+	tui_text_buffer_get_byte_len: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_text_buffer_get_line_count: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_text_buffer_set_style_span: {
+		args: ["u32", "u32", "u32", "u32", "u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_clear_style_spans: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_set_selection: {
+		args: ["u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_clear_selection: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_set_highlight: {
+		args: ["u32", "u32", "u32", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_clear_highlights: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_clear_dirty_ranges: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+
+	// Native Text Substrate — TextView (ADR-T37, TechSpec §4.4)
+	// Handle constructor: 0 = invalid handle / error.
+	tui_text_view_create: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_text_view_destroy: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_set_wrap: {
+		args: ["u32", "u32", "u8", "u8"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_set_viewport: {
+		args: ["u32", "u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_set_cursor: {
+		args: ["u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_clear_cursor: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	// Value-returning getter: 0 sentinel rule applies.
+	tui_text_view_get_visual_line_count: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	// Out-pointer entries follow the standard 0/-1/-2 status model.
+	tui_text_view_byte_to_visual: {
+		args: ["u32", "u32", "ptr", "ptr"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_visual_to_byte: {
+		args: ["u32", "u32", "u32", "ptr"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_view_get_cache_epoch: {
+		args: ["u32"] as FFIType[],
+		returns: "u64" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);
