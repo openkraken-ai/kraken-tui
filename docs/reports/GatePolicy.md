@@ -1,6 +1,6 @@
 # Quality Gate Policy
 
-**Version**: 2.0
+**Version**: 2.1
 **Status**: Active
 **Date**: April 2026
 **Source**: `.github/workflows/ci.yml`, `docs/TechSpec.md`
@@ -44,12 +44,12 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 
 | Property | Value |
 | --- | --- |
-| **Metric** | Writer and text-cache benchmark health |
+| **Metric** | Writer, text-cache, and substrate benchmark health |
 | **Threshold** | No materially suspicious regression in the benchmark output for tracked suites |
 | **CI Job** | `native-benchmarks` |
 | **CI Mode** | Reporting-only |
-| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` must complete successfully in CI; the reported numbers are not yet parsed into an automatic regression threshold failure |
-| **Tracked suites** | `writer_compact_*`, `writer_emit_*`, `writer_pipeline_full`, `cache_insert_1000`, `cache_get_hit_1000`, `cache_eviction_pressure` |
+| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench`, `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench`, and `cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench` must complete successfully in CI; the reported numbers are not yet parsed into an automatic regression threshold failure |
+| **Tracked suites** | `writer_compact_*`, `writer_emit_*`, `writer_pipeline_full`, `cache_insert_1000`, `cache_get_hit_1000`, `cache_eviction_pressure`, `substrate_append_*`, `substrate_set_cursor_*`, `substrate_byte_to_visual_*` |
 | **Local supplementary check** | `cargo bench --manifest-path native/Cargo.toml --bench devtools_bench` |
 
 ### Gate 4: Writer Throughput Reduction
@@ -121,7 +121,7 @@ CI Trigger
 | --- | --- | --- |
 | Gate 1 | Render and replay correctness | `docs/TechSpec.md`, `native/fixtures/`, native test suite |
 | Gate 2 | Native implementation hygiene | `docs/TechSpec.md`, Rust lint/format rules |
-| Gate 3 | Writer and text-cache throughput health | `docs/TechSpec.md`, native benches |
+| Gate 3 | Writer, text-cache, and substrate throughput health | `docs/TechSpec.md`, native benches |
 | Gate 4 | Terminal emission efficiency | `docs/TechSpec.md`, writer tests |
 | Gate 5 | Host wrapper and example correctness | `docs/TechSpec.md`, `ts/` test suite |
 | Gate 6 | Host bundle-size constraint | `docs/PRD.md`, `docs/TechSpec.md`, `ts/check-bundle.ts` |

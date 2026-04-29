@@ -739,6 +739,40 @@ const symbols = {
 		args: ["u32"] as FFIType[],
 		returns: "u64" as const,
 	},
+
+	// Native Text Substrate — EditBuffer (ADR-T38, TechSpec §4.4)
+	tui_edit_buffer_create: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
+	tui_edit_buffer_destroy: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_edit_buffer_apply_op: {
+		args: ["u32", "u8", "ptr", "u32", "u32", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_edit_buffer_undo: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_edit_buffer_redo: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_edit_buffer_can_undo: {
+		args: ["u32"] as FFIType[],
+		returns: "u8" as const,
+	},
+	tui_edit_buffer_can_redo: {
+		args: ["u32"] as FFIType[],
+		returns: "u8" as const,
+	},
+	tui_edit_buffer_history_len: {
+		args: ["u32"] as FFIType[],
+		returns: "u32" as const,
+	},
 } as const;
 
 export const lib = dlopen(LIB_PATH, symbols);

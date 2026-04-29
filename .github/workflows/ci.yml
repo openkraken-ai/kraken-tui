@@ -52,6 +52,12 @@ jobs:
           set -euo pipefail
           cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench 2>&1 | tee /tmp/cache_bench.txt
 
+      - name: Run substrate benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench 2>&1 | tee /tmp/substrate_bench.txt
+
       - name: Report benchmark results
         run: |
           echo "=== Writer Benchmark Results ==="
@@ -59,6 +65,9 @@ jobs:
           echo ""
           echo "=== Text Cache Benchmark Results ==="
           grep -E "^cache_" /tmp/cache_bench.txt || true
+          echo ""
+          echo "=== Text Substrate Benchmark Results ==="
+          grep -E "^substrate_" /tmp/substrate_bench.txt || true
 
   # ── Host Layer Tests ──────────────────────────────────────────────────────
   host-tests:

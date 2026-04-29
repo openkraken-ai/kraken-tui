@@ -7,13 +7,16 @@
 //! - Swap buffers, clear dirty flags
 
 use crate::context::TuiContext;
-use crate::text_utils::{
-    clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx,
-    split_textarea_lines_borrowed,
-};
+use crate::text_buffer;
+use crate::text_renderer::{self, BaseStyle, Rect};
+use crate::text_utils::grapheme_count;
+use crate::text_view;
 use crate::types::{BorderStyle, Buffer, Cell, CellAttrs, CellUpdate, ContentFormat, NodeType};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+#[cfg(test)]
+use crate::text_utils::grapheme_to_byte_idx;
 
 // ============================================================================
 // Clip Rectangle
@@ -67,6 +70,151 @@ fn clip_set(buffer: &mut Buffer, sx: i32, sy: i32, cell: Cell, clip: ClipRect) {
     if clip.contains(sx, sy) && sx >= 0 && sy >= 0 {
         buffer.set(sx as u16, sy as u16, cell);
     }
+}
+
+fn ensure_node_text_handles(ctx: &mut TuiContext, handle: u32) -> Result<(u32, u32), String> {
+    let (buffer_handle, view_handle, content) = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        (
+            node.text_buffer_handle,
+            node.text_view_handle,
+            node.content.clone(),
+        )
+    };
+
+    let buffer_handle = match buffer_handle {
+        Some(handle) => handle,
+        None => {
+            let handle = text_buffer::create(ctx)?;
+            if !content.is_empty() {
+                text_buffer::append(ctx, handle, &content)?;
+            }
+            handle
+        }
+    };
+    let view_handle = match view_handle {
+        Some(handle) => handle,
+        None => text_view::create(ctx, buffer_handle)?,
+    };
+
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    node.text_buffer_handle = Some(buffer_handle);
+    node.text_view_handle = Some(view_handle);
+    Ok((buffer_handle, view_handle))
+}
+
+fn apply_styled_text_to_buffer(
+    ctx: &mut TuiContext,
+    buffer_handle: u32,
+    spans: &[crate::types::StyledSpan],
+) -> Result<(), String> {
+    let mut rendered = String::new();
+    for span in spans {
+        rendered.push_str(&span.text);
+    }
+
+    let existing = ctx
+        .text_buffers
+        .get(&buffer_handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {buffer_handle}"))?
+        .content()
+        .to_string();
+    if existing != rendered {
+        text_buffer::replace_range(ctx, buffer_handle, 0, existing.len(), &rendered)?;
+    }
+
+    text_buffer::clear_style_spans(ctx, buffer_handle)?;
+    let mut byte_offset = 0usize;
+    for span in spans {
+        let span_len = span.text.len();
+        if span_len > 0 && (span.fg != 0 || span.bg != 0 || !span.attrs.is_empty()) {
+            text_buffer::set_style_span(
+                ctx,
+                buffer_handle,
+                byte_offset,
+                byte_offset + span_len,
+                span.fg,
+                span.bg,
+                span.attrs.bits(),
+            )?;
+        }
+        byte_offset += span_len;
+    }
+
+    Ok(())
+}
+
+fn first_buffer_line(ctx: &TuiContext, buffer_handle: u32) -> Option<String> {
+    ctx.text_buffers
+        .get(&buffer_handle)
+        .map(|buffer| buffer.content().lines().next().unwrap_or("").to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_substrate_view(
+    ctx: &mut TuiContext,
+    view_handle: u32,
+    content_x: i32,
+    content_y: i32,
+    content_w: i32,
+    content_h: i32,
+    base_scroll_row: u32,
+    base_scroll_col: u32,
+    fg: u32,
+    bg: u32,
+    attrs: CellAttrs,
+    clip: ClipRect,
+) -> Result<(), String> {
+    if content_w <= 0 || content_h <= 0 {
+        return Ok(());
+    }
+
+    let rect = clip.intersect(ClipRect {
+        x: content_x,
+        y: content_y,
+        w: content_w,
+        h: content_h,
+    });
+    if rect.w <= 0 || rect.h <= 0 {
+        return Ok(());
+    }
+
+    let extra_scroll_row = rect.y.saturating_sub(content_y) as u32;
+    let extra_scroll_col = rect.x.saturating_sub(content_x) as u32;
+    text_view::set_viewport(
+        ctx,
+        view_handle,
+        rect.h as u32,
+        base_scroll_row.saturating_add(extra_scroll_row),
+        base_scroll_col.saturating_add(extra_scroll_col),
+    )?;
+
+    // SAFETY: `text_renderer::render_text_view` reads substrate state from
+    // `ctx.text_buffers` / `ctx.text_views` and writes only to the supplied
+    // target buffer. Those fields are disjoint from `front_buffer`, so taking
+    // a raw pointer here expresses a borrow split the compiler cannot prove.
+    let target_ptr: *mut Buffer = &mut ctx.front_buffer;
+    unsafe {
+        text_renderer::render_text_view(
+            ctx,
+            view_handle,
+            &mut *target_ptr,
+            Rect {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            },
+            BaseStyle { fg, bg, attrs },
+        )?;
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -264,11 +412,7 @@ fn render_node(
     let code_language = node.code_language.clone();
     let scroll_x = node.scroll_x;
     let scroll_y = node.scroll_y;
-    let cursor_row = node.cursor_row;
-    let cursor_col = node.cursor_col;
     let wrap_mode = node.wrap_mode;
-    let textarea_view_row = node.textarea_view_row;
-    let textarea_view_col = node.textarea_view_col;
     let mask_char = node.mask_char;
     let children: Vec<u32> = node.children.clone();
 
@@ -326,7 +470,44 @@ fn render_node(
                 content.clone()
             };
 
-            if content_format == ContentFormat::Plain || node_type == NodeType::Input {
+            if node_type == NodeType::Text {
+                let (_buffer_handle, view_handle) = ensure_node_text_handles(ctx, handle)?;
+                let spans = if content_format == ContentFormat::Plain {
+                    vec![crate::types::StyledSpan {
+                        text: display_content.clone(),
+                        attrs: CellAttrs::empty(),
+                        fg: 0,
+                        bg: 0,
+                    }]
+                } else {
+                    crate::text::parse_content_cached(
+                        ctx,
+                        &content,
+                        content_format,
+                        code_language.as_deref(),
+                        content_w.max(1) as u16,
+                    )
+                };
+                let wrap_start = std::time::Instant::now();
+                apply_styled_text_to_buffer(ctx, _buffer_handle, &spans)?;
+                text_view::clear_cursor(ctx, view_handle)?;
+                text_view::set_wrap(ctx, view_handle, content_w.max(1) as u32, 1, 4)?;
+                render_substrate_view(
+                    ctx,
+                    view_handle,
+                    content_x,
+                    content_y,
+                    content_w,
+                    content_h,
+                    0,
+                    0,
+                    fg,
+                    bg,
+                    attrs,
+                    clip,
+                )?;
+                ctx.perf_text_wrap_us += wrap_start.elapsed().as_micros() as u64;
+            } else {
                 render_plain_text(
                     ctx,
                     &display_content,
@@ -339,20 +520,6 @@ fn render_node(
                     attrs,
                     clip,
                 );
-            } else {
-                // For Markdown/Code, render as styled spans via Text Module (cached, ADR-T25)
-                let spans = crate::text::parse_content_cached(
-                    ctx,
-                    &content,
-                    content_format,
-                    code_language.as_deref(),
-                    content_w as u16,
-                );
-                let wrap_start = std::time::Instant::now();
-                render_styled_spans(
-                    ctx, &spans, content_x, content_y, content_w, content_h, fg, bg, clip, opacity,
-                );
-                ctx.perf_text_wrap_us += wrap_start.elapsed().as_micros() as u64;
             }
 
             // Guard: only Input (not Text) gets a cursor
@@ -371,26 +538,19 @@ fn render_node(
             }
         }
         NodeType::TextArea => {
-            let lines = split_textarea_lines_borrowed(&content);
-            let visual = build_textarea_visual_lines(&lines, wrap_mode, content_w.max(1));
-            update_textarea_viewport(
-                ctx,
-                handle,
-                &lines,
-                &visual,
-                cursor_row,
-                cursor_col,
-                wrap_mode,
-                textarea_view_row,
-                textarea_view_col,
-                content_w,
-                content_h,
-            );
+            let (buffer_handle, view_handle) = ensure_node_text_handles(ctx, handle)?;
+            let content = ctx
+                .text_buffers
+                .get(&buffer_handle)
+                .ok_or_else(|| format!("Invalid TextBuffer handle: {buffer_handle}"))?
+                .content()
+                .to_string();
+            let focused = ctx.focused == Some(handle);
             let (
                 ts_cursor_row,
                 ts_cursor_col,
-                ts_view_row,
-                ts_view_col,
+                mut ts_view_row,
+                mut ts_view_col,
                 ts_sel_anchor,
                 ts_sel_focus,
             ) = ctx
@@ -401,7 +561,7 @@ fn render_node(
                         .textarea_state
                         .as_ref()
                         .and_then(|s| match (s.selection_anchor, s.selection_focus) {
-                            (Some(a), Some(f)) => Some((Some(a), Some(f))),
+                            (Some(a), Some(f)) if a != f => Some((Some(a), Some(f))),
                             _ => None,
                         })
                         .unwrap_or((None, None));
@@ -415,27 +575,105 @@ fn render_node(
                     )
                 })
                 .unwrap_or((0, 0, 0, 0, None, None));
-
-            render_textarea(
+            let mut cursor_visual = None;
+            text_buffer::clear_style_spans(ctx, buffer_handle)?;
+            if focused {
+                if let (Some(anchor), Some(focus)) = (ts_sel_anchor, ts_sel_focus) {
+                    let start =
+                        crate::textarea::position_to_byte_offset(&content, anchor.0, anchor.1);
+                    let end = crate::textarea::position_to_byte_offset(&content, focus.0, focus.1);
+                    text_buffer::set_selection(ctx, buffer_handle, start.min(end), start.max(end))?;
+                } else {
+                    text_buffer::clear_selection(ctx, buffer_handle)?;
+                }
+            } else {
+                text_buffer::clear_selection(ctx, buffer_handle)?;
+            }
+            text_buffer::clear_highlights(ctx, buffer_handle)?;
+            text_view::set_wrap(
                 ctx,
-                &visual,
-                ts_cursor_row,
-                ts_cursor_col,
-                wrap_mode,
-                ts_view_row,
-                ts_view_col,
+                view_handle,
+                content_w.max(1) as u32,
+                if wrap_mode == 0 { 0 } else { 1 },
+                4,
+            )?;
+            let cursor_byte =
+                crate::textarea::position_to_byte_offset(&content, ts_cursor_row, ts_cursor_col);
+            if focused {
+                text_view::set_cursor(ctx, view_handle, cursor_byte)?;
+                let (cursor_visual_row, cursor_visual_col) =
+                    text_view::byte_to_visual(ctx, view_handle, cursor_byte)?;
+                cursor_visual = Some((cursor_visual_row, cursor_visual_col));
+                if cursor_visual_row < ts_view_row {
+                    ts_view_row = cursor_visual_row;
+                } else if cursor_visual_row >= ts_view_row + content_h.max(1) as u32 {
+                    ts_view_row = cursor_visual_row - content_h.max(1) as u32 + 1;
+                }
+                if wrap_mode != 0 {
+                    ts_view_col = 0;
+                } else if cursor_visual_col < ts_view_col {
+                    ts_view_col = cursor_visual_col;
+                } else if cursor_visual_col >= ts_view_col + content_w.max(1) as u32 {
+                    ts_view_col = cursor_visual_col - content_w.max(1) as u32 + 1;
+                }
+            } else {
+                text_view::clear_cursor(ctx, view_handle)?;
+            }
+            if let Some(node) = ctx.nodes.get_mut(&handle) {
+                node.textarea_view_row = ts_view_row;
+                node.textarea_view_col = if wrap_mode != 0 { 0 } else { ts_view_col };
+            }
+            render_substrate_view(
+                ctx,
+                view_handle,
                 content_x,
                 content_y,
                 content_w,
                 content_h,
+                ts_view_row,
+                if wrap_mode != 0 { 0 } else { ts_view_col },
                 fg,
                 bg,
                 attrs,
                 clip,
-                ctx.focused == Some(handle),
-                ts_sel_anchor,
-                ts_sel_focus,
-            );
+            )?;
+            if let Some((cursor_visual_row, cursor_visual_col)) = cursor_visual {
+                let screen_y = content_y + (cursor_visual_row as i32 - ts_view_row as i32);
+                let screen_x = content_x
+                    + (cursor_visual_col as i32
+                        - if wrap_mode != 0 {
+                            0
+                        } else {
+                            ts_view_col as i32
+                        });
+                if clip.contains(screen_x, screen_y)
+                    && screen_x >= 0
+                    && screen_y >= 0
+                    && screen_x < ctx.front_buffer.width as i32
+                    && screen_y < ctx.front_buffer.height as i32
+                {
+                    let cursor_char = content
+                        .get(cursor_byte..)
+                        .and_then(|tail| UnicodeSegmentation::graphemes(tail, true).next())
+                        .and_then(|g| g.chars().next())
+                        .unwrap_or(' ');
+                    let inv_fg = if bg != 0 { bg } else { 0x00000000 };
+                    let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
+                    clip_set(
+                        &mut ctx.front_buffer,
+                        screen_x,
+                        screen_y,
+                        Cell {
+                            ch: cursor_char,
+                            fg: inv_fg,
+                            bg: inv_bg,
+                            attrs: CellAttrs::empty(),
+                        },
+                        clip,
+                    );
+                }
+            }
+            text_buffer::clear_dirty_ranges(ctx, buffer_handle)?;
         }
         NodeType::Select => {
             render_select_options(
@@ -733,6 +971,7 @@ fn render_plain_text(
     }
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn render_styled_spans(
     ctx: &mut TuiContext,
@@ -857,6 +1096,7 @@ fn render_input_cursor(
     );
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct TextAreaVisualLine {
     text: String,
@@ -865,6 +1105,7 @@ struct TextAreaVisualLine {
     end_col: usize,
 }
 
+#[cfg(test)]
 fn slice_graphemes(s: &str, start: usize, end: usize) -> String {
     let start_idx = grapheme_to_byte_idx(s, start);
     let end_idx = grapheme_to_byte_idx(s, end);
@@ -882,12 +1123,14 @@ fn display_width_of_prefix_graphemes(s: &str, graphemes: usize) -> i32 {
         .sum()
 }
 
+#[cfg(test)]
 fn display_width_of_text_graphemes(s: &str) -> i32 {
     UnicodeSegmentation::graphemes(s, true)
         .map(display_width_of_grapheme)
         .sum()
 }
 
+#[cfg(test)]
 fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
     let grapheme_len = grapheme_count(line);
     if grapheme_len == 0 {
@@ -930,6 +1173,7 @@ fn wrap_line_segments(line: &str, max_w: i32) -> Vec<(usize, usize)> {
     segments
 }
 
+#[cfg(test)]
 fn build_textarea_visual_lines(
     lines: &[&str],
     wrap_mode: u8,
@@ -967,6 +1211,7 @@ fn build_textarea_visual_lines(
     visual
 }
 
+#[cfg(test)]
 fn cursor_to_visual(
     lines: &[TextAreaVisualLine],
     cursor_row: u32,
@@ -996,285 +1241,6 @@ fn cursor_to_visual(
         return (idx, display_width_of_text_graphemes(&lines[idx].text));
     }
     (0, 0)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn update_textarea_viewport(
-    ctx: &mut TuiContext,
-    handle: u32,
-    lines: &[&str],
-    visual: &[TextAreaVisualLine],
-    cursor_row: u32,
-    cursor_col: u32,
-    wrap_mode: u8,
-    view_row: u32,
-    view_col: u32,
-    content_w: i32,
-    content_h: i32,
-) {
-    if content_h <= 0 {
-        return;
-    }
-
-    let max_row = lines.len().saturating_sub(1) as u32;
-    let mut clamped_row = cursor_row.min(max_row);
-    let mut clamped_col = cursor_col;
-    clamp_textarea_cursor_lines(lines, &mut clamped_row, &mut clamped_col);
-
-    if let Some(node) = ctx.nodes.get_mut(&handle) {
-        node.cursor_row = clamped_row;
-        node.cursor_col = clamped_col;
-    }
-
-    if wrap_mode != 0 {
-        let (cursor_vrow, _) = cursor_to_visual(visual, clamped_row, clamped_col);
-        let mut next_row = view_row as usize;
-        let viewport_h = content_h as usize;
-
-        if cursor_vrow < next_row {
-            next_row = cursor_vrow;
-        } else if cursor_vrow >= next_row + viewport_h {
-            next_row = cursor_vrow + 1 - viewport_h;
-        }
-        next_row = next_row.min(visual.len().saturating_sub(1));
-
-        if let Some(node) = ctx.nodes.get_mut(&handle) {
-            node.textarea_view_row = next_row as u32;
-            node.textarea_view_col = 0;
-        }
-    } else {
-        let mut next_row = view_row as i32;
-        let viewport_h = content_h;
-        let cursor_row_i = clamped_row as i32;
-
-        if cursor_row_i < next_row {
-            next_row = cursor_row_i;
-        } else if cursor_row_i >= next_row + viewport_h {
-            next_row = cursor_row_i - viewport_h + 1;
-        }
-        next_row = next_row.clamp(0, max_row as i32);
-
-        let cursor_x =
-            display_width_of_prefix_graphemes(lines[clamped_row as usize], clamped_col as usize);
-        let mut next_col = view_col as i32;
-        if content_w > 0 {
-            if cursor_x < next_col {
-                next_col = cursor_x;
-            } else if cursor_x >= next_col + content_w {
-                next_col = cursor_x - content_w + 1;
-            }
-        }
-        next_col = next_col.max(0);
-
-        if let Some(node) = ctx.nodes.get_mut(&handle) {
-            node.textarea_view_row = next_row as u32;
-            node.textarea_view_col = next_col as u32;
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_text_line_with_offset(
-    ctx: &mut TuiContext,
-    line: &str,
-    x: i32,
-    y: i32,
-    skip_cells: i32,
-    max_w: i32,
-    fg: u32,
-    bg: u32,
-    attrs: CellAttrs,
-    clip: ClipRect,
-) {
-    if max_w <= 0 {
-        return;
-    }
-
-    let mut source_x = 0i32;
-    let mut out_col = 0i32;
-    let skip = skip_cells.max(0);
-
-    for grapheme in UnicodeSegmentation::graphemes(line, true) {
-        let Some(ch) = grapheme.chars().next() else {
-            continue;
-        };
-        let grapheme_w = display_width_of_grapheme(grapheme);
-        let next_x = source_x + grapheme_w;
-
-        if next_x <= skip {
-            source_x = next_x;
-            continue;
-        }
-        if source_x < skip {
-            source_x = next_x;
-            continue;
-        }
-        if out_col + grapheme_w > max_w {
-            break;
-        }
-
-        clip_set(
-            &mut ctx.front_buffer,
-            x + out_col,
-            y,
-            Cell { ch, fg, bg, attrs },
-            clip,
-        );
-        out_col += grapheme_w;
-        source_x = next_x;
-    }
-}
-
-fn grapheme_char_at_display_col(line: &str, col: i32) -> Option<char> {
-    let mut x = 0i32;
-    for grapheme in UnicodeSegmentation::graphemes(line, true) {
-        let w = display_width_of_grapheme(grapheme);
-        if col >= x && col < x + w {
-            return grapheme.chars().next();
-        }
-        x += w;
-    }
-    None
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_textarea(
-    ctx: &mut TuiContext,
-    visual: &[TextAreaVisualLine],
-    cursor_row: u32,
-    cursor_col: u32,
-    wrap_mode: u8,
-    view_row: u32,
-    view_col: u32,
-    x: i32,
-    y: i32,
-    max_w: i32,
-    max_h: i32,
-    fg: u32,
-    bg: u32,
-    attrs: CellAttrs,
-    clip: ClipRect,
-    focused: bool,
-    sel_anchor: Option<(u32, u32)>,
-    sel_focus: Option<(u32, u32)>,
-) {
-    if max_w <= 0 || max_h <= 0 {
-        return;
-    }
-
-    let (cursor_visual_row, cursor_visual_x) = cursor_to_visual(visual, cursor_row, cursor_col);
-
-    for row in 0..max_h {
-        let src_row = view_row as usize + row as usize;
-        if src_row >= visual.len() {
-            break;
-        }
-        let line = &visual[src_row].text;
-        let skip = if wrap_mode != 0 { 0 } else { view_col as i32 };
-        draw_text_line_with_offset(ctx, line, x, y + row, skip, max_w, fg, bg, attrs, clip);
-    }
-
-    // Render selection highlight (ADR-T28)
-    if focused {
-        if let (Some(anchor), Some(focus)) = (sel_anchor, sel_focus) {
-            let (sel_start, sel_end) = crate::textarea::normalize_selection(anchor, focus);
-            let inv_fg = if bg != 0 { bg } else { 0x00000000 };
-            let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
-            let h_skip = if wrap_mode != 0 { 0 } else { view_col as i32 };
-
-            for screen_row in 0..max_h {
-                let vis_idx = view_row as usize + screen_row as usize;
-                if vis_idx >= visual.len() {
-                    break;
-                }
-                let vline = &visual[vis_idx];
-                let log_row = vline.logical_row as u32;
-
-                // Determine grapheme col range of this visual line that overlaps selection
-                let (line_start, line_end) = (vline.start_col as u32, vline.end_col as u32);
-
-                // Skip visual lines outside selection row range
-                if log_row < sel_start.0 || log_row > sel_end.0 {
-                    continue;
-                }
-
-                // Compute selection column overlap for this logical row
-                let sel_col_start = if log_row == sel_start.0 {
-                    sel_start.1
-                } else {
-                    0
-                };
-                let sel_col_end = if log_row == sel_end.0 {
-                    sel_end.1
-                } else {
-                    // Select to end of logical line (past last grapheme)
-                    u32::MAX
-                };
-
-                // Clamp to this visual line's grapheme range
-                let col_from = sel_col_start.max(line_start);
-                let col_to = sel_col_end.min(line_end);
-                if col_from >= col_to {
-                    continue;
-                }
-
-                // Render inverted cells for the selected grapheme range
-                for gcol in col_from..col_to {
-                    let local_col = (gcol - line_start) as usize;
-                    let abs_x = display_width_of_prefix_graphemes(&vline.text, local_col);
-                    let screen_x = abs_x - h_skip;
-                    if screen_x < 0 || screen_x >= max_w {
-                        continue;
-                    }
-                    // Use absolute display col for char lookup (not viewport-relative)
-                    let ch = grapheme_char_at_display_col(&vline.text, abs_x).unwrap_or(' ');
-                    clip_set(
-                        &mut ctx.front_buffer,
-                        x + screen_x,
-                        y + screen_row,
-                        Cell {
-                            ch,
-                            fg: inv_fg,
-                            bg: inv_bg,
-                            attrs: CellAttrs::empty(),
-                        },
-                        clip,
-                    );
-                }
-            }
-        }
-    }
-
-    if !focused {
-        return;
-    }
-
-    let screen_y = cursor_visual_row as i32 - view_row as i32;
-    let screen_x = cursor_visual_x - if wrap_mode != 0 { 0 } else { view_col as i32 };
-    if screen_y < 0 || screen_y >= max_h || screen_x < 0 || screen_x >= max_w {
-        return;
-    }
-
-    let cursor_line = visual
-        .get(cursor_visual_row)
-        .map(|line| line.text.as_str())
-        .unwrap_or("");
-    let cursor_char = grapheme_char_at_display_col(cursor_line, cursor_visual_x).unwrap_or(' ');
-    let inv_fg = if bg != 0 { bg } else { 0x00000000 };
-    let inv_bg = if fg != 0 { fg } else { 0x01FFFFFF };
-
-    clip_set(
-        &mut ctx.front_buffer,
-        x + screen_x,
-        y + screen_y,
-        Cell {
-            ch: cursor_char,
-            fg: inv_fg,
-            bg: inv_bg,
-            attrs: CellAttrs::empty(),
-        },
-        clip,
-    );
 }
 
 // ============================================================================
@@ -1916,87 +1882,129 @@ fn render_transcript(
     attrs: CellAttrs,
     clip: ClipRect,
 ) {
-    let node = match ctx.nodes.get_mut(&handle) {
-        Some(n) => n,
-        None => return,
-    };
-    let state = match &mut node.transcript_state {
-        Some(s) => s,
-        None => return,
-    };
-
-    // Update viewport dimensions from actual content area
-    state.viewport_rows = content_h.max(0) as u32;
     let new_width = content_w.max(0) as u32;
-    if new_width != state.viewport_width && new_width > 0 {
-        state.viewport_width = new_width;
-        // Recalculate all block rendered_rows with the new width
-        crate::transcript::recalculate_all_rendered_rows(state);
-    }
-
-    // Compute viewport scroll offset: how many rows of the first visible block
-    // to skip (when the anchor is partway through a multi-line block).
-    let viewport_start_row = crate::transcript::anchor_to_row(state);
-
-    // Extract only visible blocks for rendering to avoid cloning the full state.
-    // We compute the visible range and collect just the blocks we need, then
-    // release the borrow on ctx so we can call clip_set.
-    let (start_idx, end_idx) = crate::transcript::compute_visible_range(state);
-
-    // Compute how many rows to skip in the first visible block
-    let first_block_start_row = if start_idx < state.blocks.len() {
-        crate::transcript::block_start_row(state, state.blocks[start_idx].id).unwrap_or(0)
-    } else {
-        0
+    let viewport_rows = content_h.max(0) as u32;
+    let needs_rewrap = {
+        let node = match ctx.nodes.get(&handle) {
+            Some(node) => node,
+            None => return,
+        };
+        let state = match node.transcript_state.as_ref() {
+            Some(state) => state,
+            None => return,
+        };
+        new_width > 0 && new_width != state.viewport_width
     };
-    let skip_rows = viewport_start_row.saturating_sub(first_block_start_row) as usize;
 
-    struct RenderBlock {
-        #[allow(dead_code)]
-        id: u64,
-        kind: crate::types::TranscriptBlockKind,
-        role: u8,
-        content: String,
-        collapsed: bool,
-        hidden: bool,
+    if needs_rewrap {
+        let blocks = {
+            let node = match ctx.nodes.get(&handle) {
+                Some(node) => node,
+                None => return,
+            };
+            match node.transcript_state.as_ref() {
+                Some(state) => state.blocks.clone(),
+                None => return,
+            }
+        };
+        let mut refreshed_blocks = Vec::with_capacity(blocks.len());
+        for mut block in blocks {
+            if block.kind != crate::types::TranscriptBlockKind::Divider
+                && !block.collapsed
+                && block.view_handle != 0
+            {
+                let _ = text_view::set_wrap(ctx, block.view_handle, new_width.max(1), 1, 4);
+                if let Ok(rows) = text_view::get_visual_line_count(ctx, block.view_handle) {
+                    block.rendered_rows = rows.max(1);
+                }
+            }
+            refreshed_blocks.push(block);
+        }
+        if let Some(node) = ctx.nodes.get_mut(&handle) {
+            if let Some(state) = node.transcript_state.as_mut() {
+                state.blocks = refreshed_blocks;
+                state.viewport_width = new_width;
+                state.viewport_rows = viewport_rows;
+            }
+        }
+    } else if let Some(node) = ctx.nodes.get_mut(&handle) {
+        if let Some(state) = node.transcript_state.as_mut() {
+            state.viewport_rows = viewport_rows;
+        }
     }
 
-    // Capture role color mapping before releasing the borrow on state
-    let role_colors = state.role_colors;
-
-    let visible_blocks: Vec<RenderBlock> = (start_idx..end_idx)
-        .map(|i| {
-            let block = &state.blocks[i];
-            RenderBlock {
-                id: block.id,
-                kind: block.kind,
-                role: block.role,
-                content: block.content.clone(),
-                collapsed: block.collapsed,
-                hidden: crate::transcript::is_block_hidden(state, block),
-            }
-        })
-        .collect();
+    let (viewport_start_row, start_idx, end_idx, skip_rows, role_colors, visible_blocks) = {
+        let node = match ctx.nodes.get(&handle) {
+            Some(node) => node,
+            None => return,
+        };
+        let state = match node.transcript_state.as_ref() {
+            Some(state) => state,
+            None => return,
+        };
+        let viewport_start_row = crate::transcript::anchor_to_row(state);
+        let (start_idx, end_idx) = crate::transcript::compute_visible_range(state);
+        let first_block_start_row = if start_idx < state.blocks.len() {
+            crate::transcript::block_start_row(state, state.blocks[start_idx].id).unwrap_or(0)
+        } else {
+            0
+        };
+        let skip_rows = viewport_start_row.saturating_sub(first_block_start_row);
+        let visible_blocks = (start_idx..end_idx)
+            .map(|i| {
+                let block = &state.blocks[i];
+                (
+                    block.id,
+                    block.kind,
+                    block.role,
+                    block.collapsed,
+                    crate::transcript::is_block_hidden(state, block),
+                    block.view_handle,
+                    block.buffer_handle,
+                    block.rendered_rows,
+                )
+            })
+            .collect::<Vec<_>>();
+        (
+            viewport_start_row,
+            start_idx,
+            end_idx,
+            skip_rows,
+            state.role_colors,
+            visible_blocks,
+        )
+    };
 
     let mut y = content_y;
     let max_y = content_y + content_h;
     let mut is_first_block = true;
 
-    for block in &visible_blocks {
+    let _ = (viewport_start_row, start_idx, end_idx);
+    for (
+        block_id,
+        block_kind,
+        block_role,
+        collapsed,
+        hidden,
+        view_handle,
+        buffer_handle,
+        rendered_rows,
+    ) in visible_blocks
+    {
         if y >= max_y {
             break;
         }
 
         // Skip hidden blocks (collapsed ancestors)
-        if block.hidden {
+        if hidden {
             continue;
         }
 
         // Resolve per-block foreground color from the role_colors table.
         // Roles: 0=system, 1=user, 2=assistant, 3=tool, 4=reasoning.
         // A value of 0 means "inherit the node's default fg".
-        let block_fg = if (block.role as usize) < role_colors.len() {
-            let c = role_colors[block.role as usize];
+        let block_fg = if (block_role as usize) < role_colors.len() {
+            let c = role_colors[block_role as usize];
             if c != 0 {
                 c
             } else {
@@ -2006,12 +2014,15 @@ fn render_transcript(
             fg
         };
 
-        if block.collapsed {
-            let first_line = block.content.lines().next().unwrap_or("");
-            let indicator = if first_line.is_empty() {
-                format!("\u{25B8} [collapsed] ({})", block.id)
+        if collapsed {
+            let indicator = if let Some(first_line) = first_buffer_line(ctx, buffer_handle) {
+                if first_line.is_empty() {
+                    format!("\u{25B8} [collapsed] ({block_id})")
+                } else {
+                    format!("\u{25B8} {first_line}")
+                }
             } else {
-                format!("\u{25B8} {first_line}")
+                format!("\u{25B8} [collapsed] ({block_id})")
             };
             for (ci, ch) in indicator.chars().enumerate() {
                 let sx = content_x + ci as i32;
@@ -2027,7 +2038,7 @@ fn render_transcript(
                 clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
             }
             y += 1;
-        } else if block.kind == crate::types::TranscriptBlockKind::Divider {
+        } else if block_kind == crate::types::TranscriptBlockKind::Divider {
             // Render horizontal divider
             for dx in 0..content_w {
                 let cell = Cell {
@@ -2040,69 +2051,30 @@ fn render_transcript(
             }
             y += 1;
         } else {
-            // Render block content with line wrapping.
-            // Long lines wrap to the next row when they exceed content_w,
-            // matching the row estimation in estimate_rendered_rows().
-            // For the first visible block, skip rendered rows that are above
-            // the viewport (when the anchor has a row_offset within a block).
             let rows_to_skip = if is_first_block { skip_rows } else { 0 };
-            let mut rendered_row = 0usize;
-            for line in block.content.split('\n') {
-                if y >= max_y {
-                    break;
-                }
-                let line_width = unicode_width::UnicodeWidthStr::width(line) as i32;
-                // Number of rendered rows for this line (wrapping at content_w)
-                let row_count = if content_w <= 0 || line_width == 0 {
-                    1
-                } else {
-                    ((line_width + content_w - 1) / content_w) as usize
-                };
-                // If this entire logical line is within the skip zone, skip it
-                if rendered_row + row_count <= rows_to_skip {
-                    rendered_row += row_count;
-                    continue;
-                }
-                // Render the line with wrapping
-                let mut x = content_x;
-                let skip_sub_rows = rows_to_skip.saturating_sub(rendered_row);
-                let mut sub_row = 0usize;
-                for ch in line.chars() {
-                    let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) as i32;
-                    if w == 0 {
-                        continue;
-                    }
-                    // Wrap to next row when exceeding viewport width
-                    if x >= content_x + content_w {
-                        sub_row += 1;
-                        if sub_row < skip_sub_rows {
-                            x = content_x;
-                            continue;
-                        }
-                        y += 1;
-                        x = content_x;
-                        if y >= max_y {
-                            break;
-                        }
-                    }
-                    if sub_row >= skip_sub_rows {
-                        let cell = Cell {
-                            ch,
-                            fg: block_fg,
-                            bg,
-                            attrs,
-                        };
-                        clip_set(&mut ctx.front_buffer, x, y, cell, clip);
-                    }
-                    x += w;
-                }
-                if sub_row >= skip_sub_rows && y < max_y {
-                    y += 1;
-                }
-                rendered_row += row_count;
+            let visible_rows = rendered_rows.saturating_sub(rows_to_skip) as i32;
+            if view_handle != 0 {
+                let _ = text_view::clear_cursor(ctx, view_handle);
+                let _ = text_view::set_wrap(ctx, view_handle, new_width.max(1), 1, 4);
+                let _ = render_substrate_view(
+                    ctx,
+                    view_handle,
+                    content_x,
+                    y,
+                    content_w,
+                    (max_y - y).max(0),
+                    rows_to_skip,
+                    0,
+                    block_fg,
+                    bg,
+                    attrs,
+                    clip,
+                );
             }
-            // Empty content: split('\n') yields one empty string with row_count=1,
-            // so the loop already increments y by 1. No extra increment needed.
+            if buffer_handle != 0 {
+                let _ = text_buffer::clear_dirty_ranges(ctx, buffer_handle);
+            }
+            y += visible_rows;
         }
         is_first_block = false;
     }

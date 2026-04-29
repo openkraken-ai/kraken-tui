@@ -130,6 +130,12 @@ pub(crate) fn destroy(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
             "Cannot destroy TextBuffer {handle} while TextViews reference it"
         ));
     }
+    let referenced_by_edit_buffer = ctx.edit_buffers.values().any(|e| e.buffer() == handle);
+    if referenced_by_edit_buffer {
+        return Err(format!(
+            "Cannot destroy TextBuffer {handle} while EditBuffers reference it"
+        ));
+    }
     ctx.text_buffers.remove(&handle);
     Ok(())
 }
@@ -176,12 +182,11 @@ pub(crate) fn replace_range(
         .checked_add(1)
         .ok_or_else(|| "TextBuffer epoch overflow".to_string())?;
 
-    let new_end = start + payload.len();
     let removed = end - start;
     let inserted = payload.len();
     reconcile_ranges_after_replace(buf, start, end, removed, inserted);
     recompute_line_metadata(buf);
-    push_dirty_range(buf, start, new_end);
+    push_dirty_range(buf, start, end, start + inserted);
 
     Ok(())
 }
@@ -335,8 +340,12 @@ fn bump_style_fingerprint(buf: &mut TextBuffer) {
     buf.style_fingerprint = buf.style_fingerprint.wrapping_add(1);
 }
 
-fn push_dirty_range(buf: &mut TextBuffer, start: usize, end: usize) {
-    buf.dirty_ranges.push(DirtyRange { start, end });
+fn push_dirty_range(buf: &mut TextBuffer, start: usize, old_end: usize, new_end: usize) {
+    buf.dirty_ranges.push(DirtyRange {
+        start,
+        old_end,
+        new_end,
+    });
 }
 
 /// Recompute line-start markers and per-line cell widths from scratch.
@@ -577,7 +586,11 @@ mod tests {
             assert_eq!(b.content(), "abXYef");
             assert_eq!(
                 b.dirty_ranges().last(),
-                Some(&DirtyRange { start: 2, end: 4 })
+                Some(&DirtyRange {
+                    start: 2,
+                    old_end: 4,
+                    new_end: 4,
+                })
             );
         });
     }

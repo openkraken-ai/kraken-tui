@@ -11,6 +11,7 @@ use std::thread::ThreadId;
 use std::time::Instant;
 
 use crate::animation::{Animation, ChoreographyGroup};
+use crate::edit_buffer::EditBuffer;
 use crate::terminal::TerminalBackend;
 use crate::text_buffer::TextBuffer;
 use crate::text_view::TextView;
@@ -45,6 +46,7 @@ pub struct TuiContext {
     // Native Text Substrate (ADR-T37, Epic M)
     pub text_buffers: HashMap<u32, TextBuffer>,
     pub text_views: HashMap<u32, TextView>,
+    pub edit_buffers: HashMap<u32, EditBuffer>,
     pub next_substrate_handle: u32,
 
     // Theme Module
@@ -115,6 +117,7 @@ impl TuiContext {
 
             text_buffers: HashMap::new(),
             text_views: HashMap::new(),
+            edit_buffers: HashMap::new(),
             next_substrate_handle: 1, // Handle(0) reserved as invalid sentinel
 
             themes: {

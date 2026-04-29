@@ -674,12 +674,14 @@ impl Default for OverlayState {
 
 #[derive(Debug, Clone)]
 pub struct TextAreaEdit {
-    pub content_before: String,
     pub cursor_row_before: u32,
     pub cursor_col_before: u32,
-    pub content_after: String,
+    pub selection_anchor_before: Option<(u32, u32)>,
+    pub selection_focus_before: Option<(u32, u32)>,
     pub cursor_row_after: u32,
     pub cursor_col_after: u32,
+    pub selection_anchor_after: Option<(u32, u32)>,
+    pub selection_focus_after: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -772,7 +774,8 @@ pub struct TranscriptBlock {
     pub kind: TranscriptBlockKind,
     pub parent_id: Option<u64>,
     pub role: u8,
-    pub content: String,
+    pub buffer_handle: u32,
+    pub view_handle: u32,
     pub content_format: ContentFormat,
     pub code_language: Option<String>,
     pub streaming: bool,
@@ -920,7 +923,8 @@ pub struct HighlightRange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirtyRange {
     pub start: usize,
-    pub end: usize,
+    pub old_end: usize,
+    pub new_end: usize,
 }
 
 // ============================================================================
@@ -979,6 +983,9 @@ pub struct TuiNode {
     pub content: String,
     pub content_format: ContentFormat,
     pub code_language: Option<String>,
+    pub text_buffer_handle: Option<u32>,
+    pub text_view_handle: Option<u32>,
+    pub edit_buffer_handle: Option<u32>,
     pub children: Vec<u32>,
     pub parent: Option<u32>,
     pub visual_style: VisualStyle,
@@ -1041,6 +1048,9 @@ impl TuiNode {
             content: String::new(),
             content_format: ContentFormat::Plain,
             code_language: None,
+            text_buffer_handle: None,
+            text_view_handle: None,
+            edit_buffer_handle: None,
             children: Vec::new(),
             parent: None,
             visual_style: VisualStyle::default(),

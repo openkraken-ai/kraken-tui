@@ -1,19 +1,20 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.4.1 - Marked Epic N complete after the final authority-cut and coalescing audit: substrate-backed text/textarea/transcript paths are shipped, the benchmark gate is live, and the ticket table now reflects completion instead of in-flight target state.
+- v7.4.0 - Reshaped Epic N to match Brownfield reality: added a contract-sync preflight, moved the substrate benchmark gate ahead of transcript migration, and expanded dirty ranges to record both replaced and replacement extents.
 - v7.3.11 - Tightened the active Epic N contract: oversized substrate getter values now fail explicitly, dirty-range scope is called out as a deliberate CORE-N3 decision, and the last substrate FFI coverage gap is closed.
 - v7.3.10 - Reconciled Epic N planning with the shipped substrate reality: ADR-T37 and the spike memo now match flat-`String` backing and the host ABI is mechanically exercised end to end.
-- v7.3.9 - Fixed cache-epoch reporting so host-side invalidation checks observe real substrate changes without relying on incidental projection calls.
 - ... [Older history truncated, refer to git logs]
 
 ## 1. Executive Summary & Active Critical Path
-- **Total Active Story Points:** 29
-- **Critical Path:** `CORE-N1 -> CORE-N3 -> CORE-N5`
-- **Planning Assumptions:** The Native Text Substrate foundation (TechSpec ADR-T37, §3.4, §4.4) shipped with Epic M; `TextBuffer`, `TextView`, and the unified text renderer are now Brownfield reality. Active scope narrows to Epic N — migrating existing surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) onto the substrate and adding `EditBuffer`-backed undo for `TextArea` (ADR-T38). Existing transcript host-facing semantics (anchors, follow modes, unread, collapse, hierarchy) remain unchanged at the public contract level; only their backing storage migrates. Epic O (Terminal Capability Hardening) is intentionally out of active scope per ADR-T40 and is preserved in §2.2 with named candidate surfaces.
+- **Total Active Story Points:** 0
+- **Critical Path:** Epic N is complete on this branch; the next critical path begins when Epic O is activated.
+- **Planning Assumptions:** The Native Text Substrate foundation (Epic M) and the full surface rebase (Epic N) are both shipped. `Text`, `Markdown`, code spans, `TextArea`, and transcript blocks now render through the shared substrate; transcript host-facing semantics (anchors, follow modes, unread, collapse, hierarchy) remain unchanged while their backing storage and render path are now substrate-native. `DirtyRange` records both replaced and replacement extents. Epic O (Terminal Capability Hardening) remains intentionally out of active scope per ADR-T40.
 
 ## 2. Project Phasing & Iteration Strategy
 ### Current Active Scope
-- **Epic N — Substrate Surface Rebase (CORE):** Migrate `Text` / `Markdown` / code spans, `TextArea` (operation-based undo on `EditBuffer`), and transcript blocks onto the substrate. Re-evaluate `CodeView` / `DiffView` posture on the new substrate. Add replay and golden coverage for substrate-driven surfaces.
+- No active implementation epic is open in this file right now. Epic N is complete and archived below; Epic O remains deferred until explicitly activated.
 
 ### Future / Deferred Scope
 #### Epic O — Terminal Capability Hardening (CORE) [DEFERRED]
@@ -35,6 +36,7 @@
 - No React or Solid parity work; the JSX/signals layer stays a thin overlay over the imperative protocol.
 
 ### Archived or Already Completed Scope
+- Epic N (Substrate Surface Rebase) delivered `CORE-N0` through `CORE-N7`: contract sync, dirty-range expansion, substrate-backed text rendering, native `EditBuffer`, `TextArea` rebase, the substrate benchmark gate, transcript substrate migration, and post-substrate coverage/posture updates.
 - Epic M (Native Text Substrate) delivered `CORE-M0` through `CORE-M4`: the substrate contract memo, native `TextBuffer`, native `TextView`, the unified text renderer, and the §5.4.1 Unicode/wrapping native gate suite. Its completed scope is summarized in §5.
 - The v7 docs-maintenance wave completed `DOCS-A001` through `DOCS-A003`: canonical artifact normalization, preservation review, and source-truth reconciliation.
 - Epics I-L delivered native transcript state, anchor-based viewport behavior, nested scroll handoff, devtools APIs, host inspector surfaces, split-pane layout, transcript-backed composites, and flagship examples.
@@ -45,29 +47,60 @@
 ```mermaid
 flowchart LR
     M[Epic M Substrate Foundation - SHIPPED]:::done
-    M --> N1[CORE-N1 Text/Markdown/Code rebase]
-    M --> N2[CORE-N2 TextArea rebase]
-    M --> N3[CORE-N3 Transcript rebase]
-    N1 --> N4[CORE-N4 CodeView/DiffView posture decision]
-    N3 --> N4
-    N1 --> N5[CORE-N5 substrate replay and golden coverage]
-    N2 --> N5
-    N3 --> N5
+    M --> N0[CORE-N0 contract sync]
+    N0 --> N1[CORE-N1 dirty-range expansion]
+    N1 --> N2[CORE-N2 text and markdown rebase]
+    N1 --> N3[CORE-N3 EditBuffer foundation]
+    N3 --> N4[CORE-N4 TextArea rebase]
+    N1 --> N5[CORE-N5 substrate benchmark gate]
+    N2 --> N6[CORE-N6 transcript rebase]
+    N5 --> N6
+    N2 --> N7[CORE-N7 coverage and posture closeout]
+    N4 --> N7
+    N6 --> N7
     O[Epic O Terminal Capability Hardening - DEFERRED]
-    N5 -.-> O
+    N7 -.-> O
     classDef done fill:#dff5dd,stroke:#3f9d3f,color:#1f4d1f;
 ```
 
 ## 4. Ticket List
 
-Epic O — Terminal Capability Hardening is intentionally not in this active ticket list. It is documented in §2.2 with named candidate surfaces and is re-evaluated only after Epic N ships.
+Epic O — Terminal Capability Hardening is intentionally not in this ticket list. It is documented in §2.2 with named candidate surfaces and is re-evaluated only after Epic N ships.
 
 ### Epic N — Substrate Surface Rebase (CORE)
 
-**CORE-N1 Rebase Text, Markdown, and Code Spans Onto Substrate**
+**CORE-N0 Sync Epic-N Contract to Brownfield Reality**
+- **Type:** Chore
+- **Effort:** 2
+- **Dependencies:** Substrate foundation (Epic M, shipped)
+- **Capability / Contract Mapping:** TechSpec ADR-T37 through ADR-T39, §4.4
+- **Description:** Reconcile `TechSpec.md`, `Tasks.md`, and the substrate spike memo with the current repo state before functional migration work continues. This sync explicitly records that getter overflows fail instead of truncating, that dirty ranges carry both replaced and replacement extents, and that the transcript benchmark gate lands before transcript rebase.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given the current native substrate and legacy widget paths
+When the Epic N docs are reviewed
+Then TechSpec, Tasks, and the substrate spike memo describe the same active contract
+And no active Epic N ticket relies on stale truncation or cache-only dirty-range semantics
+```
+
+**CORE-N1 Expand DirtyRange to Pre- and Post-Replacement Extents**
+- **Type:** Feature
+- **Effort:** 3
+- **Dependencies:** CORE-N0
+- **Capability / Contract Mapping:** TechSpec ADR-T39, §3.4, §4.4
+- **Description:** Change the native dirty-range record from a single post-replacement interval to a triple carrying `start`, `old_end`, and `new_end`. `replace_range` and `append` record both the replaced extent and the replacement extent so shrinking and growing edits preserve enough information for transcript rebase and future incremental paint consumers. `tui_text_buffer_clear_dirty_ranges` remains the only consume path in this wave.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given a buffer mutation that grows, shrinks, replaces, or appends content
+When the buffer records a dirty range
+Then the record preserves both the replaced extent and the replacement extent
+And clearing dirty ranges still does not bump epoch or style fingerprint
+```
+
+**CORE-N2 Rebase Text, Markdown, and Code Spans Onto Substrate**
 - **Type:** Feature
 - **Effort:** 5
-- **Dependencies:** Substrate foundation (Epic M, shipped)
+- **Dependencies:** CORE-N1
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §5.4.1
 - **Description:** Migrate `Text`, `Markdown`, and code-style span rendering paths onto `TextBuffer` content and `TextView` projections drawn through the unified renderer. Remove ad-hoc width and wrap math from the migrated widgets. Public host API for these widgets remains unchanged. Each migrated surface adds a substrate-routing assertion (e.g. inspecting that the widget's render path calls `text_renderer::render_text_view` rather than recomputing geometry) so the §5.4.1 G3/G4 gates have behavioral coverage and not just visual goldens. Search-match highlight colors emitted via `tui_text_buffer_set_highlight` route through the active theme rather than the hard-coded `highlight_kind_bg` palette in the renderer; this avoids a follow-on visual regression once Markdown and code-search surfaces start using highlights.
 - **Acceptance Criteria (Gherkin):**
@@ -87,10 +120,28 @@ When the surface renders under a non-default theme
 Then the highlight background routes through theme bindings rather than the renderer's v1 hard-coded palette
 ```
 
-**CORE-N2 Rebase TextArea Onto EditBuffer and TextView**
+**CORE-N3 Land EditBuffer and Its Native ABI**
+- **Type:** Feature
+- **Effort:** 5
+- **Dependencies:** CORE-N1
+- **Capability / Contract Mapping:** TechSpec ADR-T38, §3.4, §4.4 `edit_buffer`
+- **Description:** Add native `EditBuffer` storage, history/coalescing behavior, and the `tui_edit_buffer_*` FFI already authorized in TechSpec. The implementation owns buffer/edit-buffer lifetime rules, ordinary single-edit operation history, and mechanical FFI coverage before `TextArea` migrates onto it.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given a native EditBuffer over a TextBuffer
+When ordinary single-character edits are applied
+Then history grows per operation without storing full-content snapshots
+And undo and redo replay through buffer mutations rather than content replacement snapshots
+
+Given the native EditBuffer ABI
+When the host FFI surface exercises it
+Then all documented constructors, mutators, and query functions behave according to the standard error model
+```
+
+**CORE-N4 Rebase TextArea Onto EditBuffer and TextView**
 - **Type:** Feature
 - **Effort:** 8
-- **Dependencies:** Substrate foundation (Epic M, shipped)
+- **Dependencies:** CORE-N3
 - **Capability / Contract Mapping:** TechSpec ADR-T38, §3.4, §4.4 `edit_buffer`
 - **Description:** Move `TextArea` state onto an `EditBuffer` wrapping a `TextBuffer` with a `TextView` projection. Replace the existing snapshot-based undo and redo with an operation history plus coalescing rules for ordinary single-edit operations. Preserve the host `TextArea` public API and the existing keyboard behavior. Adds a substrate-routing assertion that `TextArea::render` reaches `text_renderer::render_text_view` (G3/G4 behavioral coverage) so a future regression that reintroduces widget-local wrap math fails in CI rather than slipping past G3's name-based source grep.
 - **Acceptance Criteria (Gherkin):**
@@ -110,14 +161,27 @@ When its render path is exercised in tests
 Then a behavioral assertion confirms the widget routes through text_renderer::render_text_view
 ```
 
-**CORE-N3 Rebase Transcript Block Content Onto Substrate**
+**CORE-N5 Add the Substrate Benchmark Gate Before Transcript Rebase**
+- **Type:** Chore
+- **Effort:** 5
+- **Dependencies:** CORE-N1
+- **Capability / Contract Mapping:** TechSpec §5.4.1, ADR-T36
+- **Description:** Add a dedicated Criterion benchmark gate for substrate workloads in `native/benches/` and publish the results in `docs/reports/`. This gate measures `tui_text_buffer_append` versus buffer size plus `tui_text_view_set_cursor` and `tui_text_view_byte_to_visual` versus offset distance, and it must be wired before transcript rebase is considered done. If append growth or prefix-scan cost is unacceptable, the benchmark ticket owns the required optimization before transcript closes.
+- **Acceptance Criteria (Gherkin):**
+```gherkin
+Given the substrate benchmark suite
+When it runs locally and in CI
+Then append-cost growth and cursor-mapping prefix cost are published under docs/reports/
+And transcript rebase does not close without an acceptable recorded curve or the required optimization landing in the same wave
+```
+
+**CORE-N6 Rebase Transcript Block Content Onto Substrate**
 - **Type:** Feature
 - **Effort:** 8
-- **Dependencies:** Substrate foundation (Epic M, shipped); CORE-N5 append-cost benchmark must exist before this rebase ships (see "Pre-Rebase Performance Gate" below)
+- **Dependencies:** CORE-N1, CORE-N2, CORE-N5
 - **Capability / Contract Mapping:** TechSpec ADR-T39, §3.4
 - **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable. The rebase wires `tui_text_buffer_clear_dirty_ranges` into the per-frame render path so `dirty_ranges` does not grow unbounded across the session lifetime, and adds a substrate-routing assertion that the transcript visible-block render reaches `text_renderer::render_text_view`.
-- **Pre-Rebase Performance Gate:** The shipped substrate stores buffer content in a flat `String` and `recompute_line_metadata` rescans the entire content per mutation, so per-token streaming `append` is O(N) and cumulative cost is O(N²) in buffer size. Transcript streaming is the headline workload that this rebase will lean on, so before this rebase merges, the CORE-N5 benchmark gate (see below) must report append cost as a function of buffer size; if the curve is unacceptable, this ticket is blocked on incremental line-metadata invalidation in `text_buffer.rs` (separate ticket if needed) before proceeding.
-- **Open Contract Question — Dirty-Range Scope:** `DirtyRange` records only the post-replacement extent (`[start, start + payload.len())`). For a shrinking edit such as `replace_range(0, 6, "x")` the dirty list reports `[0, 1)` and not the removed `[1, 6)` tail. This is sufficient for cache-invalidation consumers (wrap cache is keyed by `content_epoch` + geometry, so any mutation invalidates the whole projection), but it is NOT sufficient if a consumer wants incremental cell-level repaint. Before this rebase merges, decide explicitly: either keep the cache-invalidation-only contract (matches today's whole-frame redraw) and document it on the consumer site, or propose an ADR-T39 amendment that extends `DirtyRange` with both pre- and post-replacement extents. The decision is logged on the rebase commit so future reviewers see the deliberate choice.
+- **Pre-Rebase Performance Gate:** The shipped substrate stores buffer content in a flat `String` and `recompute_line_metadata` rescans the entire content per mutation, so per-token streaming `append` is O(N) and cumulative cost is O(N²) in buffer size. Transcript streaming is the headline workload that this rebase will lean on, so the CORE-N5 benchmark gate must record append cost as a function of buffer size before this ticket closes; if the curve is unacceptable, the required optimization lands in the same wave before transcript merge.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a streaming transcript with a visible reading position
@@ -140,26 +204,12 @@ Then tui_text_buffer_clear_dirty_ranges is called once per buffer per frame
 And dirty_ranges memory stays bounded across the session
 ```
 
-**CORE-N4 Re-Evaluate CodeView and DiffView Posture**
+**CORE-N7 Refresh Coverage and Re-Evaluate CodeView/DiffView Posture**
 - **Type:** Chore
-- **Effort:** 3
-- **Dependencies:** CORE-N1, CORE-N3
+- **Effort:** 2
+- **Dependencies:** CORE-N2, CORE-N4, CORE-N6
 - **Capability / Contract Mapping:** TechSpec ADR-T35, ADR-T37
-- **Description:** Re-run the host-composite-versus-native-promotion question for `CodeView` and `DiffView` against the new substrate. Update `docs/reports/code-diff-native-measurement.md` with substrate-era measurements and a recommendation. If the recommendation changes the prior posture, propose an ADR update to TechSpec.
-- **Acceptance Criteria (Gherkin):**
-```gherkin
-Given the new substrate is in use by Text, Markdown, and Transcript surfaces
-When CodeView and DiffView are exercised on representative content
-Then a written measurement exists describing whether native promotion is warranted post-substrate
-And the recommendation is reflected in TechSpec ADR status if it changes the prior posture
-```
-
-**CORE-N5 Add Substrate Replay, Golden, and Append-Cost Coverage**
-- **Type:** Chore
-- **Effort:** 5
-- **Dependencies:** CORE-N1, CORE-N2, CORE-N3
-- **Capability / Contract Mapping:** TechSpec §5.4.1, ADR-T36
-- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green. Add a Criterion benchmark gate in `native/benches/` (or extend an existing one) that measures `tui_text_buffer_append` cost as a function of pre-existing buffer size at 1 KiB, 16 KiB, 256 KiB, and 4 MiB. The benchmark output goes into `docs/reports/` so the curve is reviewable, and CORE-N3's pre-rebase gate consumes it. The same benchmark file also measures `tui_text_view_set_cursor` and `tui_text_view_byte_to_visual` as a function of the offset's distance from byte 0, so the wave-4 grapheme-boundary scan (currently bounded but still O(prefix-length)) is measured before transcript-tail interactions ship. If the curve is unacceptable, the optimization is "scan from the containing line via `line_starts` instead of from byte 0", tracked as a separate ticket.
+- **Description:** Refresh replay and golden coverage for substrate-driven surfaces, keep flagship example replay tests green, and re-run the host-composite-versus-native-promotion question for `CodeView` and `DiffView` against the new substrate. Update `docs/reports/code-diff-native-measurement.md` with substrate-era measurements and a recommendation. If the recommendation changes the prior posture, propose an ADR update to TechSpec.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate-driven Text, TextArea, and Transcript surfaces
@@ -168,27 +218,25 @@ Then large-transcript, long-code, nested-scroll, collapse and expand, tail-follo
 And the existing flagship example replay tests in ts/test-examples.test.ts remain green
 And any regression in the structural gates listed in TechSpec section 5.4.1 fails the suite
 
-Given a Criterion benchmark of tui_text_buffer_append at increasing buffer sizes
-When the benchmark runs locally and in CI
-Then the recorded append-cost-vs-buffer-size curve is published under docs/reports/
-And the curve sets the bound that CORE-N3's pre-rebase gate enforces
-
-Given a Criterion benchmark of tui_text_view_set_cursor and tui_text_view_byte_to_visual at increasing prefix lengths
-When the benchmark runs
-Then the grapheme-boundary scan cost as a function of offset is published under docs/reports/
-And the curve informs whether the line-bounded scan optimization is required before transcript-tail interactions ship
+Given the new substrate is in use by Text, Markdown, TextArea, and Transcript surfaces
+When CodeView and DiffView are exercised on representative content
+Then a written measurement exists describing whether native promotion is warranted post-substrate
+And the recommendation is reflected in TechSpec ADR status if it changes the prior posture
 ```
 
 ## 5. Ticket Summary Table (Active Wave)
 
 | ID | Epic | Type | SP | Dependencies | Phase |
 | --- | --- | --- | --- | --- | --- |
-| CORE-N1 | N | Feature | 5 | Substrate (Epic M, shipped) | Active |
-| CORE-N2 | N | Feature | 8 | Substrate (Epic M, shipped) | Active |
-| CORE-N3 | N | Feature | 8 | Substrate (Epic M, shipped) | Active |
-| CORE-N4 | N | Chore | 3 | N1, N3 | Active |
-| CORE-N5 | N | Chore | 5 | N1, N2, N3 | Active |
-|  |  | **TOTAL** | **29** |  |  |
+| CORE-N0 | N | Chore | 2 | Substrate (Epic M, shipped) | Done |
+| CORE-N1 | N | Feature | 3 | N0 | Done |
+| CORE-N2 | N | Feature | 5 | N1 | Done |
+| CORE-N3 | N | Feature | 5 | N1 | Done |
+| CORE-N4 | N | Feature | 8 | N3 | Done |
+| CORE-N5 | N | Chore | 5 | N1 | Done |
+| CORE-N6 | N | Feature | 8 | N1, N2, N5 | Done |
+| CORE-N7 | N | Chore | 2 | N2, N4, N6 | Done |
+|  |  | **TOTAL** | **38** |  |  |
 
 ### Archived Epic M Summary
 

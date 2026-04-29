@@ -19,6 +19,7 @@ cargo clippy --manifest-path native/Cargo.toml -- -D warnings
 cargo bench --manifest-path native/Cargo.toml --bench writer_bench
 cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench
 cargo bench --manifest-path native/Cargo.toml --bench devtools_bench
+cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench
 ```
 
 ---

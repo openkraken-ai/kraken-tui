@@ -254,6 +254,14 @@ const lib = dlopen(LIB_PATH, {
 	tui_text_view_byte_to_visual:      { args: ["u32", "u32", "ptr", "ptr"] as FFIType[],           returns: "i32" as const },
 	tui_text_view_visual_to_byte:      { args: ["u32", "u32", "u32", "ptr"] as FFIType[],           returns: "i32" as const },
 	tui_text_view_get_cache_epoch:     { args: ["u32"] as FFIType[],                                returns: "u64" as const },
+	tui_edit_buffer_create:            { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_edit_buffer_destroy:           { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_apply_op:          { args: ["u32", "u8", "ptr", "u32", "u32", "u32"] as FFIType[], returns: "i32" as const },
+	tui_edit_buffer_undo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_redo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_can_undo:          { args: ["u32"] as FFIType[],                                returns: "u8" as const },
+	tui_edit_buffer_can_redo:          { args: ["u32"] as FFIType[],                                returns: "u8" as const },
+	tui_edit_buffer_history_len:       { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 });
 
 const ffi = lib.symbols;
@@ -914,6 +922,43 @@ describe("FFI integration", () => {
 			expect(byteBuf[0]).toBe(5);
 			// View must be destroyed before its buffer (lifecycle guard).
 			expect(ffi.tui_text_view_destroy(view)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer apply_op -> undo -> redo lifecycle", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const initial = new TextEncoder().encode("hello");
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from(initial), initial.length)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_can_undo(edit)).toBe(0);
+			expect(ffi.tui_edit_buffer_can_redo(edit)).toBe(0);
+
+			const insertPayload = new TextEncoder().encode(" world");
+			expect(
+				ffi.tui_edit_buffer_apply_op(
+					edit,
+					0,
+					Buffer.from(insertPayload),
+					insertPayload.length,
+					5,
+					5,
+				),
+			).toBe(0);
+			expect(ffi.tui_edit_buffer_can_undo(edit)).toBe(1);
+			expect(ffi.tui_edit_buffer_history_len(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length + insertPayload.length);
+
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_edit_buffer_can_redo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length);
+
+			expect(ffi.tui_edit_buffer_redo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length + insertPayload.length);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
 			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
 		});
 	});
