@@ -1,0 +1,1255 @@
+//! Native Text Substrate — TextView (ADR-T37, TechSpec §3.4 / §4.4 `text_view`).
+//!
+//! Viewport and soft-wrap projection over a `TextBuffer`. Holds an invalidatable
+//! visual-line cache keyed by `(content_epoch, wrap_width, wrap_mode, tab_width,
+//! style_fingerprint, viewport_rows)`. Resize invalidates view projection only;
+//! buffer storage is untouched.
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+use crate::context::TuiContext;
+use crate::text_buffer::{line_cell_width, TextBuffer};
+use crate::types::WrapMode;
+
+const DEFAULT_TAB_WIDTH: u8 = 4;
+
+/// One visual row produced by wrap projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VisualLine {
+    /// Byte offset into the source buffer where this visual line starts.
+    pub byte_start: usize,
+    /// Exclusive byte offset where this visual line ends. Newline byte (if any)
+    /// belongs to the next visual line, not this one.
+    pub byte_end: usize,
+    /// Total cell width of the visual line (after tab expansion / Unicode width).
+    pub cell_width: u32,
+    /// Logical line index (`buffer.line_starts` index) this visual row belongs to.
+    pub logical_line: u32,
+}
+
+/// Composite invalidation key for the wrap cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CacheKey {
+    content_epoch: u64,
+    wrap_width: u32,
+    wrap_mode: u8,
+    tab_width: u8,
+    style_fingerprint: u64,
+    viewport_rows: u32,
+}
+
+impl CacheKey {
+    fn empty() -> Self {
+        Self {
+            content_epoch: u64::MAX,
+            wrap_width: u32::MAX,
+            wrap_mode: u8::MAX,
+            tab_width: u8::MAX,
+            style_fingerprint: u64::MAX,
+            viewport_rows: u32::MAX,
+        }
+    }
+}
+
+/// Cursor position into the underlying buffer (byte offset).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CursorPos {
+    pub byte_offset: usize,
+}
+
+pub struct TextView {
+    buffer: u32,
+    wrap_width: u32,
+    wrap_mode: WrapMode,
+    tab_width: u8,
+    viewport_rows: u32,
+    scroll_row: u32,
+    scroll_col: u32,
+    cursor: Option<CursorPos>,
+    visual_lines: Vec<VisualLine>,
+    cached_key: CacheKey,
+    cache_key_epoch: u64,
+}
+
+impl TextView {
+    pub fn new(buffer: u32) -> Self {
+        Self {
+            buffer,
+            wrap_width: 0,
+            wrap_mode: WrapMode::None,
+            tab_width: DEFAULT_TAB_WIDTH,
+            viewport_rows: 0,
+            scroll_row: 0,
+            scroll_col: 0,
+            cursor: None,
+            visual_lines: Vec::new(),
+            cached_key: CacheKey::empty(),
+            cache_key_epoch: 0,
+        }
+    }
+
+    pub fn buffer(&self) -> u32 {
+        self.buffer
+    }
+
+    pub fn wrap_width(&self) -> u32 {
+        self.wrap_width
+    }
+
+    pub fn wrap_mode(&self) -> WrapMode {
+        self.wrap_mode
+    }
+
+    pub fn tab_width(&self) -> u8 {
+        self.tab_width
+    }
+
+    pub fn viewport_rows(&self) -> u32 {
+        self.viewport_rows
+    }
+
+    pub fn scroll_row(&self) -> u32 {
+        self.scroll_row
+    }
+
+    pub fn scroll_col(&self) -> u32 {
+        self.scroll_col
+    }
+
+    pub fn cursor(&self) -> Option<CursorPos> {
+        self.cursor
+    }
+
+    pub fn visual_lines(&self) -> &[VisualLine] {
+        &self.visual_lines
+    }
+
+    pub fn cache_key_epoch(&self) -> u64 {
+        self.cache_key_epoch
+    }
+}
+
+// ============================================================================
+// Module-level mutation API (called from FFI wrappers)
+// ============================================================================
+
+pub(crate) fn create(ctx: &mut TuiContext, buffer: u32) -> Result<u32, String> {
+    if buffer == 0 || !ctx.text_buffers.contains_key(&buffer) {
+        return Err(format!("Invalid TextBuffer handle: {buffer}"));
+    }
+    let handle = ctx.alloc_substrate_handle()?;
+    ctx.text_views.insert(handle, TextView::new(buffer));
+    Ok(handle)
+}
+
+pub(crate) fn destroy(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    if ctx.text_views.remove(&handle).is_none() {
+        return Err(format!("Invalid TextView handle: {handle}"));
+    }
+    Ok(())
+}
+
+pub(crate) fn set_wrap(
+    ctx: &mut TuiContext,
+    handle: u32,
+    width: u32,
+    mode: u8,
+    tab_width: u8,
+) -> Result<(), String> {
+    let mode = WrapMode::from_u8(mode).ok_or_else(|| format!("Invalid wrap mode: {mode}"))?;
+    let view = view_mut(ctx, handle)?;
+    view.wrap_width = width;
+    view.wrap_mode = mode;
+    view.tab_width = tab_width.max(1);
+    Ok(())
+}
+
+pub(crate) fn set_viewport(
+    ctx: &mut TuiContext,
+    handle: u32,
+    rows: u32,
+    scroll_row: u32,
+    scroll_col: u32,
+) -> Result<(), String> {
+    let view = view_mut(ctx, handle)?;
+    view.viewport_rows = rows;
+    view.scroll_row = scroll_row;
+    view.scroll_col = scroll_col;
+    Ok(())
+}
+
+pub(crate) fn set_cursor(
+    ctx: &mut TuiContext,
+    handle: u32,
+    byte_offset: usize,
+) -> Result<(), String> {
+    let buffer_handle = view(ctx, handle)?.buffer;
+    let buf = ctx
+        .text_buffers
+        .get(&buffer_handle)
+        .ok_or_else(|| format!("TextView {handle} references missing buffer {buffer_handle}"))?;
+    if byte_offset > buf.byte_len() {
+        return Err(format!(
+            "Cursor byte offset {byte_offset} out of range (byte_len={})",
+            buf.byte_len()
+        ));
+    }
+    let content = buf.content();
+    if !content.is_char_boundary(byte_offset) {
+        return Err(format!(
+            "Cursor byte offset {byte_offset} is not a UTF-8 boundary"
+        ));
+    }
+    // Reject offsets that fall inside a grapheme cluster. The renderer only
+    // draws the cursor at grapheme boundaries (matching by `byte_start` or at
+    // end-of-line), so accepting an interior offset would silently hide the
+    // cursor. Callers must align to a boundary before calling.
+    if !is_grapheme_boundary(content, byte_offset) {
+        return Err(format!(
+            "Cursor byte offset {byte_offset} is not a grapheme boundary"
+        ));
+    }
+    // Reject offsets that fall in a consumed-whitespace gap between visual
+    // lines (word-wrap mode skips inter-word whitespace at row breaks, so
+    // bytes between row N's byte_end and row N+1's byte_start are real
+    // grapheme boundaries but no visual_line covers them; the renderer
+    // would never draw a cursor there). Project first so visual_lines is
+    // current.
+    ensure_projection(ctx, handle)?;
+    let view = ctx.text_views.get(&handle).unwrap();
+    let buf_byte_len = ctx
+        .text_buffers
+        .get(&buffer_handle)
+        .map(|b| b.byte_len())
+        .unwrap_or(0);
+    if !is_visible_offset(&view.visual_lines, byte_offset, buf_byte_len) {
+        return Err(format!(
+            "Cursor byte offset {byte_offset} is not addressable (lies in a consumed-whitespace gap between visual rows)"
+        ));
+    }
+    let view = view_mut(ctx, handle)?;
+    view.cursor = Some(CursorPos { byte_offset });
+    Ok(())
+}
+
+/// True iff `byte_offset` lies inside a visual line's `[byte_start..byte_end]`
+/// range OR equals `buf_byte_len` (the past-the-end position is always
+/// addressable as the end-of-buffer cursor anchor). This excludes
+/// consumed-whitespace gaps in word-wrap mode where no visual_line covers
+/// the offset.
+fn is_visible_offset(visual_lines: &[VisualLine], byte_offset: usize, buf_byte_len: usize) -> bool {
+    if byte_offset == buf_byte_len {
+        return true;
+    }
+    visual_lines
+        .iter()
+        .any(|line| byte_offset >= line.byte_start && byte_offset <= line.byte_end)
+}
+
+fn is_grapheme_boundary(content: &str, byte_offset: usize) -> bool {
+    if byte_offset == 0 || byte_offset == content.len() {
+        return true;
+    }
+    // Bound the scan: stop once we walk past `byte_offset`. Without
+    // `take_while`, a no-match would traverse the entire buffer, making
+    // every set_cursor / byte_to_visual call O(N) on transcript-sized
+    // content.
+    content
+        .grapheme_indices(true)
+        .take_while(|(start, _)| *start <= byte_offset)
+        .any(|(start, _)| start == byte_offset)
+}
+
+pub(crate) fn clear_cursor(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let view = view_mut(ctx, handle)?;
+    view.cursor = None;
+    Ok(())
+}
+
+pub(crate) fn get_visual_line_count(ctx: &mut TuiContext, handle: u32) -> Result<u32, String> {
+    ensure_projection(ctx, handle)?;
+    let count = ctx.text_views.get(&handle).unwrap().visual_lines.len();
+    u32::try_from(count).map_err(|_| {
+        format!("visual_line_count ({count}) exceeds u32::MAX; substrate ABI cannot represent it")
+    })
+}
+
+pub(crate) fn get_cache_epoch(ctx: &mut TuiContext, handle: u32) -> Result<u64, String> {
+    // Refresh the projection first so callers polling this for cache
+    // invalidation observe a fresh epoch after `set_wrap` / `set_viewport`
+    // / buffer mutation, even if no other read has run yet. Without this,
+    // the stored epoch lags behind the cache key until some other call
+    // (e.g. byte_to_visual, render_text_view) triggers ensure_projection.
+    ensure_projection(ctx, handle)?;
+    Ok(view(ctx, handle)?.cache_key_epoch)
+}
+
+/// Convert a buffer byte offset to (visual_row, visual_col).
+///
+/// `visual_row` is absolute (NOT scrolled) — the host adjusts for `scroll_row`.
+/// `visual_col` is the cell column within the visual row.
+pub(crate) fn byte_to_visual(
+    ctx: &mut TuiContext,
+    handle: u32,
+    byte_offset: usize,
+) -> Result<(u32, u32), String> {
+    ensure_projection(ctx, handle)?;
+    let view = ctx.text_views.get(&handle).unwrap();
+    let buf = ctx
+        .text_buffers
+        .get(&view.buffer)
+        .ok_or_else(|| "TextView buffer missing".to_string())?;
+    if byte_offset > buf.byte_len() {
+        return Err(format!(
+            "Byte offset {byte_offset} out of range (byte_len={})",
+            buf.byte_len()
+        ));
+    }
+    let content = buf.content();
+    if !content.is_char_boundary(byte_offset) {
+        return Err(format!("Byte offset {byte_offset} is not a UTF-8 boundary"));
+    }
+    // The substrate treats grapheme boundaries as the canonical addressable
+    // positions. `visual_to_byte` snaps to grapheme starts, so accepting
+    // interior offsets here would break the byte<->visual round-trip.
+    // `set_cursor` enforces the same rule; reject here for consistency.
+    if !is_grapheme_boundary(content, byte_offset) {
+        return Err(format!(
+            "Byte offset {byte_offset} is not a grapheme boundary"
+        ));
+    }
+
+    for (row, line) in view.visual_lines.iter().enumerate() {
+        let in_range = if line.byte_start == line.byte_end {
+            byte_offset == line.byte_start
+        } else {
+            byte_offset >= line.byte_start && byte_offset <= line.byte_end
+        };
+        if in_range {
+            let row_u32 = u32::try_from(row).map_err(|_| {
+                format!(
+                    "Visual row index {row} exceeds u32::MAX; substrate ABI cannot represent it"
+                )
+            })?;
+            let segment = &buf.content()[line.byte_start..byte_offset];
+            let col = line_cell_width(segment, view.tab_width);
+            return Ok((row_u32, col));
+        }
+    }
+
+    // End-of-buffer is the only legitimate "no row contains the offset"
+    // case: the past-the-end position is addressable as the trailing
+    // cursor anchor and resolves to the last row's end column.
+    if byte_offset == buf.byte_len() {
+        if let Some(last) = view.visual_lines.last() {
+            let last_idx = view.visual_lines.len() - 1;
+            let row = u32::try_from(last_idx).map_err(|_| {
+                format!("Visual row index {last_idx} exceeds u32::MAX; substrate ABI cannot represent it")
+            })?;
+            let segment = &buf.content()[last.byte_start..last.byte_end];
+            let col = line_cell_width(segment, view.tab_width);
+            return Ok((row, col));
+        }
+        return Ok((0, 0));
+    }
+
+    // The offset is a valid grapheme boundary but no visual_line covers
+    // it — it lies in a consumed-whitespace gap (word-wrap mode). Reject
+    // for consistency with set_cursor, which would also reject this
+    // offset, instead of misrouting to the end-of-last-row position.
+    Err(format!(
+        "Byte offset {byte_offset} is not addressable (lies in a consumed-whitespace gap between visual rows)"
+    ))
+}
+
+/// Convert (visual_row, visual_col) to a buffer byte offset, clamped to the
+/// nearest grapheme boundary.
+pub(crate) fn visual_to_byte(
+    ctx: &mut TuiContext,
+    handle: u32,
+    row: u32,
+    col: u32,
+) -> Result<usize, String> {
+    ensure_projection(ctx, handle)?;
+    let view = ctx.text_views.get(&handle).unwrap();
+    let buf = ctx
+        .text_buffers
+        .get(&view.buffer)
+        .ok_or_else(|| "TextView buffer missing".to_string())?;
+
+    if view.visual_lines.is_empty() {
+        return Ok(0);
+    }
+    let row_idx = (row as usize).min(view.visual_lines.len() - 1);
+    let line = &view.visual_lines[row_idx];
+    let segment = &buf.content()[line.byte_start..line.byte_end];
+    let tw = view.tab_width.max(1) as u32;
+
+    let mut walked: u32 = 0;
+    for (g_off, g) in segment.grapheme_indices(true) {
+        let advance = if g == "\t" {
+            tw - (walked % tw)
+        } else {
+            UnicodeWidthStr::width(g) as u32
+        };
+        if walked + advance > col {
+            return Ok(line.byte_start + g_off);
+        }
+        walked = walked.saturating_add(advance);
+    }
+    Ok(line.byte_end)
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
+fn view(ctx: &TuiContext, handle: u32) -> Result<&TextView, String> {
+    ctx.text_views
+        .get(&handle)
+        .ok_or_else(|| format!("Invalid TextView handle: {handle}"))
+}
+
+fn view_mut(ctx: &mut TuiContext, handle: u32) -> Result<&mut TextView, String> {
+    ctx.text_views
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextView handle: {handle}"))
+}
+
+/// Ensure the cached projection matches the current buffer + view parameters.
+/// Recomputes lazily if the composite cache key has changed.
+///
+/// Cache hits return without copying buffer content; recomputation reads the
+/// buffer in place. This keeps repeated `byte_to_visual` / `visual_to_byte`
+/// / `render_text_view` calls O(1) on stable buffers, which is the common
+/// transcript-streaming workload.
+pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let buffer_handle = view(ctx, handle)?.buffer;
+    let (epoch, fingerprint) = {
+        let buf = ctx.text_buffers.get(&buffer_handle).ok_or_else(|| {
+            format!("TextView {handle} references missing buffer {buffer_handle}")
+        })?;
+        (buf.epoch(), buf.style_fingerprint())
+    };
+
+    let v = ctx.text_views.get_mut(&handle).unwrap();
+    let key = CacheKey {
+        content_epoch: epoch,
+        wrap_width: v.wrap_width,
+        wrap_mode: v.wrap_mode as u8,
+        tab_width: v.tab_width,
+        style_fingerprint: fingerprint,
+        viewport_rows: v.viewport_rows,
+    };
+
+    if v.cached_key == key {
+        return Ok(());
+    }
+
+    let buf_ref = ctx.text_buffers.get(&buffer_handle).unwrap();
+    let lines = compute_visual_lines(buf_ref, v.wrap_width, v.wrap_mode, v.tab_width);
+    let max_byte = buf_ref.byte_len();
+    // Reconcile the stored cursor against the new buffer + projection:
+    //   1. Clamp to byte_len so a truncating edit doesn't leave it past
+    //      the end.
+    //   2. Snap backward to the nearest grapheme start so a width-changing
+    //      edit doesn't strand it inside a cluster.
+    //   3. If the snapped offset lands in a consumed-whitespace gap (no
+    //      visual_line covers it), snap forward to the next row's
+    //      byte_start so the cursor remains addressable and visible.
+    let reconciled_cursor = v.cursor.map(|c| {
+        let clamped = c.byte_offset.min(max_byte);
+        let snapped = snap_to_grapheme_start(buf_ref.content(), clamped);
+        let visible = if is_visible_offset(&lines, snapped, max_byte) {
+            snapped
+        } else {
+            lines
+                .iter()
+                .find(|line| line.byte_start > snapped)
+                .map(|line| line.byte_start)
+                .unwrap_or(max_byte)
+        };
+        CursorPos {
+            byte_offset: visible,
+        }
+    });
+    let v = ctx.text_views.get_mut(&handle).unwrap();
+    v.visual_lines = lines;
+    v.cached_key = key;
+    v.cache_key_epoch = v.cache_key_epoch.wrapping_add(1);
+
+    // Reconcile cursor against the new buffer. `set_cursor` rejects offsets
+    // that aren't both UTF-8 boundaries and grapheme boundaries, but a
+    // width-changing edit before the cursor can strand a previously valid
+    // offset inside a code point or cluster. Snap to the nearest grapheme
+    // start at or before the clamped position so the cursor stays on a
+    // boundary the renderer will actually draw.
+    if reconciled_cursor.is_some() {
+        v.cursor = reconciled_cursor;
+    }
+
+    Ok(())
+}
+
+/// Snap `byte_offset` backward to the nearest grapheme cluster start in
+/// `content`. Used when the buffer mutated under a previously valid cursor
+/// and the cursor must remain on a grapheme boundary.
+fn snap_to_grapheme_start(content: &str, byte_offset: usize) -> usize {
+    let len = content.len();
+    if byte_offset >= len {
+        return len;
+    }
+    let mut last = 0;
+    for (g_start, _) in content.grapheme_indices(true) {
+        if g_start > byte_offset {
+            return last;
+        }
+        last = g_start;
+    }
+    last
+}
+
+fn compute_visual_lines(
+    buf: &TextBuffer,
+    wrap_width: u32,
+    wrap_mode: WrapMode,
+    tab_width: u8,
+) -> Vec<VisualLine> {
+    let line_starts = buf.line_starts();
+    let total = buf.byte_len();
+    let content = buf.content();
+    let mut out = Vec::new();
+
+    for (idx, &line_start) in line_starts.iter().enumerate() {
+        let logical_end = if idx + 1 < line_starts.len() {
+            line_starts[idx + 1].saturating_sub(1) // exclude '\n'
+        } else {
+            total
+        };
+        let segment = &content[line_start..logical_end];
+
+        if matches!(wrap_mode, WrapMode::None) || wrap_width == 0 {
+            let cell_width = line_cell_width(segment, tab_width);
+            out.push(VisualLine {
+                byte_start: line_start,
+                byte_end: logical_end,
+                cell_width,
+                logical_line: idx as u32,
+            });
+            continue;
+        }
+
+        // Soft-wrap path
+        let breaks = wrap_segment(segment, wrap_width, wrap_mode, tab_width);
+        if breaks.is_empty() {
+            out.push(VisualLine {
+                byte_start: line_start,
+                byte_end: logical_end,
+                cell_width: 0,
+                logical_line: idx as u32,
+            });
+            continue;
+        }
+        for (a, b, w) in breaks {
+            out.push(VisualLine {
+                byte_start: line_start + a,
+                byte_end: line_start + b,
+                cell_width: w,
+                logical_line: idx as u32,
+            });
+        }
+    }
+
+    out
+}
+
+/// Wrap a single logical-line segment into `(rel_start, rel_end, cell_width)`
+/// runs at the given wrap width. Handles tabs, Unicode width, ZWJ, CJK.
+///
+/// Algorithm:
+/// 1. Walk graphemes in order, tracking byte offset and cell column.
+/// 2. When the next grapheme would push us past `wrap_width`, break.
+///    - In `Char` mode: break exactly at the current grapheme.
+///    - In `Word` mode: search backward for the latest whitespace boundary
+///      in the current run and break there; fall back to char break if none.
+fn wrap_segment(
+    segment: &str,
+    wrap_width: u32,
+    mode: WrapMode,
+    tab_width: u8,
+) -> Vec<(usize, usize, u32)> {
+    if segment.is_empty() {
+        return Vec::new();
+    }
+    let tw = tab_width.max(1) as u32;
+    let mut runs: Vec<(usize, usize, u32)> = Vec::new();
+    let mut run_start: usize = 0;
+    let mut run_col: u32 = 0;
+    // Track positions of the last whitespace boundary inside the current run
+    // for word-wrap fallback. Stored as (byte_offset, col_at_boundary).
+    let mut last_ws: Option<(usize, u32)> = None;
+
+    for (g_off, g) in segment.grapheme_indices(true) {
+        let mut advance = if g == "\t" {
+            tw - (run_col % tw)
+        } else {
+            UnicodeWidthStr::width(g) as u32
+        };
+
+        if advance == 0 {
+            // Combining mark / zero-width — never causes a wrap by itself.
+            continue;
+        }
+
+        if run_col + advance > wrap_width && run_col > 0 {
+            let break_at: usize = if matches!(mode, WrapMode::Word) {
+                if let Some((ws_off, _)) = last_ws {
+                    ws_off + ws_grapheme_len(segment, ws_off)
+                } else {
+                    g_off
+                }
+            } else {
+                g_off
+            };
+
+            // Refuse to emit a zero-length run. This can otherwise happen
+            // when the word-wrap break-point lands exactly on the current
+            // run_start (e.g. after consumed inter-word whitespace before a
+            // long unbreakable token). The phantom row would inflate
+            // get_visual_line_count and misroute byte_to_visual mappings.
+            if break_at > run_start {
+                let segment_run = &segment[run_start..break_at];
+                let cell_width = line_cell_width(segment_run, tab_width);
+                runs.push((run_start, break_at, cell_width));
+            }
+            run_start = break_at;
+            // Skip leading whitespace at the start of the new run for word mode
+            if matches!(mode, WrapMode::Word) {
+                let post = &segment[run_start..];
+                let mut new_start = run_start;
+                for (off2, g2) in post.grapheme_indices(true) {
+                    if is_ws_grapheme(g2) {
+                        new_start = run_start + off2 + g2.len();
+                    } else {
+                        break;
+                    }
+                }
+                run_start = new_start;
+            }
+            // After the wrap reset, recover the cell-width of any graphemes
+            // already iterated past `run_start` but belonging to the new
+            // run (this happens whenever the word-wrap break_at lands
+            // earlier than the for-loop's current g_off). Without this
+            // recompute, the iterated-but-uncounted prefix would silently
+            // belong to the new run without contributing to run_col, and
+            // the next wrap trigger could fire late — emitting a row whose
+            // cell_width exceeds wrap_width and violating the substrate
+            // contract.
+            run_col = if g_off > run_start {
+                line_cell_width(&segment[run_start..g_off], tab_width)
+            } else {
+                0
+            };
+            last_ws = None;
+            // Tab advance is column-dependent (tab_width - run_col % tab_width).
+            // The cached `advance` was computed against the OLD run_col before
+            // the wrap; after the reset, the current grapheme's tab width must
+            // be re-evaluated against the new run_col so the row this grapheme
+            // joins doesn't inherit a stale (too-small) advance and overflow
+            // wrap_width on the next iteration.
+            if g == "\t" && g_off >= run_start {
+                advance = tw - (run_col % tw);
+            }
+        }
+
+        // Only track whitespace boundaries inside the active run. Without
+        // this guard, whitespace already consumed by the leading-skip above
+        // would still update `last_ws`, and the next wrap break-point could
+        // land at or before `run_start`, emitting a zero-length phantom row.
+        if is_ws_grapheme(g) && g_off >= run_start {
+            last_ws = Some((g_off, run_col));
+        }
+
+        // Advance only if grapheme is at/after run_start (in word mode the
+        // run start may have shifted past this grapheme).
+        if g_off >= run_start {
+            run_col = run_col.saturating_add(advance);
+        }
+    }
+
+    if run_start < segment.len() {
+        let segment_run = &segment[run_start..];
+        let cell_width = line_cell_width(segment_run, tab_width);
+        runs.push((run_start, segment.len(), cell_width));
+    } else if runs.is_empty() {
+        // Whole segment fit but algorithm didn't push a run.
+        let cell_width = line_cell_width(segment, tab_width);
+        runs.push((0, segment.len(), cell_width));
+    }
+
+    runs
+}
+
+/// Whitespace characters that act as word-wrap break points.
+///
+/// Intentionally limited to ASCII space and tab in v1. NBSP (U+00A0),
+/// ideographic space (U+3000), and Unicode line separators are not
+/// treated as break points; if a future surface needs broader Unicode
+/// whitespace it should land alongside its own coverage so the wrap
+/// behavior change is visible in the gate suite.
+fn is_ws_grapheme(g: &str) -> bool {
+    g == " " || g == "\t"
+}
+
+fn ws_grapheme_len(segment: &str, offset: usize) -> usize {
+    segment[offset..]
+        .grapheme_indices(true)
+        .next()
+        .map(|(_, g)| g.len())
+        .unwrap_or(0)
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ffi_test_guard;
+    use crate::terminal::HeadlessBackend;
+    use crate::text_buffer;
+
+    fn fresh_ctx() -> std::sync::MutexGuard<'static, ()> {
+        let guard = ffi_test_guard();
+        let _ = crate::context::destroy_context();
+        crate::context::init_context(Box::new(HeadlessBackend::new(80, 24))).unwrap();
+        guard
+    }
+
+    fn with_ctx<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut TuiContext) -> R,
+    {
+        let mut ctx = crate::context::context_write().unwrap();
+        f(&mut ctx)
+    }
+
+    #[test]
+    fn projection_unwrapped_matches_logical_lines() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "ab\ncde\nf").unwrap();
+            let view = create(ctx, buf).unwrap();
+            (buf, view)
+        });
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 0, WrapMode::None as u8, 4).unwrap();
+            assert_eq!(get_visual_line_count(ctx, view).unwrap(), 3);
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            assert_eq!(lines[0].byte_start, 0);
+            assert_eq!(lines[0].byte_end, 2);
+            assert_eq!(lines[1].byte_start, 3);
+            assert_eq!(lines[1].byte_end, 6);
+            assert_eq!(lines[2].byte_start, 7);
+            assert_eq!(lines[2].byte_end, 8);
+        });
+        // Use buf to silence unused warning
+        let _ = buf;
+    }
+
+    #[test]
+    fn char_wrap_breaks_at_width() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcdefghij").unwrap();
+            let view = create(ctx, buf).unwrap();
+            (buf, view)
+        });
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+            assert_eq!(get_visual_line_count(ctx, view).unwrap(), 3);
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            assert_eq!((lines[0].byte_start, lines[0].byte_end), (0, 4));
+            assert_eq!((lines[1].byte_start, lines[1].byte_end), (4, 8));
+            assert_eq!((lines[2].byte_start, lines[2].byte_end), (8, 10));
+        });
+        let _ = buf;
+    }
+
+    #[test]
+    fn word_wrap_breaks_at_whitespace() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "the quick brown fox").unwrap();
+            create(ctx, buf).unwrap()
+        });
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 10, WrapMode::Word as u8, 4).unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            // Each visual line's text should not exceed 10 cells
+            for vl in &lines {
+                assert!(vl.cell_width <= 10);
+            }
+        });
+    }
+
+    #[test]
+    fn word_wrap_does_not_emit_phantom_zero_length_row() {
+        // Regression for wave-4 P1: with consumed inter-word whitespace
+        // before the next word, the wrap trigger must not push a
+        // (run_start, run_start, 0) phantom row. The minimum case uses a
+        // word that fits cleanly so the only failure mode is the phantom.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcd     ef").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run: {vl:?}"
+                );
+            }
+            // After the fix: 2 rows ("abcd", "ef"). Before the fix this
+            // produced 3 rows with an empty middle row.
+            assert_eq!(lines.len(), 2);
+            let buf_h = ctx.text_views.get(&view).unwrap().buffer;
+            let buf = ctx.text_buffers.get(&buf_h).unwrap();
+            assert_eq!(
+                &buf.content()[lines[0].byte_start..lines[0].byte_end],
+                "abcd"
+            );
+            assert_eq!(&buf.content()[lines[1].byte_start..lines[1].byte_end], "ef");
+            // byte_to_visual on the first byte of "ef" must land on row 1,
+            // not on a phantom row 1 with row 2 holding the actual content.
+            assert_eq!(byte_to_visual(ctx, view, 9).unwrap(), (1, 0));
+        });
+    }
+
+    #[test]
+    fn word_wrap_respects_width_when_break_lands_before_iterator() {
+        // Regression for wave-5 P1: "  abcdefgh" at wrap_width=4 word mode.
+        // The wrap trigger at 'c' breaks at byte 2 (after the second
+        // space), but the for-loop has already iterated past 'a' and 'b'
+        // (g_off=4). Before the fix, run_col was reset to 0 and the
+        // iterated prefix wasn't counted, so the next wrap fired late and
+        // emitted (2, 8, 6) — a 6-cell row in a 4-cell wrap. Every visual
+        // line must satisfy cell_width <= wrap_width.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "  abcdefgh").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert!(
+                    vl.cell_width <= 4,
+                    "row {i} cell_width {} exceeds wrap_width 4: {vl:?}",
+                    vl.cell_width
+                );
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn wrap_tab_after_break_uses_correct_advance() {
+        // Regression for wave-6 P1: "abc\tef" at wrap_width=3, char mode,
+        // tab_width=4. Tab advance is column-dependent
+        // (tab_width - run_col % tab_width). Before the fix, the cached
+        // advance computed against OLD run_col=3 (advance=1) was reused
+        // after the wrap reset, mis-tracking the tab as 1 cell instead
+        // of 4. The pushed row "\tef" measured at 6 cells via
+        // line_cell_width — directly violating the wrap-width contract
+        // for a multi-grapheme row.
+        // After the fix, the tab is isolated to its own row (single-
+        // grapheme rows are allowed to overflow because the substrate
+        // does not char-break tabs), and no multi-grapheme row exceeds
+        // wrap_width.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abc\tef").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 3, WrapMode::Char as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            let buf_h = ctx.text_views.get(&view).unwrap().buffer;
+            let buf = ctx.text_buffers.get(&buf_h).unwrap();
+            let content = buf.content();
+            for vl in &lines {
+                let segment = &content[vl.byte_start..vl.byte_end];
+                let g_count = UnicodeSegmentation::graphemes(segment, true).count();
+                if g_count > 1 {
+                    assert!(
+                        vl.cell_width <= 3,
+                        "multi-grapheme row exceeds wrap_width 3: {vl:?} segment={segment:?}"
+                    );
+                }
+            }
+            // Document the post-fix shape: "abc", "\t" (isolated), "ef".
+            assert_eq!(lines.len(), 3);
+            assert_eq!((lines[0].byte_start, lines[0].byte_end), (0, 3));
+            assert_eq!((lines[1].byte_start, lines[1].byte_end), (3, 4));
+            assert_eq!((lines[2].byte_start, lines[2].byte_end), (4, 6));
+        });
+    }
+
+    #[test]
+    fn word_wrap_long_unbreakable_word_falls_back_to_char_break() {
+        // Document the word-wrap fallback: when a word does not fit and
+        // there is no whitespace boundary within the active run, break at
+        // the cell boundary (char-mode behavior). This keeps layout
+        // predictable instead of letting a single grapheme overflow the
+        // wrap width.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcd     efghi").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for (i, vl) in lines.iter().enumerate() {
+                assert_ne!(
+                    vl.byte_start, vl.byte_end,
+                    "row {i} is a phantom zero-length run: {vl:?}"
+                );
+                assert!(
+                    vl.cell_width <= 4,
+                    "row {i} cell_width {} exceeds wrap width 4",
+                    vl.cell_width
+                );
+            }
+            // 3 rows: "abcd", "efgh" (char-broken from "efghi"), "i".
+            assert_eq!(lines.len(), 3);
+        });
+    }
+
+    #[test]
+    fn cache_invalidates_on_wrap_change_only() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcdefghij").unwrap();
+            let view = create(ctx, buf).unwrap();
+            (buf, view)
+        });
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let key1 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            let buf_epoch = ctx.text_buffers.get(&buf).unwrap().epoch();
+
+            set_wrap(ctx, view, 5, WrapMode::Char as u8, 4).unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let key2 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            let buf_epoch2 = ctx.text_buffers.get(&buf).unwrap().epoch();
+
+            assert!(key2 > key1, "wrap change must bump cache key epoch");
+            assert_eq!(
+                buf_epoch, buf_epoch2,
+                "buffer epoch must NOT change on view-only param change"
+            );
+        });
+    }
+
+    #[test]
+    fn cache_stable_across_no_op_calls() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abc").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 80, WrapMode::Char as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let k1 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            ensure_projection(ctx, view).unwrap();
+            let k2 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            assert_eq!(k1, k2);
+        });
+    }
+
+    #[test]
+    fn get_cache_epoch_refreshes_projection_before_returning() {
+        // Regression for wave-9 P2: get_cache_epoch must reflect the
+        // current projection state. Before the fix, it returned the
+        // stored cache_key_epoch without running ensure_projection, so
+        // host code polling for cache invalidation could miss a changed
+        // view until some other call happened to project.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "hello world").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 5, WrapMode::Char as u8, 4).unwrap();
+            v
+        });
+        let baseline = with_ctx(|ctx| get_cache_epoch(ctx, view).unwrap());
+        // Change wrap_width: this dirties the cache key but does not
+        // itself project. A naive getter would still report `baseline`.
+        with_ctx(|ctx| {
+            set_wrap(ctx, view, 4, WrapMode::Char as u8, 4).unwrap();
+        });
+        let after = with_ctx(|ctx| get_cache_epoch(ctx, view).unwrap());
+        assert!(
+            after > baseline,
+            "get_cache_epoch must observe the post-set_wrap epoch ({after}) > {baseline}"
+        );
+    }
+
+    #[test]
+    fn byte_to_visual_round_trip_ascii() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "ab\ncde").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 0, WrapMode::None as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            assert_eq!(byte_to_visual(ctx, view, 0).unwrap(), (0, 0));
+            assert_eq!(byte_to_visual(ctx, view, 1).unwrap(), (0, 1));
+            assert_eq!(byte_to_visual(ctx, view, 2).unwrap(), (0, 2));
+            // After newline, visual row advances and column resets
+            assert_eq!(byte_to_visual(ctx, view, 3).unwrap(), (1, 0));
+            assert_eq!(byte_to_visual(ctx, view, 6).unwrap(), (1, 3));
+            assert_eq!(visual_to_byte(ctx, view, 1, 2).unwrap(), 5);
+        });
+    }
+
+    #[test]
+    fn byte_to_visual_rejects_offset_inside_grapheme_cluster() {
+        // byte_to_visual must reject non-grapheme offsets so it stays
+        // round-trippable with visual_to_byte (which snaps to grapheme
+        // starts) and consistent with set_cursor.
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // 'a' + 'e' + combining acute U+0301 (2 bytes) + 'b'.
+            // Bytes [1..4) is one grapheme cluster; offset 2 is a UTF-8
+            // boundary but NOT a grapheme boundary.
+            text_buffer::append(ctx, buf, "ae\u{0301}b").unwrap();
+            create(ctx, buf).unwrap()
+        });
+        with_ctx(|ctx| {
+            // Boundaries 0, 1, 4, 5 round-trip cleanly.
+            let (r, c) = byte_to_visual(ctx, view, 1).unwrap();
+            assert_eq!(visual_to_byte(ctx, view, r, c).unwrap(), 1);
+            let (r, c) = byte_to_visual(ctx, view, 4).unwrap();
+            assert_eq!(visual_to_byte(ctx, view, r, c).unwrap(), 4);
+            // Interior offset 2 must be rejected.
+            let err = byte_to_visual(ctx, view, 2).unwrap_err();
+            assert!(
+                err.contains("grapheme boundary"),
+                "expected grapheme-boundary error, got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn consumed_whitespace_gap_offset_is_rejected_or_snapped() {
+        // Regression for wave-6 P2: in word-wrap, inter-word whitespace
+        // consumed at a row break sits in a gap between row N's byte_end
+        // and row N+1's byte_start. Bytes in the gap are real grapheme
+        // boundaries but no visual_line covers them, so the renderer
+        // would silently drop a cursor placed there.
+        // Contract: explicit set_cursor / byte_to_visual reject; cursor
+        // reconciliation in ensure_projection snaps forward to the next
+        // visible offset.
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abcd     ef").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 4, WrapMode::Word as u8, 4).unwrap();
+            (buf, v)
+        });
+        with_ctx(|ctx| {
+            // visual_lines is [(0, 4) "abcd", (9, 11) "ef"]; bytes 5..9
+            // are the consumed inter-word whitespace gap.
+            ensure_projection(ctx, view).unwrap();
+
+            // byte_to_visual rejects gap offsets instead of misrouting
+            // them to the end of the last row.
+            let err = byte_to_visual(ctx, view, 5).unwrap_err();
+            assert!(
+                err.contains("not addressable"),
+                "byte_to_visual must reject gap offsets, got: {err}"
+            );
+
+            // set_cursor rejects gap offsets symmetrically.
+            let err = set_cursor(ctx, view, 5).unwrap_err();
+            assert!(
+                err.contains("not addressable"),
+                "set_cursor must reject gap offsets, got: {err}"
+            );
+
+            // Reconciliation snaps forward when a buffer mutation lands
+            // a previously valid cursor in a gap. Force the path by
+            // setting the cursor at byte 4 (visible end of row 0), then
+            // mutating in a way that leaves the cursor's CLAMPED-AND-
+            // SNAPPED position inside the gap. Easiest: set cursor at
+            // a byte that becomes a gap byte after re-projection.
+            //
+            // In this fixture, byte 4 is row 0's byte_end (visible). To
+            // cover the snap-forward path directly, manually plant an
+            // in-gap offset on the view (bypassing set_cursor's check)
+            // and then call ensure_projection by bumping a wrap param.
+            ctx.text_views.get_mut(&view).unwrap().cursor = Some(CursorPos { byte_offset: 5 });
+            // Bump the cache key so ensure_projection re-runs.
+            text_buffer::append(ctx, buf, " ").unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let c = ctx.text_views.get(&view).unwrap().cursor.unwrap();
+            // The next row whose byte_start > 5 is row 1 (byte_start=9).
+            // After the additional " " append, the buffer is "abcd     ef "
+            // (12 bytes); the wrap shape may shift but the gap-byte 5
+            // must have snapped forward to a visible offset.
+            assert_ne!(
+                c.byte_offset, 5,
+                "reconciliation must move a gap-byte cursor forward, got {}",
+                c.byte_offset
+            );
+        });
+    }
+
+    #[test]
+    fn cursor_clamped_after_buffer_truncation() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "hello world").unwrap();
+            let v = create(ctx, buf).unwrap();
+            (buf, v)
+        });
+        with_ctx(|ctx| {
+            set_cursor(ctx, view, 11).unwrap();
+            text_buffer::replace_range(ctx, buf, 0, 11, "hi").unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let c = ctx.text_views.get(&view).unwrap().cursor.unwrap();
+            assert!(c.byte_offset <= 2);
+        });
+    }
+
+    #[test]
+    fn wide_glyph_wrap_does_not_split_grapheme() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // Each CJK glyph is width 2; with wrap_width=3, "漢字漢" should
+            // produce visual rows that don't split a grapheme across rows.
+            text_buffer::append(ctx, buf, "漢字漢").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 3, WrapMode::Char as u8, 4).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let lines = ctx.text_views.get(&view).unwrap().visual_lines.clone();
+            for vl in &lines {
+                assert!(vl.cell_width <= 3 || vl.cell_width == 2);
+                let buf_h = ctx.text_views.get(&view).unwrap().buffer;
+                let buf = ctx.text_buffers.get(&buf_h).unwrap();
+                let segment = &buf.content()[vl.byte_start..vl.byte_end];
+                let g_count = UnicodeSegmentation::graphemes(segment, true).count();
+                assert!(g_count <= 2);
+            }
+        });
+    }
+
+    #[test]
+    fn set_cursor_rejects_offset_inside_grapheme_cluster() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            // 'a' (1 byte) + 'e' + combining acute U+0301 (2 bytes for the
+            // combining mark) + 'b'. Bytes [1..4) is one grapheme cluster.
+            // Offset 2 is a UTF-8 boundary but NOT a grapheme boundary.
+            text_buffer::append(ctx, buf, "ae\u{0301}b").unwrap();
+            create(ctx, buf).unwrap()
+        });
+        with_ctx(|ctx| {
+            // Boundaries at 0, 1, 4, 5 should accept.
+            assert!(set_cursor(ctx, view, 0).is_ok());
+            assert!(set_cursor(ctx, view, 1).is_ok());
+            assert!(set_cursor(ctx, view, 4).is_ok());
+            assert!(set_cursor(ctx, view, 5).is_ok());
+            // Byte 2 sits inside the e+combining grapheme cluster.
+            let err = set_cursor(ctx, view, 2).unwrap_err();
+            assert!(
+                err.contains("grapheme boundary"),
+                "expected grapheme-boundary error, got: {err}"
+            );
+        });
+    }
+
+    #[test]
+    fn cursor_reconciled_to_grapheme_boundary_after_width_changing_edit() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "ab").unwrap();
+            let v = create(ctx, buf).unwrap();
+            (buf, v)
+        });
+        with_ctx(|ctx| {
+            // Cursor at 1 is a valid grapheme boundary in "ab".
+            set_cursor(ctx, view, 1).unwrap();
+            // Replace 'a' (1 byte) with 'é' (2 bytes). New content "éb".
+            // Old cursor offset 1 now sits inside the multi-byte 'é'.
+            text_buffer::replace_range(ctx, buf, 0, 1, "é").unwrap();
+            ensure_projection(ctx, view).unwrap();
+            let c = ctx.text_views.get(&view).unwrap().cursor.unwrap();
+            // Snapped backward to the nearest grapheme start (start of 'é').
+            assert_eq!(c.byte_offset, 0);
+            // Round-trip: byte_to_visual must accept the reconciled offset.
+            let (row, col) = byte_to_visual(ctx, view, c.byte_offset).unwrap();
+            assert_eq!((row, col), (0, 0));
+        });
+    }
+
+    #[test]
+    fn destroy_buffer_blocked_while_view_alive() {
+        let _g = fresh_ctx();
+        let (buf, view) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            let v = create(ctx, buf).unwrap();
+            (buf, v)
+        });
+        with_ctx(|ctx| {
+            assert!(text_buffer::destroy(ctx, buf).is_err());
+            destroy(ctx, view).unwrap();
+            assert!(text_buffer::destroy(ctx, buf).is_ok());
+        });
+    }
+}

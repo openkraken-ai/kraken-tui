@@ -1,25 +1,36 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.3.11 - Reflects review-wave 11 against PR #35. Substrate getters now return an explicit error instead of silently truncating when `usize` exceeds `u32::MAX`. Spike memo's dirty-range section documents that recorded extents are post-replacement only; CORE-N3 acceptance now requires a deliberate decision on whether to extend `DirtyRange` for incremental repaint or keep the cache-invalidation-only contract. `ts/test-ffi.test.ts` style/highlight/selection round-trip closes the remaining gap in the substrate FFI surface coverage.
+- v7.3.10 - Reflects review-wave 10 against PR #35. ADR-T37 decision text updated to match shipped flat-`String` backing (rope/chunked deferred). Spike memo ABI ownership row reconciled with the borrowed-`&str` payload contract. `ts/test-ffi.test.ts` now exercises every wave-8 substrate FFI entry point end-to-end through `bun:ffi` so the host ABI signatures are mechanically validated, not just smoke-tested via symbol import.
+- v7.3.9 - Reflects review-wave 9 against PR #35. `tui_text_view_get_cache_epoch` no longer returns a stale value: it projects before reading, so host code polling the epoch for view invalidation reliably observes changes from `set_wrap` / `set_viewport` / buffer mutation. Spike memo aligned with shipped one-boundary-copy payload contract.
+- v7.3.8 - Reflects review-wave 8 against PR #35. Wired the substrate ABI into the Bun FFI symbol table — without this, the native `tui_text_buffer_*` / `tui_text_view_*` exports landed in Epic M but were inaccessible from TypeScript (`ffi.tui_text_buffer_create` was `undefined`). Also reconciled the §4.4 status-returning error-model list to include `tui_text_buffer_clear_dirty_ranges` so the contract is internally consistent for the wave-5 drain API.
+- v7.3.7 - Reflects review-wave 7 against PR #35. Two renderer correctness fixes: (1) wave-5's wrap-boundary cursor suppression now also checks that the next visual row is within the rendered window — without this, a cursor at a wrap boundary disappeared when the next row was clipped by the viewport; (2) tabs no longer route through the wide-glyph `glyph_clipped` path, so clipped tab cells inside the rect get filled by the trailing-fill loop with the merged style instead of being left unstyled.
+- v7.3.6 - Reflects review-wave 6 against PR #35. Two substrate correctness fixes plus three hot-path optimizations: (1) `wrap_segment` recomputes tab advance after wrap reset (column-dependent advance was stale, allowing multi-grapheme rows to overflow `wrap_width`); (2) cursor mapping now agrees across `set_cursor`, `byte_to_visual`, and `ensure_projection` reconciliation for offsets that fall in word-wrap consumed-whitespace gaps (set_cursor/byte_to_visual reject; reconciliation snaps forward); (3) `render_text_view` reads projection by reference instead of cloning `visual_lines`/`style_spans`/`highlights` per call; (4) `clear_last_error` peeks under a read lock first, skipping the write-lock acquisition when last_error is already empty (the common case after wave-3 made every successful FFI call clear); (5) `read_utf8_payload` returns `&str` instead of `String`, so substrate streaming-append paths copy each payload once into buffer storage rather than twice. Spike memo `CORE-M0-substrate-contract.md` updated to record the wave-5 dirty-range consume API.
+- v7.3.5 - Reflects review-wave 5 against PR #35. Three substrate correctness fixes: (1) `wrap_segment` no longer emits visual lines whose `cell_width` exceeds `wrap_width` when the wrap break-point lands earlier in the segment than the for-loop's current grapheme — `run_col` is now recomputed against the iterated prefix after each wrap reset; (2) the renderer no longer double-draws the cursor at a soft-wrap boundary (end-of-row N marker is suppressed when row N+1 starts at the same byte); (3) left-clipped wide glyphs and tabs now paint their visible trailing cells, mirroring the right-edge clip path. New ABI: `tui_text_buffer_clear_dirty_ranges` lets consumers drain the dirty list so it doesn't grow unbounded; CORE-N3 picks up the wiring requirement. CORE-N1/N2/N3 acceptance criteria now require explicit substrate-routing assertions per migrated surface (G3/G4 behavioral coverage) and CORE-N1 picks up theme integration for highlight backgrounds. CORE-N5 benchmark scope expanded to include cursor-mapping cost as a function of prefix length so the wave-4 line-bounded scan question is measured before transcript-tail interactions ship.
+- v7.3.4 - Reflects review-wave 4 against PR #35. Word-wrap no longer emits phantom zero-length visual rows when consumed inter-word whitespace precedes a long unbreakable token (the `last_ws` tracker is now scoped to the active run and the wrap branch refuses zero-length pushes). `is_grapheme_boundary` is now O(grapheme-position) instead of O(content) on no-match, removing a hidden quadratic in transcript-streaming workloads. Cursor `UNDERLINE` is restricted to the primary cell so wide-glyph and tab cursors don't smear the underline across trailing cells. `is_ws_grapheme`'s ASCII-only word-break set is documented. CORE-N3 is gated on a CORE-N5 append-cost benchmark before rebase ships, so the substrate's flat-`String` recompute-on-every-mutation cost cannot regress the transcript streaming path silently.
+- v7.3.3 - Reflects review-wave 3 against PR #35. The substrate FFI now clears `last_error` on every successful call (via `ffi_wrap` / `ffi_wrap_handle` / `ffi_wrap_u64`), so the zero-sentinel getter contract is reliable in practice; added a Rust regression test for the stale-error-after-success path. `byte_to_visual` rejects non-grapheme offsets (matching `set_cursor` / `visual_to_byte`), making the byte<->visual mapping round-trippable for every accepted input. The unified renderer now fills every cell a tab grapheme advances through with the merged cell style, so selection / highlight / background coverage no longer leaves uncolored holes inside tab-expanded text. The `substrate_gates.rs` lede now matches the §5.4.1 reality (G3/G5/G6/G7/G8 enforced by named tests; G1/G4 source-review; G2 deferred to CORE-N2).
+- v7.3.2 - Reflects review-wave 2 against PR #35. Documented the reality that substrate value-returning getters (`tui_text_buffer_get_*`, `tui_text_view_get_*`) cannot use the `0/-1/-2` status model and instead return `0` on error with the diagnostic surfaced through `tui_get_last_error()`; corrected stale §5.1 / "Appendix E" navigation references in the archived Epic M summary; updated `CORE-M2` notes to match shipped reality (10 `tui_text_view_*` FFI exports, expanded text_view test suite). Cursor reconciliation in `TextView` now snaps to a grapheme boundary, not just `byte_len`, so width-changing edits cannot strand the cursor inside a cluster.
+- v7.3.1 - Reconciled `CORE-M4` description and acceptance with what the Epic-M gate suite actually enforces: G3/G5/G6/G7/G8 are covered by named native tests, G1/G4 are tracked as source-review gates, and G2 (TextArea undo without full snapshots) is deferred to `CORE-N2` along with `EditBuffer`. Reflects review-wave 1 against PR #35.
+- v7.3.0 - Archived Epic M (Native Text Substrate) as completed: `CORE-M0` through `CORE-M4` shipped the contract memo, `TextBuffer`, `TextView`, the unified text renderer, and the §5.4.1 Unicode/wrapping gate suite. Active wave narrows to Epic N (Substrate Surface Rebase).
 - v7.2.0 - Ratified Epic M (Native Text Substrate) and Epic N (Substrate Surface Rebase) as the active wave; documented Epic O (Terminal Capability Hardening) as deferred future scope; preserved the v6 and v7 archived appendices.
 - v7.1.0 - Archived the completed docs-normalization wave and marked the active plan as intentionally idle until a post-v4 backlog is ratified.
 - v7.0.0 - Reframed the plan around active versus archived scope, made documentation-chain normalization the current maintenance wave, and preserved the completed v4 execution record as archived continuity.
 - ... [Older history truncated, refer to git logs]
 
 ## 1. Executive Summary & Active Critical Path
-- **Total Active Story Points:** 57
-- **Critical Path:** `CORE-M0 -> CORE-M1 -> CORE-M2 -> CORE-M3 -> CORE-M4 -> CORE-N1 -> CORE-N3 -> CORE-N5`
-- **Planning Assumptions:** The Native Text/Cell/View Substrate (TechSpec ADR-T37, ADR-T38, ADR-T39) is the next product-defining bottleneck. Existing transcript host-facing semantics (anchors, follow modes, unread, collapse, hierarchy) remain unchanged at the public contract level; only their backing storage migrates. Epic O (Terminal Capability Hardening) is intentionally out of active scope per ADR-T40 and is preserved in §2.2 with named candidate surfaces.
+- **Total Active Story Points:** 29
+- **Critical Path:** `CORE-N1 -> CORE-N3 -> CORE-N5`
+- **Planning Assumptions:** The Native Text Substrate foundation (TechSpec ADR-T37, §3.4, §4.4) shipped with Epic M; `TextBuffer`, `TextView`, and the unified text renderer are now Brownfield reality. Active scope narrows to Epic N — migrating existing surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) onto the substrate and adding `EditBuffer`-backed undo for `TextArea` (ADR-T38). Existing transcript host-facing semantics (anchors, follow modes, unread, collapse, hierarchy) remain unchanged at the public contract level; only their backing storage migrates. Epic O (Terminal Capability Hardening) is intentionally out of active scope per ADR-T40 and is preserved in §2.2 with named candidate surfaces.
 
 ## 2. Project Phasing & Iteration Strategy
 ### Current Active Scope
-- **Epic M — Native Text Substrate (CORE):** Build the native `TextBuffer`, `TextView`, and unified text renderer plus a Unicode/wrapping native test gate. Foundation for every substantial-text surface.
 - **Epic N — Substrate Surface Rebase (CORE):** Migrate `Text` / `Markdown` / code spans, `TextArea` (operation-based undo on `EditBuffer`), and transcript blocks onto the substrate. Re-evaluate `CodeView` / `DiffView` posture on the new substrate. Add replay and golden coverage for substrate-driven surfaces.
 
 ### Future / Deferred Scope
 #### Epic O — Terminal Capability Hardening (CORE) [DEFERRED]
 - **Status:** Documented and deferred per TechSpec ADR-T40.
-- **Begins after:** Epic M and Epic N are complete and the substrate has shipped.
+- **Begins after:** Epic N completes and the rebased substrate surfaces have shipped.
 - **Candidate surfaces:**
   - Kitty keyboard protocol support.
   - OSC52 clipboard integration.
@@ -27,7 +38,7 @@
   - Palette and color-depth capability detection at runtime.
   - Pixel and cell resolution reporting where the terminal exposes it.
   - Multiplexer variance hardening (tmux, screen) and main / alternate / split mode behavior parity.
-- **Rationale for deferral:** The current bottleneck is the content substrate beneath the widgets. Hardening terminal capabilities while the substrate is being shaped would multiply migration risk and dilute focus. After Epic M and N ship, capability work can run on a stable foundation.
+- **Rationale for deferral:** The bottleneck while Epic N is in flight is rebasing existing surfaces onto the new substrate. Hardening terminal capabilities while widgets are migrating would multiply migration risk and dilute focus. After Epic N ships, capability work can run on a stable foundation.
 
 #### Standing Deferrals Preserved
 - No native promotion of code or diff surfaces without measured post-substrate pressure (revisited in CORE-N4).
@@ -36,21 +47,19 @@
 - No React or Solid parity work; the JSX/signals layer stays a thin overlay over the imperative protocol.
 
 ### Archived or Already Completed Scope
+- Epic M (Native Text Substrate) delivered `CORE-M0` through `CORE-M4`: the substrate contract memo, native `TextBuffer`, native `TextView`, the unified text renderer, and the §5.4.1 Unicode/wrapping native gate suite. Detailed tickets are preserved in §4 under "Archived Epic M — Native Text Substrate (CORE) [Completed]".
 - The v7 docs-maintenance wave completed `DOCS-A001` through `DOCS-A003`: canonical artifact normalization, preservation review, and source-truth reconciliation.
 - Epics I-L delivered native transcript state, anchor-based viewport behavior, nested scroll handoff, devtools APIs, host inspector surfaces, split-pane layout, transcript-backed composites, and flagship examples.
-- The archived planning wave also delivered replay fixtures, golden coverage, and example-driven performance gates.
-- Detailed archived tickets, acceptance criteria, and the archived build-order graph are preserved below for continuity and auditability.
+- The archived planning waves also delivered replay fixtures, golden coverage, and example-driven performance gates.
+- Detailed archived tickets, acceptance criteria, and archived build-order graphs are preserved below for continuity and auditability.
 
 ## 3. Build Order (Mermaid)
 ```mermaid
 flowchart LR
-    M0[CORE-M0 substrate spike] --> M1[CORE-M1 TextBuffer]
-    M1 --> M2[CORE-M2 TextView]
-    M2 --> M3[CORE-M3 unified renderer]
-    M3 --> M4[CORE-M4 Unicode and wrapping test gate]
-    M4 --> N1[CORE-N1 Text/Markdown/Code rebase]
-    M4 --> N2[CORE-N2 TextArea rebase]
-    M4 --> N3[CORE-N3 Transcript rebase]
+    M[Epic M Substrate Foundation - SHIPPED]:::done
+    M --> N1[CORE-N1 Text/Markdown/Code rebase]
+    M --> N2[CORE-N2 TextArea rebase]
+    M --> N3[CORE-N3 Transcript rebase]
     N1 --> N4[CORE-N4 CodeView/DiffView posture decision]
     N3 --> N4
     N1 --> N5[CORE-N5 substrate replay and golden coverage]
@@ -58,20 +67,25 @@ flowchart LR
     N3 --> N5
     O[Epic O Terminal Capability Hardening - DEFERRED]
     N5 -.-> O
+    classDef done fill:#dff5dd,stroke:#3f9d3f,color:#1f4d1f;
 ```
 
 ## 4. Ticket List
 
-Epic O — Terminal Capability Hardening is intentionally not in this active ticket list. It is documented in §2.2 with named candidate surfaces and is re-evaluated only after Epic M and Epic N ship.
+Epic O — Terminal Capability Hardening is intentionally not in this active ticket list. It is documented in §2.2 with named candidate surfaces and is re-evaluated only after Epic N ships.
 
-### Epic M — Native Text Substrate (CORE)
+Epic M — Native Text Substrate shipped under v7.3 and is now archived. `CORE-M0` through `CORE-M4` are preserved with their original acceptance criteria below for continuity.
+
+### Archived Epic M — Native Text Substrate (CORE) [Completed]
 
 **CORE-M0 Spike Native Text Substrate Contract**
 - **Type:** Spike
 - **Effort:** 2
+- **Status:** Done
 - **Dependencies:** None
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §3.4, §4.4
 - **Description:** Time-box the substrate contract before implementation begins. Lock the `TextBuffer` mutation API, content-epoch model, dirty-range semantics, `TextView` cache-key shape, `EditBuffer` operation list, and the ABI ownership and copy semantics for each surface. Emit a contract memo that downstream tickets reference.
+- **Implementation Notes:** Contract memo committed at `docs/spikes/CORE-M0-substrate-contract.md`. Locks `TextBuffer` mutation API and epoch rules; `TextView` cache key as `(content_epoch, wrap_width, wrap_mode, tab_width, style_fingerprint, viewport_rows)`; `WrapMode` discriminator (`None=0`, `Char=1`, `Word=2`); `EditBuffer` operation list (`Insert`, `Delete`, `Replace`, `SelectionMove`, `CursorMove`) with coalescing rules; ABI ownership and copy semantics per surface; seven open questions resolved (storage backing, tab policy, grapheme strategy, selection model, highlight kind, cache invalidation granularity, empty-buffer behavior).
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the active CORE wave is ratified
@@ -84,9 +98,11 @@ And open structural questions that block CORE-M1 are listed explicitly or marked
 **CORE-M1 Implement Native TextBuffer**
 - **Type:** Feature
 - **Effort:** 8
+- **Status:** Done
 - **Dependencies:** CORE-M0
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §3.4, §4.4 `text_buffer`
 - **Description:** Implement chunked or rope-style content storage with content epochs, line-start markers, dirty ranges, cached width metrics, grapheme boundaries, tab expansion policy, style spans, selection ranges, and highlights. Expose the documented `tui_text_buffer_*` ABI surface in `lib.rs` through `ffi_wrap` / `ffi_wrap_handle` entry points.
+- **Implementation Notes:** New module `native/src/text_buffer.rs` with `TextBuffer` (flat `String` backing per the M0 memo, content `epoch`, `style_fingerprint`, `line_starts`, cached `line_widths`, style spans, single active selection, highlights, dirty ranges, configurable `tab_width`). Mutation routes through `replace_range` / `append`; style/selection/highlight mutations bump `style_fingerprint` only. 13 `tui_text_buffer_*` FFI entry points wired in `lib.rs` via `ffi_wrap` / `ffi_wrap_handle` / new `ffi_wrap_u64` for the `u64` epoch getter. Substrate handle counter (`next_substrate_handle`) added to `TuiContext` and shared with `TextView` to prevent cross-map handle collisions. 12 unit tests cover empty-buffer invariants, monotonic epoch growth, no-op append behavior, dirty-range recording, line-metadata consistency, UTF-8 boundary rejection, out-of-range rejection, fingerprint vs epoch separation, range reconciliation, selection drop on full replace, view-referenced destroy guard, and CJK / tab cell width.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a freshly created TextBuffer
@@ -104,9 +120,11 @@ And invalid handles or out-of-range byte offsets return the documented error sem
 **CORE-M2 Implement Native TextView Projection**
 - **Type:** Feature
 - **Effort:** 8
+- **Status:** Done
 - **Dependencies:** CORE-M1
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §3.4, §4.4 `text_view`
 - **Description:** Implement the viewport / wrap projection over `TextBuffer`. Visual lines, soft-wrap cache keyed by `(content_epoch, wrap_width, wrap_mode, tab_width, style_fingerprint, viewport_rows)`, scroll row and column, cursor mapping, byte-grapheme-cell-visual-row conversions, horizontal scroll, resize invalidation, and stable anchors.
+- **Implementation Notes:** New module `native/src/text_view.rs` with `TextView` projection holding `wrap_width`, `wrap_mode`, `tab_width`, `viewport_rows`, scroll row/col, optional `CursorPos`, `Vec<VisualLine>` cache, and `cache_key_epoch`. `WrapMode::None` short-circuits to one visual row per logical line; `WrapMode::Char` breaks at any cell boundary; `WrapMode::Word` prefers whitespace breaks with char-mode fallback. `ensure_projection` lazily recomputes when the composite cache key changes; cursor anchors are clamped against the buffer's current `byte_len` and snapped backward to the nearest grapheme start so a width-changing edit can't strand the cursor inside a code point or cluster (refined in PR #35 review wave 2). 10 `tui_text_view_*` FFI entry points cover create/destroy, `set_wrap`, `set_viewport`, `set_cursor` / `clear_cursor`, `get_visual_line_count`, `byte_to_visual` / `visual_to_byte` with caller-owned out-pointers, and `get_cache_epoch`. The text_view test suite asserts unwrapped logical-line projection, char-mode wrap byte boundaries, word-wrap respects width, cache key invalidates on wrap change without disturbing buffer epoch, byte/visual round-trip across newlines, cursor clamping after buffer truncation, rejection of cursor offsets inside grapheme clusters (added in wave 1), grapheme-boundary cursor reconciliation after width-changing edits (added in wave 2), wide glyphs never split across grapheme boundaries, and TextBuffer destroy is blocked while a TextView still references it.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a TextView over a stable TextBuffer
@@ -127,9 +145,11 @@ Then visual lines are re-wrapped without invalidating buffer storage
 **CORE-M3 Implement Unified Native Text Renderer**
 - **Type:** Feature
 - **Effort:** 5
+- **Status:** Done
 - **Dependencies:** CORE-M2
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §5.4.1
 - **Description:** Implement the single text-rendering path that draws a `TextView` into Kraken's existing cell buffer. One implementation handles clipping, wide chars, combining marks, ZWJ and emoji, CJK width, tab expansion, selections, highlights, cursor rendering, and style merging. Add golden coverage for the renderer.
+- **Implementation Notes:** New module `native/src/text_renderer.rs` exposes `render_text_view(ctx, view_handle, target, rect, base_style)` as the single rendering path. Walks visual lines starting at `scroll_row`, advances grapheme-by-grapheme with tab expansion against `tab_width`, applies the unified style merge order (base → buffer style spans → highlights → selection inversion → cursor underline), replaces wide glyphs that would spill past the right clip boundary with a single space (no split), and treats zero-width / combining graphemes as no-advance (the prior cell's `ch` remains in place). `golden::assert_golden_buffer` added to support standalone-buffer golden assertions outside `ctx.back_buffer`. 9 tests cover plain ASCII, wide-glyph clip-boundary placeholder, combining mark attachment, selection inversion, cursor marker placement, char-mode wrap rendering, highlight bg override, tab expansion against `tab_width`, and a multi-line Unicode-mixed golden fixture (`native/fixtures/text_renderer_unicode_mixed.golden`). The module sits idle in production until Epic N wires it into the existing widget render paths; `#![allow(dead_code)]` documents that.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a TextView containing mixed-width Unicode content
@@ -147,15 +167,18 @@ And no widget-local code computes wrapped row counts
 **CORE-M4 Add Unicode and Wrapping Native Test Gate**
 - **Type:** Chore
 - **Effort:** 5
+- **Status:** Done
 - **Dependencies:** CORE-M3
 - **Capability / Contract Mapping:** TechSpec §5.4.1
-- **Description:** Add a native test suite under `cargo test` covering grapheme segmentation, `wcwidth` behavior, soft-wrapping, tab expansion, resize-driven wrap invalidation, cursor mapping, selection across grapheme boundaries, ZWJ emoji, CJK width, zero-width codepoints, and wide-glyph clipping. Each gate listed in TechSpec §5.4.1 must be enforced by at least one named native test.
+- **Description:** Add a native test suite under `cargo test` covering grapheme segmentation, `wcwidth` behavior, soft-wrapping, tab expansion, resize-driven wrap invalidation, cursor mapping, selection across grapheme boundaries, ZWJ emoji, CJK width, zero-width codepoints, and wide-glyph clipping. Cover the structural gates in TechSpec §5.4.1 that are enforceable from Epic M's deliverables: G3 / G5 / G6 / G7 / G8. G1 (no transcript clone-into-`String`) and G4 (no widget bypasses the unified renderer) remain source-review gates whose behavioral coverage is owned by the per-widget golden tests added during Epic N migrations. G2 (no full-content snapshot per single-edit op) is deferred until `EditBuffer` lands in `CORE-N2`.
+- **Implementation Notes:** New `#[cfg(test)]` module `native/src/substrate_gates.rs` enforces the Epic-M-shipping gates with transparently named tests. G5 (cross-buffer epoch isolation), G6 (resize invalidates view only, not buffer storage), G7 (ZWJ family emoji segmentation, CJK width, soft-wrap byte boundaries, tab expansion against `tab_width`, resize-driven wrap invalidation, byte/visual round-trip, selection across grapheme boundary, zero-width codepoint handling, wide-glyph clip-boundary replacement), G3 (source-grep gate that no module outside the substrate defines a `compute_visual_lines` helper — name-based proxy; behavioral coverage lives in widget golden tests under Epic N), and G8 (substrate modules present and correctness tested in Rust). G1 and G4 stay as source-review gates here; G2 is intentionally deferred to `CORE-N2` along with `EditBuffer` and is documented as such in the module preamble. Suite runs as 13 named tests; full `cargo test` passes with `cargo fmt --check` and `cargo clippy -- -D warnings` clean.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate test suite
 When cargo test runs in the native crate
 Then grapheme, wcwidth, wrap, tab, resize, cursor, and selection edge cases are covered by named tests
-And each structural gate listed in TechSpec section 5.4.1 is enforced by at least one native test
+And each TechSpec §5.4.1 gate that depends only on Epic M deliverables (G3, G5, G6, G7, G8) is enforced by at least one named native test
+And gates that depend on later substrate components or per-widget migrations (G1, G2, G4) are documented as source-review or deferred-test gates with the responsible epic identified
 And the suite fails when any documented Unicode behavior regresses
 ```
 
@@ -164,27 +187,32 @@ And the suite fails when any documented Unicode behavior regresses
 **CORE-N1 Rebase Text, Markdown, and Code Spans Onto Substrate**
 - **Type:** Feature
 - **Effort:** 5
-- **Dependencies:** CORE-M4
+- **Dependencies:** Substrate foundation (Epic M, shipped)
 - **Capability / Contract Mapping:** TechSpec ADR-T37, §5.4.1
-- **Description:** Migrate `Text`, `Markdown`, and code-style span rendering paths onto `TextBuffer` content and `TextView` projections drawn through the unified renderer. Remove ad-hoc width and wrap math from the migrated widgets. Public host API for these widgets remains unchanged.
+- **Description:** Migrate `Text`, `Markdown`, and code-style span rendering paths onto `TextBuffer` content and `TextView` projections drawn through the unified renderer. Remove ad-hoc width and wrap math from the migrated widgets. Public host API for these widgets remains unchanged. Each migrated surface adds a substrate-routing assertion (e.g. inspecting that the widget's render path calls `text_renderer::render_text_view` rather than recomputing geometry) so the §5.4.1 G3/G4 gates have behavioral coverage and not just visual goldens. Search-match highlight colors emitted via `tui_text_buffer_set_highlight` route through the active theme rather than the hard-coded `highlight_kind_bg` palette in the renderer; this avoids a follow-on visual regression once Markdown and code-search surfaces start using highlights.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a Text or Markdown widget
 When its content is set or replaced through the existing host API
 Then the widget stores its content in a TextBuffer and its projection in a TextView
 And no widget-local code computes wrapped row counts
+And the widget's render path is asserted (by test, not by review) to call text_renderer::render_text_view
 
 Given existing widget golden snapshots
 When the migrated widgets render the same content
 Then snapshots match the documented baseline
+
+Given a search-match or syntax highlight applied via tui_text_buffer_set_highlight
+When the surface renders under a non-default theme
+Then the highlight background routes through theme bindings rather than the renderer's v1 hard-coded palette
 ```
 
 **CORE-N2 Rebase TextArea Onto EditBuffer and TextView**
 - **Type:** Feature
 - **Effort:** 8
-- **Dependencies:** CORE-M4
+- **Dependencies:** Substrate foundation (Epic M, shipped)
 - **Capability / Contract Mapping:** TechSpec ADR-T38, §3.4, §4.4 `edit_buffer`
-- **Description:** Move `TextArea` state onto an `EditBuffer` wrapping a `TextBuffer` with a `TextView` projection. Replace the existing snapshot-based undo and redo with an operation history plus coalescing rules for ordinary single-edit operations. Preserve the host `TextArea` public API and the existing keyboard behavior.
+- **Description:** Move `TextArea` state onto an `EditBuffer` wrapping a `TextBuffer` with a `TextView` projection. Replace the existing snapshot-based undo and redo with an operation history plus coalescing rules for ordinary single-edit operations. Preserve the host `TextArea` public API and the existing keyboard behavior. Adds a substrate-routing assertion that `TextArea::render` reaches `text_renderer::render_text_view` (G3/G4 behavioral coverage) so a future regression that reintroduces widget-local wrap math fails in CI rather than slipping past G3's name-based source grep.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a TextArea editing several pages of content
@@ -196,14 +224,20 @@ And undo and redo recover the prior cursor and selection state
 Given the existing TextArea host wrapper and keyboard tests
 When the rebased widget is loaded
 Then the public host API and keyboard behavior remain unchanged from the prior TechSpec contract
+
+Given the rebased TextArea
+When its render path is exercised in tests
+Then a behavioral assertion confirms the widget routes through text_renderer::render_text_view
 ```
 
 **CORE-N3 Rebase Transcript Block Content Onto Substrate**
 - **Type:** Feature
 - **Effort:** 8
-- **Dependencies:** CORE-M4
+- **Dependencies:** Substrate foundation (Epic M, shipped); CORE-N5 append-cost benchmark must exist before this rebase ships (see "Pre-Rebase Performance Gate" below)
 - **Capability / Contract Mapping:** TechSpec ADR-T39, §3.4
-- **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable.
+- **Description:** Replace `TranscriptBlock.content: String` with `TextBuffer`-backed segment storage. Render visible blocks through `TextView` projections via the unified renderer. `append_block`, `patch_block`, and `finish_block` mutate the buffer through the substrate API and bump the corresponding epoch. Transcript-specific state (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) is unchanged. The host `TranscriptView` public API stays stable. The rebase wires `tui_text_buffer_clear_dirty_ranges` into the per-frame render path so `dirty_ranges` does not grow unbounded across the session lifetime, and adds a substrate-routing assertion that the transcript visible-block render reaches `text_renderer::render_text_view`.
+- **Pre-Rebase Performance Gate:** The shipped substrate stores buffer content in a flat `String` and `recompute_line_metadata` rescans the entire content per mutation, so per-token streaming `append` is O(N) and cumulative cost is O(N²) in buffer size. Transcript streaming is the headline workload that this rebase will lean on, so before this rebase merges, the CORE-N5 benchmark gate (see below) must report append cost as a function of buffer size; if the curve is unacceptable, this ticket is blocked on incremental line-metadata invalidation in `text_buffer.rs` (separate ticket if needed) before proceeding.
+- **Open Contract Question — Dirty-Range Scope:** `DirtyRange` records only the post-replacement extent (`[start, start + payload.len())`). For a shrinking edit such as `replace_range(0, 6, "x")` the dirty list reports `[0, 1)` and not the removed `[1, 6)` tail. This is sufficient for cache-invalidation consumers (wrap cache is keyed by `content_epoch` + geometry, so any mutation invalidates the whole projection), but it is NOT sufficient if a consumer wants incremental cell-level repaint. Before this rebase merges, decide explicitly: either keep the cache-invalidation-only contract (matches today's whole-frame redraw) and document it on the consumer site, or propose an ADR-T39 amendment that extends `DirtyRange` with both pre- and post-replacement extents. The decision is logged on the rebase commit so future reviewers see the deliberate choice.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given a streaming transcript with a visible reading position
@@ -215,6 +249,15 @@ Given the canonical transcript replay fixtures (append, patch, collapse, unread,
 When the rebased transcript runs them
 Then anchor, follow, unread, and collapse behavior matches the prior fixture outputs
 And the host TranscriptView public API behaves identically to the pre-rebase contract
+
+Given the CORE-N5 append-cost benchmark
+When CORE-N3 ships
+Then the recorded append-cost-vs-buffer-size curve is documented and within the bound CORE-N5 establishes
+
+Given a long-running transcript session that issues thousands of append / patch operations
+When the per-frame render path runs
+Then tui_text_buffer_clear_dirty_ranges is called once per buffer per frame
+And dirty_ranges memory stays bounded across the session
 ```
 
 **CORE-N4 Re-Evaluate CodeView and DiffView Posture**
@@ -231,12 +274,12 @@ Then a written measurement exists describing whether native promotion is warrant
 And the recommendation is reflected in TechSpec ADR status if it changes the prior posture
 ```
 
-**CORE-N5 Add Substrate Replay and Golden Coverage**
+**CORE-N5 Add Substrate Replay, Golden, and Append-Cost Coverage**
 - **Type:** Chore
 - **Effort:** 5
 - **Dependencies:** CORE-N1, CORE-N2, CORE-N3
 - **Capability / Contract Mapping:** TechSpec §5.4.1, ADR-T36
-- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green.
+- **Description:** Add replay and golden coverage for substrate-driven surfaces: large transcripts, long code blocks, nested scroll, collapse and expand, tail-follow, resize-driven wrap invalidation, and selection and cursor overlays. Existing flagship example replay tests in `ts/test-examples.test.ts` stay green. Add a Criterion benchmark gate in `native/benches/` (or extend an existing one) that measures `tui_text_buffer_append` cost as a function of pre-existing buffer size at 1 KiB, 16 KiB, 256 KiB, and 4 MiB. The benchmark output goes into `docs/reports/` so the curve is reviewable, and CORE-N3's pre-rebase gate consumes it. The same benchmark file also measures `tui_text_view_set_cursor` and `tui_text_view_byte_to_visual` as a function of the offset's distance from byte 0, so the wave-4 grapheme-boundary scan (currently bounded but still O(prefix-length)) is measured before transcript-tail interactions ship. If the curve is unacceptable, the optimization is "scan from the containing line via `line_starts` instead of from byte 0", tracked as a separate ticket.
 - **Acceptance Criteria (Gherkin):**
 ```gherkin
 Given the substrate-driven Text, TextArea, and Transcript surfaces
@@ -244,23 +287,39 @@ When the replay and golden suite runs in CI
 Then large-transcript, long-code, nested-scroll, collapse and expand, tail-follow, resize, and selection and cursor scenarios all pass
 And the existing flagship example replay tests in ts/test-examples.test.ts remain green
 And any regression in the structural gates listed in TechSpec section 5.4.1 fails the suite
+
+Given a Criterion benchmark of tui_text_buffer_append at increasing buffer sizes
+When the benchmark runs locally and in CI
+Then the recorded append-cost-vs-buffer-size curve is published under docs/reports/
+And the curve sets the bound that CORE-N3's pre-rebase gate enforces
+
+Given a Criterion benchmark of tui_text_view_set_cursor and tui_text_view_byte_to_visual at increasing prefix lengths
+When the benchmark runs
+Then the grapheme-boundary scan cost as a function of offset is published under docs/reports/
+And the curve informs whether the line-bounded scan optimization is required before transcript-tail interactions ship
 ```
 
 ## 5. Ticket Summary Table (Active Wave)
 
 | ID | Epic | Type | SP | Dependencies | Phase |
 | --- | --- | --- | --- | --- | --- |
-| CORE-M0 | M | Spike | 2 | None | Active |
-| CORE-M1 | M | Feature | 8 | M0 | Active |
-| CORE-M2 | M | Feature | 8 | M1 | Active |
-| CORE-M3 | M | Feature | 5 | M2 | Active |
-| CORE-M4 | M | Chore | 5 | M3 | Active |
-| CORE-N1 | N | Feature | 5 | M4 | Active |
-| CORE-N2 | N | Feature | 8 | M4 | Active |
-| CORE-N3 | N | Feature | 8 | M4 | Active |
+| CORE-N1 | N | Feature | 5 | Substrate (Epic M, shipped) | Active |
+| CORE-N2 | N | Feature | 8 | Substrate (Epic M, shipped) | Active |
+| CORE-N3 | N | Feature | 8 | Substrate (Epic M, shipped) | Active |
 | CORE-N4 | N | Chore | 3 | N1, N3 | Active |
 | CORE-N5 | N | Chore | 5 | N1, N2, N3 | Active |
-|  |  | **TOTAL** | **57** |  |  |
+|  |  | **TOTAL** | **29** |  |  |
+
+### Archived M-Wave Summary
+
+| ID | Epic | Type | SP | Dependencies | Phase |
+| --- | --- | --- | --- | --- | --- |
+| CORE-M0 | M | Spike | 2 | None | Done |
+| CORE-M1 | M | Feature | 8 | M0 | Done |
+| CORE-M2 | M | Feature | 8 | M1 | Done |
+| CORE-M3 | M | Feature | 5 | M2 | Done |
+| CORE-M4 | M | Chore | 5 | M3 | Done |
+|  |  | **TOTAL** | **28** |  |  |
 
 ## Appendix D: Archived v7 Docs-Maintenance Wave (DOCS) [Completed]
 

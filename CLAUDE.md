@@ -81,6 +81,7 @@ Rust cdylib (single mutable UI authority)
   ├─ Tree, Layout, Style, Theme, Animation
   ├─ Render, Writer, Event, Scroll, Terminal
   ├─ Text + bounded Text Cache
+  ├─ Native Text Substrate: TextBuffer + TextView + unified text renderer (ADR-T37)
   ├─ Transcript state and anchor-aware viewport semantics
   ├─ SplitPane layout and resize semantics
   ├─ Devtools: overlays, snapshots, traces, perf counters

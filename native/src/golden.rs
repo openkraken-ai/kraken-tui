@@ -176,6 +176,24 @@ pub(crate) fn assert_golden(ctx: &TuiContext, fixture_name: &str) -> Result<(), 
     diff_golden(&expected_body, &golden_body)
 }
 
+/// Assert that an arbitrary cell buffer matches a golden fixture.
+/// Used by the unified text renderer tests where the rendered output is a
+/// standalone `Buffer`, not `ctx.back_buffer`.
+pub(crate) fn assert_golden_buffer(buffer: &Buffer, fixture_name: &str) -> Result<(), String> {
+    let golden_body = buffer_to_golden(buffer);
+    let full_content = format_fixture(fixture_name, buffer.width, buffer.height, &golden_body);
+
+    if should_update() {
+        save_fixture(fixture_name, &full_content)?;
+        return Ok(());
+    }
+
+    let expected_content = load_fixture(fixture_name)?;
+    let (_, _, _, expected_body) = parse_fixture(&expected_content)?;
+
+    diff_golden(&expected_body, &golden_body)
+}
+
 #[allow(dead_code)]
 pub(crate) fn assert_golden_styled(ctx: &TuiContext, fixture_name: &str) -> Result<(), String> {
     let golden_body = buffer_to_golden_styled(&ctx.back_buffer);

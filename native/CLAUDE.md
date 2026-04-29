@@ -37,6 +37,10 @@ cargo bench --manifest-path native/Cargo.toml --bench devtools_bench
 | `animation.rs` | Animation registry, interpolation, easing, chains, and choreography groups. |
 | `text.rs` | Markdown parsing, syntax highlighting, and styled span generation. |
 | `text_cache.rs` | Bounded LRU cache for text parse/highlight/wrap artifacts. |
+| `text_buffer.rs` | Native Text Substrate (ADR-T37): canonical content storage with content epochs, line-start markers, dirty ranges, cached width metrics, style spans, selection, and highlights. Exposes `tui_text_buffer_*`. |
+| `text_view.rs` | Native Text Substrate (ADR-T37): viewport / wrap projection over a `TextBuffer` with composite-keyed wrap cache, scroll, cursor mapping, and byte/visual conversions. Exposes `tui_text_view_*`. |
+| `text_renderer.rs` | Unified text renderer: single path that draws a `TextView` into the cell buffer with clipping, wide-glyph handling, combining marks, ZWJ/CJK width, tab expansion, selections, highlights, cursor, and style merging. Idle until Epic N rebases widget render paths. |
+| `substrate_gates.rs` | `#[cfg(test)]` substrate gate suite (CORE-M4) enforcing every TechSpec §5.4.1 invariant by named native test. |
 | `render.rs` | Core render pipeline: animation advancement, theme resolution, layout, transcript rendering, diffing, and overlay staging. |
 | `writer.rs` | Run compaction, cursor/style delta tracking, and efficient terminal emission. |
 | `event.rs` | Input ingestion, event classification, focus model, mouse hit-testing, transcript/split-pane key dispatch, and buffered event delivery. |
@@ -127,3 +131,7 @@ pub extern "C" fn tui_something(handle: u32) -> i32 {
 - Transcript anchors, unread behavior, and transcript-specific input handling are implemented
 - `SplitPane` native layout and resize behavior are implemented
 - No `TODO` / `FIXME` markers are expected in production code paths
+
+### Known Substrate Limitations
+- `Cell.ch` is a single `char`. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) segment correctly and advance the column by their measured cell width — layout, hit-testing, soft wrap, and selection are right — but the visible glyph emitted into the cell grid is the cluster's first scalar. Widening the cell model is post-Epic-N work and is not blocked by the substrate ABI.
+- `tui_text_view_set_cursor` requires byte offsets that are both UTF-8 boundaries and grapheme cluster boundaries; offsets inside a cluster are rejected at the API boundary so the cursor never silently disappears.

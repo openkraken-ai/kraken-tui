@@ -228,6 +228,32 @@ const lib = dlopen(LIB_PATH, {
 	tui_debug_get_trace_len:       { args: ["u8"] as FFIType[],                                 returns: "i32" as const },
 	tui_debug_get_trace:           { args: ["u8", "ptr", "u32"] as FFIType[],                   returns: "i32" as const },
 	tui_debug_clear_traces:        { args: [] as FFIType[],                                     returns: "i32" as const },
+
+	// Native Text Substrate (ADR-T37, TechSpec §4.4)
+	tui_text_buffer_create:            { args: [] as FFIType[],                                     returns: "u32" as const },
+	tui_text_buffer_destroy:           { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_replace_range:     { args: ["u32", "u32", "u32", "ptr", "u32"] as FFIType[],    returns: "i32" as const },
+	tui_text_buffer_append:            { args: ["u32", "ptr", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_text_buffer_get_epoch:         { args: ["u32"] as FFIType[],                                returns: "u64" as const },
+	tui_text_buffer_get_byte_len:      { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_text_buffer_get_line_count:    { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_text_buffer_set_style_span:    { args: ["u32", "u32", "u32", "u32", "u32", "u8"] as FFIType[], returns: "i32" as const },
+	tui_text_buffer_clear_style_spans: { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_selection:     { args: ["u32", "u32", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_text_buffer_clear_selection:   { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_highlight:     { args: ["u32", "u32", "u32", "u8"] as FFIType[],            returns: "i32" as const },
+	tui_text_buffer_clear_highlights:  { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_clear_dirty_ranges:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_view_create:              { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_text_view_destroy:             { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_view_set_wrap:            { args: ["u32", "u32", "u8", "u8"] as FFIType[],             returns: "i32" as const },
+	tui_text_view_set_viewport:        { args: ["u32", "u32", "u32", "u32"] as FFIType[],           returns: "i32" as const },
+	tui_text_view_set_cursor:          { args: ["u32", "u32"] as FFIType[],                         returns: "i32" as const },
+	tui_text_view_clear_cursor:        { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_view_get_visual_line_count:{ args: ["u32"] as FFIType[],                               returns: "u32" as const },
+	tui_text_view_byte_to_visual:      { args: ["u32", "u32", "ptr", "ptr"] as FFIType[],           returns: "i32" as const },
+	tui_text_view_visual_to_byte:      { args: ["u32", "u32", "u32", "ptr"] as FFIType[],           returns: "i32" as const },
+	tui_text_view_get_cache_epoch:     { args: ["u32"] as FFIType[],                                returns: "u64" as const },
 });
 
 const ffi = lib.symbols;
@@ -779,6 +805,116 @@ describe("FFI integration", () => {
 			expect(ffi.tui_get_terminal_size(wBuf, hBuf)).toBe(0);
 			expect(wBuf[0]).toBe(80);
 			expect(hBuf[0]).toBe(24);
+		});
+	});
+
+	// ── Native Text Substrate (ADR-T37) ─────────────────────────────────────
+
+	describe("native text substrate", () => {
+		// End-to-end exercise of the wave-8 ABI exposure: every substrate
+		// symbol the host claims to call goes through bun:ffi here so the
+		// signatures (arg widths, return types, out-pointers) are mechanically
+		// validated, not just the import-time symbol resolution.
+
+		test("buffer create -> append -> destroy lifecycle", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			// Empty buffer state.
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(0);
+			expect(ffi.tui_text_buffer_get_line_count(buf)).toBe(1);
+			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(0n);
+			// Append payload, observe metrics.
+			const payload = new TextEncoder().encode("hello\nworld");
+			expect(
+				ffi.tui_text_buffer_append(buf, Buffer.from(payload), payload.length),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(payload.length);
+			expect(ffi.tui_text_buffer_get_line_count(buf)).toBe(2);
+			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(1n);
+			// Replace within the buffer; epoch advances again.
+			const repl = new TextEncoder().encode("HI");
+			expect(
+				ffi.tui_text_buffer_replace_range(
+					buf,
+					0,
+					5,
+					Buffer.from(repl),
+					repl.length,
+				),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(2n);
+			// Drain dirty ranges.
+			expect(ffi.tui_text_buffer_clear_dirty_ranges(buf)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("style span / selection / highlight set + clear round-trip", () => {
+			// Round-trips every style/highlight/selection FFI entry the host
+			// claims to expose. Each call must succeed (return 0) and not
+			// observably perturb buffer epoch (style mutations bump
+			// style_fingerprint, not content epoch) — the substrate
+			// contract documented in TechSpec §3.4.
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const payload = new TextEncoder().encode("hello world");
+			expect(
+				ffi.tui_text_buffer_append(buf, Buffer.from(payload), payload.length),
+			).toBe(0);
+			const baseline_epoch = ffi.tui_text_buffer_get_epoch(buf);
+
+			// Style span: cover bytes [0, 5) ("hello") with red fg, default bg, BOLD.
+			const ATTR_BOLD = 0x01;
+			expect(
+				ffi.tui_text_buffer_set_style_span(buf, 0, 5, 0xff_00_00, 0, ATTR_BOLD),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_clear_style_spans(buf)).toBe(0);
+
+			// Selection: set then clear.
+			expect(ffi.tui_text_buffer_set_selection(buf, 6, 11)).toBe(0);
+			expect(ffi.tui_text_buffer_clear_selection(buf)).toBe(0);
+
+			// Highlight: search-match kind = 0.
+			expect(ffi.tui_text_buffer_set_highlight(buf, 0, 5, 0)).toBe(0);
+			expect(ffi.tui_text_buffer_clear_highlights(buf)).toBe(0);
+
+			// None of the above mutates content; epoch must be unchanged.
+			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(baseline_epoch);
+
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("view create -> set_wrap -> get_visual_line_count -> destroy", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const payload = new TextEncoder().encode("abcdefghij");
+			expect(
+				ffi.tui_text_buffer_append(buf, Buffer.from(payload), payload.length),
+			).toBe(0);
+			const view = ffi.tui_text_view_create(buf);
+			expect(view).toBeGreaterThan(0);
+			// WrapMode::Char = 1, wrap_width = 4 → 3 visual rows.
+			expect(ffi.tui_text_view_set_wrap(view, 4, 1, 4)).toBe(0);
+			expect(ffi.tui_text_view_set_viewport(view, 3, 0, 0)).toBe(0);
+			expect(ffi.tui_text_view_get_visual_line_count(view)).toBe(3);
+			// get_cache_epoch projects before returning (wave-9 fix); it
+			// must observe the post-set_wrap state without any prior call.
+			expect(ffi.tui_text_view_get_cache_epoch(view)).toBeGreaterThan(0n);
+			// Cursor + clear round-trip.
+			expect(ffi.tui_text_view_set_cursor(view, 5)).toBe(0);
+			expect(ffi.tui_text_view_clear_cursor(view)).toBe(0);
+			// byte_to_visual / visual_to_byte through their out-pointer
+			// signatures.
+			const rowBuf = new Uint32Array(1);
+			const colBuf = new Uint32Array(1);
+			expect(ffi.tui_text_view_byte_to_visual(view, 5, rowBuf, colBuf)).toBe(0);
+			expect(rowBuf[0]).toBe(1);
+			expect(colBuf[0]).toBe(1);
+			const byteBuf = new Uint32Array(1);
+			expect(ffi.tui_text_view_visual_to_byte(view, 1, 1, byteBuf)).toBe(0);
+			expect(byteBuf[0]).toBe(5);
+			// View must be destroyed before its buffer (lifecycle guard).
+			expect(ffi.tui_text_view_destroy(view)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
 		});
 	});
 
