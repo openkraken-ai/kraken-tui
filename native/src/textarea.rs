@@ -140,6 +140,10 @@ pub(crate) fn take_undo(state: &mut TextAreaState) -> Option<TextAreaEdit> {
     state.undo_stack.pop_back()
 }
 
+pub(crate) fn peek_undo(state: &TextAreaState) -> Option<TextAreaEdit> {
+    state.undo_stack.back().cloned()
+}
+
 pub(crate) fn push_redo(state: &mut TextAreaState, edit: TextAreaEdit) {
     state.redo_stack.push_back(edit);
     let limit = state.history_limit as usize;
@@ -150,6 +154,10 @@ pub(crate) fn push_redo(state: &mut TextAreaState, edit: TextAreaEdit) {
 
 pub(crate) fn take_redo(state: &mut TextAreaState) -> Option<TextAreaEdit> {
     state.redo_stack.pop_back()
+}
+
+pub(crate) fn peek_redo(state: &TextAreaState) -> Option<TextAreaEdit> {
+    state.redo_stack.back().cloned()
 }
 
 pub(crate) fn push_undo(state: &mut TextAreaState, edit: TextAreaEdit) {

@@ -1934,7 +1934,7 @@ pub extern "C" fn tui_textarea_undo(handle: u32) -> i32 {
                 return Ok(0);
             };
             let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
-            let Some(edit) = textarea::take_undo(state) else {
+            let Some(edit) = textarea::peek_undo(state) else {
                 return Ok(0);
             };
             (edit_handle, edit)
@@ -1958,6 +1958,9 @@ pub extern "C" fn tui_textarea_undo(handle: u32) -> i32 {
         node.cursor_row = edit.cursor_row_before;
         node.cursor_col = edit.cursor_col_before;
         if let Some(state) = node.textarea_state.as_mut() {
+            // Pop metadata only after the native undo succeeded so a sync
+            // discrepancy cannot silently discard the caller-visible stack.
+            let _ = textarea::take_undo(state);
             state.selection_anchor = edit.selection_anchor_before;
             state.selection_focus = edit.selection_focus_before;
             textarea::push_redo(state, edit);
@@ -1982,7 +1985,7 @@ pub extern "C" fn tui_textarea_redo(handle: u32) -> i32 {
                 return Ok(0);
             };
             let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
-            let Some(edit) = textarea::take_redo(state) else {
+            let Some(edit) = textarea::peek_redo(state) else {
                 return Ok(0);
             };
             (edit_handle, edit)
@@ -2006,6 +2009,9 @@ pub extern "C" fn tui_textarea_redo(handle: u32) -> i32 {
         node.cursor_row = edit.cursor_row_after;
         node.cursor_col = edit.cursor_col_after;
         if let Some(state) = node.textarea_state.as_mut() {
+            // Pop metadata only after the native redo succeeded so a sync
+            // discrepancy cannot silently discard the caller-visible stack.
+            let _ = textarea::take_redo(state);
             state.selection_anchor = edit.selection_anchor_after;
             state.selection_focus = edit.selection_focus_after;
             textarea::push_undo(state, edit);
@@ -2036,14 +2042,34 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
                 while state.undo_stack.len() > limit as usize {
                     state.undo_stack.pop_front();
                 }
-                while state.redo_stack.len() > limit as usize {
-                    state.redo_stack.pop_front();
-                }
             }
             node.edit_buffer_handle
         };
         if let Some(edit_handle) = edit_handle {
+            if edit_buffer::can_redo(&ctx, edit_handle)? {
+                {
+                    let node = ctx.nodes.get_mut(&handle).unwrap();
+                    let state = node
+                        .textarea_state
+                        .as_mut()
+                        .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
+                    // Once the redo branch exists, trimming from the front can
+                    // leave replay steps whose preconditions no longer match the
+                    // current content. Drop redo on both sides before trimming.
+                    state.redo_stack.clear();
+                }
+                edit_buffer::discard_redo(&mut ctx, edit_handle)?;
+            }
             edit_buffer::trim_history(&mut ctx, edit_handle, limit as usize)?;
+            let native_history_len = edit_buffer::history_len(&ctx, edit_handle)?;
+            let node = ctx.nodes.get_mut(&handle).unwrap();
+            let state = node
+                .textarea_state
+                .as_mut()
+                .ok_or_else(|| format!("Handle {handle} has no textarea state"))?;
+            while state.undo_stack.len() > native_history_len {
+                state.undo_stack.pop_front();
+            }
         }
         Ok(0)
     })

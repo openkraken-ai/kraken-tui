@@ -1813,34 +1813,21 @@ mod tests {
             textarea_undo_for_test(&mut ctx, textarea).unwrap();
         }
         assert_eq!(ctx.nodes[&textarea].content, "x");
-        // Now redo_stack has 5 entries, undo_stack has 0
+        // Now redo exists; lowering the limit clears redo to avoid replaying
+        // steps whose prerequisites were trimmed away from native history.
 
-        // Lower history limit to 2
-        {
-            let state = ctx
-                .nodes
-                .get_mut(&textarea)
-                .unwrap()
-                .textarea_state
-                .as_mut()
-                .unwrap();
-            state.history_limit = 2;
-            // Trim redo_stack like tui_textarea_set_history_limit does
-            while state.redo_stack.len() > 2 {
-                state.redo_stack.pop_front();
-            }
-        }
+        let node = ctx.nodes.get_mut(&textarea).unwrap();
+        node.textarea_state.as_mut().unwrap().history_limit = 2;
+        let edit_handle = node.edit_buffer_handle.unwrap();
+        node.textarea_state.as_mut().unwrap().redo_stack.clear();
+        crate::edit_buffer::discard_redo(&mut ctx, edit_handle).unwrap();
+        crate::edit_buffer::trim_history(&mut ctx, edit_handle, 2).unwrap();
 
-        // Redo both available entries
-        for _ in 0..2 {
-            textarea_redo_for_test(&mut ctx, textarea).unwrap();
-        }
-
-        // Undo stack should not exceed the limit of 2
         let state = ctx.nodes[&textarea].textarea_state.as_ref().unwrap();
+        assert!(state.redo_stack.is_empty());
         assert!(state.undo_stack.len() <= 2);
 
-        // 3rd redo should return false
+        // Redo is intentionally discarded when the limit changes mid-branch.
         let r = textarea_redo_for_test(&mut ctx, textarea);
         assert_eq!(r.unwrap(), false);
     }

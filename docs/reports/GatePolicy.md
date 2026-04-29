@@ -47,8 +47,8 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 | **Metric** | Writer, text-cache, and substrate benchmark health |
 | **Threshold** | No materially suspicious regression in the benchmark output for tracked suites |
 | **CI Job** | `native-benchmarks` |
-| **CI Mode** | Reporting-only |
-| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench`, `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench`, and `cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench` must complete successfully in CI; the reported numbers are not yet parsed into an automatic regression threshold failure |
+| **CI Mode** | Mixed: writer/text-cache reporting, substrate threshold-enforced |
+| **Enforcement** | `cargo bench --manifest-path native/Cargo.toml --bench writer_bench` and `cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench` must complete successfully in CI. `cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench` must also satisfy the checked-in threshold parser in `.github/workflows/ci.yml`, so severe append/cursor regressions fail the workflow instead of only printing numbers. |
 | **Tracked suites** | `writer_compact_*`, `writer_emit_*`, `writer_pipeline_full`, `cache_insert_1000`, `cache_get_hit_1000`, `cache_eviction_pressure`, `substrate_append_*`, `substrate_set_cursor_*`, `substrate_byte_to_visual_*` |
 | **Local supplementary check** | `cargo bench --manifest-path native/Cargo.toml --bench devtools_bench` |
 

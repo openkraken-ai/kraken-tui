@@ -285,6 +285,18 @@ pub(crate) fn trim_history(ctx: &mut TuiContext, handle: u32, limit: usize) -> R
     Ok(())
 }
 
+pub(crate) fn discard_redo(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let edit_buffer = ctx
+        .edit_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    if edit_buffer.undo_cursor < edit_buffer.history.len() {
+        edit_buffer.history.truncate(edit_buffer.undo_cursor);
+        edit_buffer.generation = edit_buffer.generation.saturating_add(1);
+    }
+    Ok(())
+}
+
 pub(crate) fn clear_history(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let edit_buffer = ctx
         .edit_buffers

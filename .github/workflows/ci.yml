@@ -58,7 +58,65 @@ jobs:
           set -euo pipefail
           cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench 2>&1 | tee /tmp/substrate_bench.txt
 
+      - name: Validate substrate benchmark thresholds
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          pattern = re.compile(
+              r'^(substrate_[A-Za-z0-9_]+)\s+time:\s+\[[^\]]*?\s([0-9.]+)\s(µs|ms)\s[^\]]*\]$'
+          )
+          thresholds_us = {
+              # These thresholds are intentionally generous relative to the
+              # checked-in snapshot so they catch real regressions without
+              # turning routine CI variance into a flaky gate.
+              "substrate_append_1024": 1_000.0,
+              "substrate_append_8192": 1_000.0,
+              "substrate_append_65536": 5_000.0,
+              "substrate_append_262144": 15_000.0,
+              "substrate_set_cursor_1024": 1_000.0,
+              "substrate_set_cursor_8192": 1_000.0,
+              "substrate_set_cursor_65536": 5_000.0,
+              "substrate_set_cursor_262144": 12_000.0,
+              "substrate_byte_to_visual_1024": 1_000.0,
+              "substrate_byte_to_visual_8192": 1_500.0,
+              "substrate_byte_to_visual_65536": 6_000.0,
+              "substrate_byte_to_visual_262144": 15_000.0,
+          }
+
+          found = {}
+          for raw_line in Path("/tmp/substrate_bench.txt").read_text().splitlines():
+              match = pattern.match(raw_line.strip())
+              if not match:
+                  continue
+              name, value, unit = match.groups()
+              median_us = float(value) * (1_000.0 if unit == "ms" else 1.0)
+              found[name] = median_us
+
+          missing = sorted(set(thresholds_us) - set(found))
+          failures = []
+          for name, threshold_us in thresholds_us.items():
+              if name in found and found[name] > threshold_us:
+                  failures.append(f"{name}: median {found[name]:.2f}µs > threshold {threshold_us:.2f}µs")
+
+          if missing or failures:
+              if missing:
+                  print("Missing substrate benchmark results:")
+                  for name in missing:
+                      print(f"  - {name}")
+              if failures:
+                  print("Substrate benchmark threshold failures:")
+                  for failure in failures:
+                      print(f"  - {failure}")
+              raise SystemExit(1)
+
+          print("Substrate benchmark thresholds passed.")
+          PY
+
       - name: Report benchmark results
+        if: always()
         run: |
           echo "=== Writer Benchmark Results ==="
           grep -E "^writer_" /tmp/writer_bench.txt || true
