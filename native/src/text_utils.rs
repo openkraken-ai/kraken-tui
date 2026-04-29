@@ -9,15 +9,6 @@ pub(crate) fn split_textarea_lines_owned(content: &str) -> Vec<String> {
     }
 }
 
-/// Split textarea content into borrowed logical lines.
-pub(crate) fn split_textarea_lines_borrowed(content: &str) -> Vec<&str> {
-    if content.is_empty() {
-        vec![""]
-    } else {
-        content.split('\n').collect()
-    }
-}
-
 /// Count user-visible grapheme clusters.
 pub(crate) fn grapheme_count(content: &str) -> usize {
     UnicodeSegmentation::graphemes(content, true).count()

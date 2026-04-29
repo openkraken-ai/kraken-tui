@@ -1,6 +1,9 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.3.2 - Closed the last Epic N contract drift: `EditBuffer` coalescing and substrate-backed text surfaces are now documented as shipped Brownfield reality rather than pending target state.
+- v7.3.1 - Completed the substrate authority cut for Epic N: transcript blocks now store substrate handles instead of mirrored mutable strings, the substrate benchmark suite is a first-class native gate, and the pre-public contract no longer preserves backward compatibility for its own sake.
+- v7.3.0 - Reshaped Epic N around Brownfield reality: dirty ranges now record both pre- and post-replacement extents, the substrate benchmark gate explicitly lands before transcript rebase, and the getter ceiling notes now match the shipped explicit-overflow behavior.
 - v7.2.11 - Tightened the substrate ABI and transcript rebase contract: oversized `usize` values now fail explicitly instead of truncating, and dirty-range semantics are documented as a deliberate CORE-N3 decision point rather than an implicit behavior.
 - v7.2.10 - Reconciled ADR-T37 and the spike memo with the shipped substrate reality: flat-`String` backing is the current contract, the borrowed-`&str` payload path is authoritative, and the host FFI surface is mechanically exercised end to end.
 - v7.2.9 - Fixed `tui_text_view_get_cache_epoch` to refresh projections before reporting cache state and aligned the spike memo with the shipped one-copy payload path.
@@ -12,7 +15,7 @@
 - **State Stores / Persistence:** All runtime UI state lives in the Native Core in memory. There is no external database or persisted state store in the canonical product contract.
 - **Infrastructure / Tooling:** Cargo, Bun, GitHub Actions CI, GitHub release artifacts with checksum sidecars, Criterion benchmarks, headless terminal backend, replay fixtures, and golden snapshot utilities.
 - **Testing / Quality Tooling:** `cargo test`, `cargo fmt`, `cargo clippy`, native benchmarks, Bun integration tests, example replay tests, install smoke tests, runner API tests, and bundle-budget checks.
-- **Version Pinning / Compatibility Policy:** Kraken is still pre-1.0 (`0.1.0` in both native and host packages), so breaking changes remain possible. Even so, additive evolution is preferred for the C ABI and host wrappers, and any incompatible change to the public surface must be documented explicitly in this file before task planning.
+- **Version Pinning / Compatibility Policy:** Kraken is still pre-1.0 (`0.1.0` in both native and host packages), so breaking changes are allowed whenever they reduce duplication or remove design debt before public release. This file defines the current contract for the active branch; compatibility is owed to the documented contract, not to superseded interim shapes.
 
 ### 1.1 Native Core Bill of Materials
 
@@ -118,8 +121,8 @@ The repo-owned release workflow currently publishes **versioned GitHub release a
 ### ADR-T39 Transcript Content Is Backed by TextBuffer Segments
 - **Status:** accepted
 - **Context:** `TranscriptBlock.content: String` is mutated in place by `patch_block` and cloned into render-local structures during render. This conflicts with the substrate goal that resize invalidates view projections rather than content storage and that streamed append affects only impacted epochs.
-- **Decision:** Each transcript block's content is owned by a `TextBuffer` (or a transcript-specialized segment-list view over the substrate). Rendering consumes a `TextView` projection per visible block. `append_block`, `patch_block`, and `finish_block` operations mutate the buffer through the substrate's mutation API and bump the corresponding epoch. Transcript-specific concerns (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) remain inside `TranscriptState`; only block content storage moves.
-- **Consequences:** Transcript host-facing contract (anchors, follow modes, unread, collapse, hierarchy) is preserved unchanged. Internally, transcript code stops owning text-measurement logic and shares it with every other substantial text surface. Replay fixtures and host wrappers stay stable; transcript-internal block layout invariants and their tests are rewritten on top of the substrate.
+- **Decision:** Each transcript block's content is owned by a `TextBuffer` (or a transcript-specialized segment-list view over the substrate). Rendering consumes a `TextView` projection per visible block. `append_block`, `patch_block`, and `finish_block` operations mutate the buffer through the substrate's mutation API and bump the corresponding epoch. `DirtyRange` expands to carry both the replaced extent and the replacement extent so transcript and later incremental-paint consumers can distinguish removed cells from inserted cells. Transcript-specific concerns (`anchor_kind`, `follow_mode`, unread anchors, collapse state, parent and hierarchy, role coloring) remain inside `TranscriptState`; only block content storage moves.
+- **Consequences:** Transcript host-facing contract (anchors, follow modes, unread, collapse, hierarchy) is preserved unchanged. Internally, transcript code stops owning text-measurement logic and shares it with every other substantial text surface. Replay fixtures and host wrappers stay stable; transcript-internal block layout invariants and their tests are rewritten on top of the substrate. The expanded dirty-range contract is an internal/native ABI change only in this wave; host-facing transcript APIs remain stable.
 
 ### ADR-T40 Terminal Capability Hardening Is Deferred Until Substrate Is Stable
 - **Status:** accepted
@@ -130,7 +133,7 @@ The repo-owned release workflow currently publishes **versioned GitHub release a
 ### 2.2 Brownfield Reality Note
 - The prior v6 TechSpec described transcript, devtools, split-pane, and flagship examples as future work. The current source tree implements them.
 - This v7 artifact is therefore intentionally present-tense and canonical rather than future-tense and phase-only.
-- ADR-T37 through ADR-T40 introduce explicitly forward-looking scope (the Native Text/Cell/View Substrate and its migration). Sections 3.4 and 4.4 now describe Brownfield reality for `TextBuffer`, `TextView`, and the unified text renderer (Epic M shipped). `EditBuffer` and the rebased surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) remain target state pending Epic N.
+- ADR-T37 through ADR-T40 introduced forward-looking scope during the rebase wave. Sections 3.4 and 4.4 now describe Brownfield reality for `TextBuffer`, `TextView`, `EditBuffer`, and the rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks`) after Epic N shipped.
 
 ## 3. State & Data Modeling
 ### 3.1 Native UI State Model
@@ -231,7 +234,8 @@ pub struct TranscriptBlock {
     pub kind: TranscriptBlockKind,
     pub parent_id: Option<u64>,
     pub role: u8,
-    pub content: String,
+    pub buffer_handle: u32,
+    pub view_handle: u32,
     pub content_format: ContentFormat,
     pub code_language: Option<String>,
     pub streaming: bool,
@@ -322,9 +326,9 @@ pub struct TuiContext {
 ### 3.4 Native Text Substrate
 - **Purpose:** Own all substantial text content and its viewport projections inside the Native Core so widget code stops re-implementing measurement, wrapping, clipping, and Unicode handling.
 - **Storage Shape:**
-  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight changes), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, `dirty_ranges`, and a configurable `tab_width`. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
+  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight changes), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, `dirty_ranges`, and a configurable `tab_width`. Each dirty-range entry records `start`, `old_end`, and `new_end` so shrinking and growing edits preserve both the replaced extent and the replacement extent. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
   - `TextView` — viewport projection over a `TextBuffer`, parameterized by wrap width, wrap mode, tab width, viewport rows, scroll row and column, and optional cursor position. Holds a soft-wrap visual-line cache keyed by content epoch and wrap parameters.
-  - `EditBuffer` — wraps a `TextBuffer` with an operation history (`insert`, `delete`, `replace`, selection move, cursor move) plus coalescing rules for ordinary single-edit operations. Target state, lands under CORE-N2.
+  - `EditBuffer` — wraps a `TextBuffer` with an operation history for `insert`, `delete`, and `replace`, plus explicit coalescing boundaries that keep ordinary single-edit operations grouped without forcing unrelated edits into the same undo unit.
 - **Constraints / Invariants:**
   - Every substantial text surface routes through this substrate; widget code holds no parallel text-rendering path.
   - Content epochs increase monotonically per buffer mutation; an append affects views over only that buffer.
@@ -337,9 +341,9 @@ pub struct TuiContext {
   - `text_buffers: HashMap<u32, TextBuffer>` keyed by buffer Handle
   - `text_views: HashMap<u32, TextView>` keyed by view Handle, each referencing a buffer Handle
   - `edit_buffers: HashMap<u32, EditBuffer>` keyed by edit-buffer Handle, each referencing a buffer Handle
-  - Per-buffer `Vec<usize>` line-start index and `Vec<DirtyRange>` dirty-range list
+  - Per-buffer `Vec<usize>` line-start index and `Vec<DirtyRange>` dirty-range list, where each entry carries both pre- and post-replacement extents
   - Per-view `Vec<VisualLine>` wrap cache plus the cache key
-- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`); the matching `tui_text_buffer_*` and `tui_text_view_*` ABI is exposed today. `EditBuffer` storage and the substrate-rebased surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) are migrated under Epic N. Replay fixtures (transcript fixtures and example replay tests) remain green throughout the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
+- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`). `EditBuffer` storage and the substrate-rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) landed under Epic N. Replay fixtures and example replay tests remain green across the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
 - **Known Limitations (Brownfield):** The shared `Cell` model (`types.rs`) stores a single `char` per cell. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) are segmented and advance the column by their measured cell width, so layout, hit-testing, soft wrap, and selection are correct, but the visible glyph emitted into the cell grid is the cluster's first scalar rather than the composed cluster. Widening the cell model to carry full grapheme strings is post-Epic-N work and is not blocked by the substrate ABI.
 
 ```rust
@@ -489,10 +493,10 @@ supported_release_targets:
 - **Authentication / Authorization:** Not applicable
 - **Compatibility Strategy:** New substrate symbols are added additively under the existing `tui_` prefix. They follow the same conventions as the existing ABI: `u32` Handles with `0` invalid and copy-out for outbound strings and metrics. Status-returning entry points (`-> i32`) follow the standard `0 / -1 / -2` error model below; value-returning getters (`-> u32` / `-> u64`) follow the sentinel pattern documented under "Getter error model" below because they have no separate channel for a status code.
 - **Error model (status-returning calls):** `0` for success, `-1` for explicit error retrievable through `tui_get_last_error()`, `-2` for panic caught at the boundary. Applies to: `tui_text_buffer_destroy`, `tui_text_buffer_replace_range`, `tui_text_buffer_append`, `tui_text_buffer_set_style_span`, `tui_text_buffer_clear_style_spans`, `tui_text_buffer_set_selection`, `tui_text_buffer_clear_selection`, `tui_text_buffer_set_highlight`, `tui_text_buffer_clear_highlights`, `tui_text_buffer_clear_dirty_ranges`, `tui_text_view_destroy`, `tui_text_view_set_wrap`, `tui_text_view_set_viewport`, `tui_text_view_set_cursor`, `tui_text_view_clear_cursor`, `tui_text_view_byte_to_visual`, `tui_text_view_visual_to_byte`.
-- **Handle constructors:** `tui_text_buffer_create`, `tui_text_view_create`, and the future `tui_edit_buffer_create` return a `u32` handle. `0` is the invalid handle sentinel; on error the call returns `0` and `tui_get_last_error()` carries the diagnostic string. The host's `checkResult()` cannot distinguish a `0` handle from a `0` status, so host code must use a handle-aware helper that checks for `handle == 0` and consults `tui_get_last_error()`.
-- **Getter error model (value-returning calls):** `tui_text_buffer_get_epoch`, `tui_text_buffer_get_byte_len`, `tui_text_buffer_get_line_count`, `tui_text_view_get_visual_line_count`, and `tui_text_view_get_cache_epoch` return their value directly. Because these functions have no separate status channel, errors are signalled by returning `0` and setting `tui_get_last_error()`. `0` is also a valid value for some states — a freshly created buffer's `epoch` is `0`, an empty buffer's `byte_len` is `0`, and a freshly created view's `cache_epoch` is `0` — so callers that need to distinguish a real `0` from an error consult `tui_get_last_error()` after the call. **Every FFI wrapper clears `last_error` on the success path**, so a successful getter call is observed as `tui_get_last_error() == NULL` regardless of any prior failure; callers do not need to manually clear before each getter. Callers that already hold a known-valid handle can treat `0` as a valid value without checking. The host's standard `checkResult()` helper (which only flags negative codes) does not apply to these getters.
-- **Range and ceiling notes:** `tui_text_buffer_get_byte_len`, `tui_text_buffer_get_line_count`, and `tui_text_view_get_visual_line_count` cast `usize` to `u32` with a saturating-style `as` truncation. The implicit ceiling is `u32::MAX` (~4.29 GiB of bytes / ~4.29G lines). v1 host workloads (transcripts, prose, source spans) sit far below that; surfaces that may exceed it must adopt a different ABI shape before crossing the threshold. There is no negative sentinel — values >= `u32::MAX` are silently truncated.
-- **Dirty range ownership:** `replace_range` and `append` push `DirtyRange` entries that callers (Epic N's unified renderer once it consumes them) must drain via `tui_text_buffer_clear_dirty_ranges`. The substrate does not auto-drain because consumers may run on a different cadence than mutations (e.g. one render per N appends). Without periodic draining, `dirty_ranges` grows unbounded across the session lifetime; the per-mutation cost stays O(1) but memory is leaked. Draining does not bump `epoch` or `style_fingerprint`.
+- **Handle constructors:** `tui_text_buffer_create`, `tui_text_view_create`, and `tui_edit_buffer_create` return a `u32` handle. `0` is the invalid handle sentinel; on error the call returns `0` and `tui_get_last_error()` carries the diagnostic string. The host's `checkResult()` cannot distinguish a `0` handle from a `0` status, so host code must use a handle-aware helper that checks for `handle == 0` and consults `tui_get_last_error()`.
+- **Getter error model (value-returning calls):** `tui_text_buffer_get_epoch`, `tui_text_buffer_get_byte_len`, `tui_text_buffer_get_line_count`, `tui_text_view_get_visual_line_count`, `tui_text_view_get_cache_epoch`, `tui_edit_buffer_can_undo`, `tui_edit_buffer_can_redo`, and `tui_edit_buffer_history_len` return their value directly. Because these functions have no separate status channel, errors are signalled by returning `0` and setting `tui_get_last_error()`. `0` is also a valid value for some states — a freshly created buffer's `epoch` is `0`, an empty buffer's `byte_len` is `0`, a freshly created view's `cache_epoch` is `0`, and an empty edit history yields `0` from the edit-buffer queries — so callers that need to distinguish a real `0` from an error consult `tui_get_last_error()` after the call. **Every FFI wrapper clears `last_error` on the success path**, so a successful getter call is observed as `tui_get_last_error() == NULL` regardless of any prior failure; callers do not need to manually clear before each getter. Callers that already hold a known-valid handle can treat `0` as a valid value without checking. The host's standard `checkResult()` helper (which only flags negative codes) does not apply to these getters.
+- **Range and ceiling notes:** `tui_text_buffer_get_byte_len`, `tui_text_buffer_get_line_count`, and `tui_text_view_get_visual_line_count` must fail explicitly when the native `usize` value does not fit in `u32`. There is no truncation path in the current contract; the getter returns `0` and `tui_get_last_error()` carries the overflow diagnostic. v1 host workloads (transcripts, prose, source spans) sit far below the `u32::MAX` ceiling, but the explicit failure is part of the ABI and must stay aligned with the implementation.
+- **Dirty range ownership:** `replace_range` and `append` push `DirtyRange` entries that callers (Epic N's unified renderer once it consumes them) must drain via `tui_text_buffer_clear_dirty_ranges`. Each entry records `start`, `old_end`, and `new_end`, so shrinking and growing edits preserve both the replaced byte extent and the replacement extent. The substrate does not auto-drain because consumers may run on a different cadence than mutations (e.g. one render per N appends). Without periodic draining, `dirty_ranges` grows unbounded across the session lifetime; the per-mutation cost stays O(1) but memory is leaked. Draining does not bump `epoch` or `style_fingerprint`.
 
 ```yaml
 text_buffer:
@@ -527,6 +531,7 @@ edit_buffer:
   - tui_edit_buffer_create(buffer_handle) -> Handle
   - tui_edit_buffer_destroy(handle)
   - tui_edit_buffer_apply_op(handle, op_kind, ptr, len, start_byte, end_byte)
+  - tui_edit_buffer_break_coalescing(handle)
   - tui_edit_buffer_undo(handle)
   - tui_edit_buffer_redo(handle)
   - tui_edit_buffer_can_undo(handle) -> u8
@@ -579,7 +584,7 @@ ownership:
 │       ├── text_view.rs
 │       ├── text_renderer.rs
 │       ├── substrate_gates.rs    # CORE-M4 §5.4.1 gate suite
-│       ├── edit_buffer.rs        # Epic N target (CORE-N2)
+│       ├── edit_buffer.rs        # Operation-based text history (Epic N, shipped)
 │       ├── theme.rs
 │       ├── animation.rs
 │       ├── textarea.rs
@@ -639,6 +644,7 @@ cargo clippy --manifest-path native/Cargo.toml -- -D warnings
 cargo bench --manifest-path native/Cargo.toml --bench writer_bench
 cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench
 cargo bench --manifest-path native/Cargo.toml --bench devtools_bench
+cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench
 
 # Host tests and budgets
 bun test ts/test-ffi.test.ts
@@ -670,6 +676,7 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to t
 | Goldens and native correctness | zero failures | `cargo test --manifest-path native/Cargo.toml` |
 | Transcript replay correctness | deterministic anchor, unread, and follow behavior | `ts/test-examples.test.ts` plus transcript-specific native tests |
 | Debug-off overhead | bounded and benchmarked | `native/benches/devtools_bench.rs` |
+| Substrate append and cursor prefix cost | benchmarked before transcript closeout | `native/benches/text_substrate_bench.rs`, `docs/reports/substrate-benchmarks.md` |
 
 Current CI validates the host benchmark and install surfaces on Linux. Cross-platform release artifacts are built in the release workflow, and the resolver path for staged prebuilds is covered by install smoke tests, but the full host benchmark matrix is not yet exercised on macOS and Windows in CI.
 

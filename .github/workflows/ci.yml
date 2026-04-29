@@ -39,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
 
       - name: Run writer benchmarks
         shell: bash
@@ -52,13 +53,28 @@ jobs:
           set -euo pipefail
           cargo bench --manifest-path native/Cargo.toml --bench text_cache_bench 2>&1 | tee /tmp/cache_bench.txt
 
+      - name: Run substrate benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench 2>&1 | tee /tmp/substrate_bench.txt
+
+      - name: Validate substrate benchmark thresholds
+        shell: bash
+        run: |
+          bun run ts/check-substrate-benchmarks.ts /tmp/substrate_bench.txt
+
       - name: Report benchmark results
+        if: always()
         run: |
           echo "=== Writer Benchmark Results ==="
           grep -E "^writer_" /tmp/writer_bench.txt || true
           echo ""
           echo "=== Text Cache Benchmark Results ==="
           grep -E "^cache_" /tmp/cache_bench.txt || true
+          echo ""
+          echo "=== Text Substrate Benchmark Results ==="
+          grep -E "^substrate_" /tmp/substrate_bench.txt || true
 
   # ── Host Layer Tests ──────────────────────────────────────────────────────
   host-tests:

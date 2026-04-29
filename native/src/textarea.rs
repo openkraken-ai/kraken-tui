@@ -3,7 +3,7 @@
 use regex::Regex;
 
 use crate::text_utils::{grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned};
-use crate::types::{TextAreaEdit, TextAreaState, TuiNode};
+use crate::types::{TextAreaEdit, TextAreaState};
 
 /// Normalize a selection so that start <= end (row-major order).
 pub(crate) fn normalize_selection(a: (u32, u32), b: (u32, u32)) -> ((u32, u32), (u32, u32)) {
@@ -118,8 +118,17 @@ pub(crate) fn delete_selection(
 
 /// Record an edit into the undo stack and clear the redo stack.
 /// When `history_limit` is 0, the stack grows without bound (unlimited).
-pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit) {
+pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit, coalesced: bool) {
     state.redo_stack.clear();
+    if coalesced {
+        if let Some(previous) = state.undo_stack.back_mut() {
+            previous.cursor_row_after = edit.cursor_row_after;
+            previous.cursor_col_after = edit.cursor_col_after;
+            previous.selection_anchor_after = edit.selection_anchor_after;
+            previous.selection_focus_after = edit.selection_focus_after;
+            return;
+        }
+    }
     state.undo_stack.push_back(edit);
     let limit = state.history_limit as usize;
     if limit > 0 && state.undo_stack.len() > limit {
@@ -127,56 +136,40 @@ pub(crate) fn record_edit(state: &mut TextAreaState, edit: TextAreaEdit) {
     }
 }
 
-/// Undo the last edit. Returns Ok(true) if an undo was performed.
-pub(crate) fn undo(node: &mut TuiNode) -> Result<bool, String> {
-    let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
+pub(crate) fn take_undo(state: &mut TextAreaState) -> Option<TextAreaEdit> {
+    state.undo_stack.pop_back()
+}
 
-    let edit = match state.undo_stack.pop_back() {
-        Some(e) => e,
-        None => return Ok(false),
-    };
+pub(crate) fn peek_undo(state: &TextAreaState) -> Option<TextAreaEdit> {
+    state.undo_stack.back().cloned()
+}
 
-    node.content = edit.content_before.clone();
-    node.cursor_row = edit.cursor_row_before;
-    node.cursor_col = edit.cursor_col_before;
-
-    state.clear_selection();
-
+pub(crate) fn push_redo(state: &mut TextAreaState, edit: TextAreaEdit) {
     state.redo_stack.push_back(edit);
     let limit = state.history_limit as usize;
     if limit > 0 && state.redo_stack.len() > limit {
         state.redo_stack.pop_front();
     }
-
-    Ok(true)
 }
 
-/// Redo the last undone edit. Returns Ok(true) if a redo was performed.
-pub(crate) fn redo(node: &mut TuiNode) -> Result<bool, String> {
-    let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
+pub(crate) fn take_redo(state: &mut TextAreaState) -> Option<TextAreaEdit> {
+    state.redo_stack.pop_back()
+}
 
-    let edit = match state.redo_stack.pop_back() {
-        Some(e) => e,
-        None => return Ok(false),
-    };
+pub(crate) fn peek_redo(state: &TextAreaState) -> Option<TextAreaEdit> {
+    state.redo_stack.back().cloned()
+}
 
-    node.content = edit.content_after.clone();
-    node.cursor_row = edit.cursor_row_after;
-    node.cursor_col = edit.cursor_col_after;
-
-    state.clear_selection();
-
+pub(crate) fn push_undo(state: &mut TextAreaState, edit: TextAreaEdit) {
     state.undo_stack.push_back(edit);
     let limit = state.history_limit as usize;
     if limit > 0 && state.undo_stack.len() > limit {
         state.undo_stack.pop_front();
     }
-
-    Ok(true)
 }
 
 /// Convert a (row, col) grapheme position to a byte offset in the full content string.
-fn position_to_byte_offset(content: &str, row: u32, col: u32) -> usize {
+pub(crate) fn position_to_byte_offset(content: &str, row: u32, col: u32) -> usize {
     let lines: Vec<&str> = if content.is_empty() {
         vec![""]
     } else {
@@ -198,7 +191,7 @@ fn position_to_byte_offset(content: &str, row: u32, col: u32) -> usize {
 }
 
 /// Convert a byte offset in the full content string back to (row, col) grapheme position.
-fn byte_offset_to_position(content: &str, byte_offset: usize) -> (u32, u32) {
+pub(crate) fn byte_offset_to_position(content: &str, byte_offset: usize) -> (u32, u32) {
     let mut current_offset = 0;
     for (row, line) in content.split('\n').enumerate() {
         let line_end = current_offset + line.len();
@@ -482,44 +475,90 @@ mod tests {
             record_edit(
                 &mut state,
                 TextAreaEdit {
-                    content_before: format!("before_{i}"),
                     cursor_row_before: 0,
                     cursor_col_before: 0,
-                    content_after: format!("after_{i}"),
+                    selection_anchor_before: None,
+                    selection_focus_before: None,
                     cursor_row_after: 0,
                     cursor_col_after: i,
+                    selection_anchor_after: None,
+                    selection_focus_after: None,
                 },
+                false,
             );
         }
 
         assert_eq!(state.undo_stack.len(), 3);
-        assert_eq!(state.undo_stack[0].content_before, "before_2");
+        assert_eq!(state.undo_stack[0].cursor_col_after, 2);
     }
 
     #[test]
     fn test_record_edit_clears_redo() {
         let mut state = TextAreaState::default();
         state.redo_stack.push_back(TextAreaEdit {
-            content_before: "old".to_string(),
             cursor_row_before: 0,
             cursor_col_before: 0,
-            content_after: "new".to_string(),
+            selection_anchor_before: None,
+            selection_focus_before: None,
             cursor_row_after: 0,
             cursor_col_after: 0,
+            selection_anchor_after: None,
+            selection_focus_after: None,
         });
 
         record_edit(
             &mut state,
             TextAreaEdit {
-                content_before: "a".to_string(),
                 cursor_row_before: 0,
                 cursor_col_before: 0,
-                content_after: "b".to_string(),
+                selection_anchor_before: None,
+                selection_focus_before: None,
                 cursor_row_after: 0,
                 cursor_col_after: 1,
+                selection_anchor_after: None,
+                selection_focus_after: None,
             },
+            false,
         );
 
         assert!(state.redo_stack.is_empty());
+    }
+
+    #[test]
+    fn test_record_edit_coalesces_latest_after_state() {
+        let mut state = TextAreaState::default();
+
+        record_edit(
+            &mut state,
+            TextAreaEdit {
+                cursor_row_before: 0,
+                cursor_col_before: 0,
+                selection_anchor_before: None,
+                selection_focus_before: None,
+                cursor_row_after: 0,
+                cursor_col_after: 1,
+                selection_anchor_after: None,
+                selection_focus_after: None,
+            },
+            false,
+        );
+        record_edit(
+            &mut state,
+            TextAreaEdit {
+                cursor_row_before: 0,
+                cursor_col_before: 1,
+                selection_anchor_before: None,
+                selection_focus_before: None,
+                cursor_row_after: 0,
+                cursor_col_after: 2,
+                selection_anchor_after: None,
+                selection_focus_after: None,
+            },
+            true,
+        );
+
+        assert_eq!(state.undo_stack.len(), 1);
+        assert_eq!(state.undo_stack[0].cursor_col_before, 0);
+        assert_eq!(state.undo_stack[0].cursor_col_after, 2);
     }
 }

@@ -254,6 +254,15 @@ const lib = dlopen(LIB_PATH, {
 	tui_text_view_byte_to_visual:      { args: ["u32", "u32", "ptr", "ptr"] as FFIType[],           returns: "i32" as const },
 	tui_text_view_visual_to_byte:      { args: ["u32", "u32", "u32", "ptr"] as FFIType[],           returns: "i32" as const },
 	tui_text_view_get_cache_epoch:     { args: ["u32"] as FFIType[],                                returns: "u64" as const },
+	tui_edit_buffer_create:            { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_edit_buffer_destroy:           { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_apply_op:          { args: ["u32", "u8", "ptr", "u32", "u32", "u32"] as FFIType[], returns: "i32" as const },
+	tui_edit_buffer_break_coalescing:  { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_undo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_redo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_edit_buffer_can_undo:          { args: ["u32"] as FFIType[],                                returns: "u8" as const },
+	tui_edit_buffer_can_redo:          { args: ["u32"] as FFIType[],                                returns: "u8" as const },
+	tui_edit_buffer_history_len:       { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 });
 
 const ffi = lib.symbols;
@@ -915,6 +924,128 @@ describe("FFI integration", () => {
 			// View must be destroyed before its buffer (lifecycle guard).
 			expect(ffi.tui_text_view_destroy(view)).toBe(0);
 			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer apply_op -> undo -> redo lifecycle", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const initial = new TextEncoder().encode("hello");
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from(initial), initial.length)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_can_undo(edit)).toBe(0);
+			expect(ffi.tui_edit_buffer_can_redo(edit)).toBe(0);
+
+			const insertPayload = new TextEncoder().encode(" world");
+			expect(
+				ffi.tui_edit_buffer_apply_op(
+					edit,
+					0,
+					Buffer.from(insertPayload),
+					insertPayload.length,
+					5,
+					5,
+				),
+			).toBe(0);
+			expect(ffi.tui_edit_buffer_can_undo(edit)).toBe(1);
+			expect(ffi.tui_edit_buffer_history_len(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length + insertPayload.length);
+
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_edit_buffer_can_redo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length);
+
+			expect(ffi.tui_edit_buffer_redo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length + insertPayload.length);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer break_coalescing splits undo groups", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+
+			const a = new TextEncoder().encode("a");
+			const b = new TextEncoder().encode("b");
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from(a), a.length, 0, 0)).toBe(0);
+			expect(ffi.tui_edit_buffer_break_coalescing(edit)).toBe(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from(b), b.length, 1, 1)).toBe(0);
+
+			expect(ffi.tui_edit_buffer_history_len(edit)).toBe(2);
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer delete op round-trips through undo", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("hello"), 5)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 1, null, 0, 1, 4)).toBe(0);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(2);
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(5);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer replace op handles multi-byte graphemes", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const initial = Buffer.from("A🙂B");
+			expect(ffi.tui_text_buffer_append(buf, initial, initial.length)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			const replacement = Buffer.from("界");
+			// Replace the emoji bytes [1,5) with another multi-byte grapheme.
+			expect(
+				ffi.tui_edit_buffer_apply_op(edit, 2, replacement, replacement.length, 1, 5),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(Buffer.from("A界B").length);
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer rejects stale history after external buffer mutation", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("abc"), 3)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from("d"), 1, 3, 3)).toBe(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("!"), 1)).toBe(0);
+
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(-1);
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBeNull();
+			if (errPtr) {
+				expect(new CString(errPtr).toString()).toContain("history is stale");
+			}
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer invalid handle reports explicit error", () => {
+			expect(ffi.tui_edit_buffer_apply_op(999999, 0, Buffer.from("x"), 1, 0, 0)).toBe(-1);
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBeNull();
+			if (errPtr) {
+				expect(new CString(errPtr).toString()).toContain("Invalid EditBuffer handle");
+			}
 		});
 	});
 

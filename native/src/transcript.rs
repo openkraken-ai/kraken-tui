@@ -12,9 +12,11 @@
 //! ADR-T33: Anchor-Based Viewport Semantics Override Raw Scroll Position
 
 use crate::context::TuiContext;
+use crate::text_buffer;
+use crate::text_view;
 use crate::types::{
     ContentFormat, FollowMode, NodeType, TranscriptBlock, TranscriptBlockKind, TranscriptState,
-    ViewportAnchorKind,
+    ViewportAnchorKind, WrapMode,
 };
 
 // ============================================================================
@@ -54,28 +56,49 @@ fn validate_transcript(ctx: &TuiContext, handle: u32) -> Result<&TranscriptState
         .ok_or_else(|| format!("Handle {handle} has no transcript state"))
 }
 
-/// Estimate rendered row count for a block's content.
-/// Lines wider than viewport_width wrap to the next row — this must match
-/// the wrapping behavior in render.rs `render_transcript`.
-fn estimate_rendered_rows(content: &str, viewport_width: u32) -> u32 {
-    if content.is_empty() {
-        return 1; // Empty blocks still occupy at least 1 row
+fn ensure_block_substrate(ctx: &mut TuiContext, block: &mut TranscriptBlock) -> Result<(), String> {
+    if block.buffer_handle != 0 && block.view_handle != 0 {
+        return Ok(());
     }
-    let width = if viewport_width == 0 {
-        80
+    let buffer_handle = if block.buffer_handle != 0 {
+        block.buffer_handle
     } else {
-        viewport_width
+        text_buffer::create(ctx)?
     };
-    let mut rows = 0u32;
-    for line in content.split('\n') {
-        let line_width = unicode_width::UnicodeWidthStr::width(line) as u32;
-        if line_width == 0 {
-            rows += 1;
-        } else {
-            rows += line_width.div_ceil(width);
-        }
+    let view_handle = if block.view_handle != 0 {
+        block.view_handle
+    } else {
+        text_view::create(ctx, buffer_handle)?
+    };
+    block.buffer_handle = buffer_handle;
+    block.view_handle = view_handle;
+    Ok(())
+}
+
+fn sync_block_projection(
+    ctx: &mut TuiContext,
+    block: &mut TranscriptBlock,
+    viewport_width: u32,
+) -> Result<(), String> {
+    ensure_block_substrate(ctx, block)?;
+    text_view::set_wrap(
+        ctx,
+        block.view_handle,
+        viewport_width.max(1),
+        WrapMode::Char as u8,
+        4,
+    )?;
+    block.rendered_rows = text_view::get_visual_line_count(ctx, block.view_handle)?.max(1);
+    Ok(())
+}
+
+fn destroy_block_substrate(ctx: &mut TuiContext, block: &TranscriptBlock) {
+    if block.view_handle != 0 {
+        let _ = text_view::destroy(ctx, block.view_handle);
     }
-    rows.max(1)
+    if block.buffer_handle != 0 {
+        let _ = text_buffer::destroy(ctx, block.buffer_handle);
+    }
 }
 
 /// Check if a block is effectively hidden.
@@ -194,15 +217,6 @@ pub(crate) fn compute_visible_range(state: &TranscriptState) -> (usize, usize) {
     }
 
     (start_idx.unwrap_or(0), end_idx)
-}
-
-/// Recalculate rendered_rows for all blocks using the current viewport_width.
-/// Called when viewport_width changes (e.g. terminal resize).
-pub(crate) fn recalculate_all_rendered_rows(state: &mut TranscriptState) {
-    let width = state.viewport_width;
-    for block in &mut state.blocks {
-        block.rendered_rows = estimate_rendered_rows(&block.content, width);
-    }
 }
 
 /// Recompute anchor after content insertion (respects sticky-bottom).
@@ -331,18 +345,33 @@ fn first_visible_unread_block_id(state: &TranscriptState) -> Option<u64> {
 
 /// Clear all blocks from a Transcript widget, resetting it to empty state.
 pub(crate) fn clear_blocks(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let blocks = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        if node.node_type != NodeType::Transcript {
+            return Err(format!("Handle {handle} is not a Transcript widget"));
+        }
+        node.transcript_state
+            .as_ref()
+            .ok_or_else(|| format!("Handle {handle} has no transcript state"))?
+            .blocks
+            .clone()
+    };
+
+    for block in &blocks {
+        destroy_block_substrate(ctx, block);
+    }
+
     let node = ctx
         .nodes
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid handle: {handle}"))?;
-    if node.node_type != NodeType::Transcript {
-        return Err(format!("Handle {handle} is not a Transcript widget"));
-    }
     let state = node
         .transcript_state
         .as_mut()
         .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
-
     state.blocks.clear();
     state.block_index.clear();
     state.anchor_kind = ViewportAnchorKind::Tail;
@@ -361,54 +390,64 @@ pub(crate) fn append_block(
     role: u8,
     content: &str,
 ) -> Result<(), String> {
-    let node = ctx
-        .nodes
-        .get_mut(&handle)
-        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
-    if node.node_type != NodeType::Transcript {
-        return Err(format!("Handle {handle} is not a Transcript widget"));
-    }
-    let state = node
-        .transcript_state
-        .as_mut()
-        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+    let (viewport_width, unread) = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        if node.node_type != NodeType::Transcript {
+            return Err(format!("Handle {handle} is not a Transcript widget"));
+        }
+        let state = node
+            .transcript_state
+            .as_ref()
+            .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+        if state.block_index.contains_key(&block_id) {
+            return Err(format!("Duplicate block_id: {block_id}"));
+        }
+        (state.viewport_width, !state.tail_attached)
+    };
 
-    if state.block_index.contains_key(&block_id) {
-        return Err(format!("Duplicate block_id: {block_id}"));
-    }
-
-    let rendered_rows = estimate_rendered_rows(content, state.viewport_width);
-    let unread = !state.tail_attached;
-
-    let block = TranscriptBlock {
+    let mut block = TranscriptBlock {
         id: block_id,
         kind,
         parent_id: None,
         role,
-        content: content.to_string(),
+        buffer_handle: 0,
+        view_handle: 0,
         content_format: ContentFormat::Plain,
         code_language: None,
         streaming: true,
         collapsed: false,
         hidden: false,
         unread,
-        rendered_rows,
+        rendered_rows: 1,
         version: 0,
     };
+    ensure_block_substrate(ctx, &mut block)?;
+    if !content.is_empty() {
+        text_buffer::append(ctx, block.buffer_handle, content)?;
+    }
+    sync_block_projection(ctx, &mut block, viewport_width)?;
 
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    let state = node
+        .transcript_state
+        .as_mut()
+        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
     let idx = state.blocks.len();
     state.blocks.push(block);
     state.block_index.insert(block_id, idx);
-
     if unread {
         state.unread_count += 1;
         if state.unread_anchor.is_none() {
             state.unread_anchor = Some(block_id);
         }
     }
-
     recompute_anchor_after_insert(state);
-
     node.dirty = true;
     Ok(())
 }
@@ -420,43 +459,54 @@ pub(crate) fn patch_block(
     patch_mode: u8,
     content: &str,
 ) -> Result<(), String> {
-    let node = ctx
-        .nodes
-        .get_mut(&handle)
-        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
-    if node.node_type != NodeType::Transcript {
-        return Err(format!("Handle {handle} is not a Transcript widget"));
-    }
-    let state = node
-        .transcript_state
-        .as_mut()
-        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+    let (idx, viewport_width, mut block) = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        if node.node_type != NodeType::Transcript {
+            return Err(format!("Handle {handle} is not a Transcript widget"));
+        }
+        let state = node
+            .transcript_state
+            .as_ref()
+            .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+        let &idx = state
+            .block_index
+            .get(&block_id)
+            .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
+        (idx, state.viewport_width, state.blocks[idx].clone())
+    };
 
-    let &idx = state
-        .block_index
-        .get(&block_id)
-        .ok_or_else(|| format!("Unknown block_id: {block_id}"))?;
-
-    let viewport_width = state.viewport_width;
-    let block = &mut state.blocks[idx];
-
+    ensure_block_substrate(ctx, &mut block)?;
     match patch_mode {
         0 => {
-            // Append text
-            block.content.push_str(content);
+            text_buffer::append(ctx, block.buffer_handle, content)?;
         }
         1 => {
-            // Replace text
-            block.content = content.to_string();
+            let existing_len = ctx
+                .text_buffers
+                .get(&block.buffer_handle)
+                .ok_or_else(|| format!("Invalid TextBuffer handle: {}", block.buffer_handle))?
+                .byte_len();
+            text_buffer::replace_range(ctx, block.buffer_handle, 0, existing_len, content)?;
         }
         _ => return Err(format!("Invalid patch_mode: {patch_mode}")),
     }
 
     block.version += 1;
-    block.rendered_rows = estimate_rendered_rows(&block.content, viewport_width);
+    sync_block_projection(ctx, &mut block, viewport_width)?;
 
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    let state = node
+        .transcript_state
+        .as_mut()
+        .ok_or_else(|| format!("Handle {handle} has no transcript state"))?;
+    state.blocks[idx] = block;
     recompute_anchor_after_insert(state);
-
     node.dirty = true;
     Ok(())
 }
@@ -933,6 +983,16 @@ mod tests {
         tree::create_node(ctx, NodeType::Transcript).unwrap()
     }
 
+    fn block_content(ctx: &TuiContext, handle: u32, block_index: usize) -> String {
+        let state = validate_transcript(ctx, handle).unwrap();
+        let buffer_handle = state.blocks[block_index].buffer_handle;
+        ctx.text_buffers
+            .get(&buffer_handle)
+            .unwrap()
+            .content()
+            .to_string()
+    }
+
     // ====================================================================
     // TASK-I0: Canonical Fixture Infrastructure
     // ====================================================================
@@ -1308,7 +1368,7 @@ mod tests {
 
         let state = validate_transcript(&ctx, handle).unwrap();
         assert_eq!(state.blocks.len(), 1);
-        assert_eq!(state.blocks[0].content, "Hello");
+        assert_eq!(block_content(&ctx, handle, 0), "Hello");
         assert_eq!(state.blocks[0].kind, TranscriptBlockKind::Message);
         assert!(state.blocks[0].streaming);
         assert!(!state.blocks[0].unread);
@@ -1353,7 +1413,7 @@ mod tests {
         patch_block(&mut ctx, handle, 1, 0, " World").unwrap();
 
         let state = validate_transcript(&ctx, handle).unwrap();
-        assert_eq!(state.blocks[0].content, "Hello World");
+        assert_eq!(block_content(&ctx, handle, 0), "Hello World");
         assert_eq!(state.blocks[0].version, 1);
     }
 
@@ -1374,7 +1434,7 @@ mod tests {
         patch_block(&mut ctx, handle, 1, 1, "Replaced").unwrap();
 
         let state = validate_transcript(&ctx, handle).unwrap();
-        assert_eq!(state.blocks[0].content, "Replaced");
+        assert_eq!(block_content(&ctx, handle, 0), "Replaced");
         assert_eq!(state.blocks[0].version, 1);
     }
 
@@ -2074,7 +2134,7 @@ mod tests {
         // Patching after finish should still work (content correction)
         patch_block(&mut ctx, handle, 1, 0, " World").unwrap();
         let state = validate_transcript(&ctx, handle).unwrap();
-        assert_eq!(state.blocks[0].content, "Hello World");
+        assert_eq!(block_content(&ctx, handle, 0), "Hello World");
         assert!(!state.blocks[0].streaming); // Still finished
     }
 
@@ -2097,7 +2157,7 @@ mod tests {
 
         let state = validate_transcript(&ctx, handle).unwrap();
         assert_eq!(state.blocks[0].version, 50);
-        assert!(state.blocks[0].content.starts_with("chunk0 chunk1 "));
+        assert!(block_content(&ctx, handle, 0).starts_with("chunk0 chunk1 "));
         assert!(state.tail_attached);
     }
 
@@ -2985,8 +3045,8 @@ mod tests {
         assert!(!state.blocks[0].streaming);
         assert!(!state.blocks[1].streaming);
         assert!(!state.blocks[2].streaming);
-        assert!(state.blocks[0].content.starts_with("m0 m1 "));
-        assert!(state.blocks[1].content.starts_with("t0 t1 "));
-        assert!(state.blocks[2].content.starts_with("r0 r1 "));
+        assert!(block_content(&ctx, handle, 0).starts_with("m0 m1 "));
+        assert!(block_content(&ctx, handle, 1).starts_with("t0 t1 "));
+        assert!(block_content(&ctx, handle, 2).starts_with("r0 r1 "));
     }
 }

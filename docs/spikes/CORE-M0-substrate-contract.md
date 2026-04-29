@@ -60,28 +60,24 @@ buffer storage (`buf.content.replace_range`).
 ## Dirty Range Semantics
 
 - A `Vec<DirtyRange>` is maintained per buffer, where each range is a half-open
-  byte interval `[start, end)` recording an affected region since the last
-  successful read.
-- `replace_range(s, e, payload)` records a single dirty range covering
-  `[s, s + payload.len())` (the post-replacement extent).
+  byte interval keyed by `start`, `old_end`, and `new_end`, recording both the
+  replaced extent `[start, old_end)` and the replacement extent
+  `[start, new_end)` since the last successful read.
+- `replace_range(s, e, payload)` records a single dirty range with
+  `start = s`, `old_end = e`, and `new_end = s + payload.len()`.
 - Dirty ranges are inclusive of insertions: pure inserts (`s == e`) still
-  record a dirty range covering the inserted bytes.
+  record the inserted bytes through `new_end > old_end`.
+- Shrinking edits preserve the removed tail through `old_end > new_end`, so
+  consumers that care about incremental repaint can distinguish removed cells
+  from inserted cells without reconstructing the prior content shape.
 - Style, selection, and highlight mutations do NOT add to the dirty range list;
   they bump the style fingerprint (see view cache key) instead.
 - The dirty range list is informational. Consumers (notably `TextView`) read
   it to invalidate only affected wrap cache entries.
-- **Scope of "affected region":** the recorded extent is the
-  POST-replacement region only. A shrinking edit such as
-  `replace_range(0, 6, "x")` records `[0, 1)` and does NOT record the
-  removed `[1, 6)` tail. This is sufficient for cache-invalidation
-  consumers (the wrap cache is keyed by `content_epoch` plus geometry,
-  so any mutation invalidates the whole projection). It is NOT
-  sufficient for incremental REPAINT consumers that need to know which
-  cells used to be occupied. Epic N's transcript / renderer rebase must
-  decide explicitly: either keep the cache-invalidation-only contract
-  (matches today's whole-frame redraw), or extend `DirtyRange` to carry
-  both pre- and post-replacement extents. Pinned as an open question on
-  CORE-N3.
+- **Update (Epic N re-shape):** the earlier cache-invalidation-only
+  post-replacement contract was retired. The active contract now carries both
+  pre- and post-replacement extents so transcript rebase and future
+  incremental-paint consumers share one authoritative mutation record.
 - **Update (PR #35 review wave 5, TechSpec v7.2.5):** an explicit consume API
   shipped — `tui_text_buffer_clear_dirty_ranges` — because the original
   "append-only, size-bounded by mutation count between reads" policy turned

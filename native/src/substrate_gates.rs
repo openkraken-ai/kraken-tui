@@ -286,6 +286,7 @@ fn gate_g7_selection_spans_grapheme_boundaries() {
                 fg: 0x01_FF_FF_FF,
                 bg: 0x01_00_00_00,
                 attrs: CellAttrs::empty(),
+                ..BaseStyle::default()
             },
         )
         .unwrap();

@@ -8,9 +8,12 @@
 //! - Hit-testing for mouse events (delegates to Layout Module)
 
 use crate::context::TuiContext;
+use crate::edit_buffer;
+use crate::text_buffer;
 use crate::text_utils::{
     clamp_textarea_cursor_lines, grapheme_count, grapheme_to_byte_idx, split_textarea_lines_owned,
 };
+use crate::text_view;
 use crate::textarea;
 use crate::types::{key, NodeType, TerminalInputEvent, TextAreaEdit, TuiEvent};
 
@@ -350,226 +353,416 @@ fn handle_input_key(ctx: &mut TuiContext, handle: u32, code: u32, character: cha
     false
 }
 
-fn join_textarea_lines(lines: &[String]) -> String {
-    lines.join("\n")
+fn ensure_textarea_substrate(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let (existing_buffer, existing_view, existing_edit, content) = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        (
+            node.text_buffer_handle,
+            node.text_view_handle,
+            node.edit_buffer_handle,
+            node.content.clone(),
+        )
+    };
+
+    if existing_buffer.is_some() && existing_view.is_some() && existing_edit.is_some() {
+        return Ok(());
+    }
+
+    let buffer_handle = match existing_buffer {
+        Some(handle) => handle,
+        None => {
+            let handle = text_buffer::create(ctx)?;
+            if !content.is_empty() {
+                text_buffer::append(ctx, handle, &content)?;
+            }
+            handle
+        }
+    };
+    let view_handle = match existing_view {
+        Some(handle) => handle,
+        None => text_view::create(ctx, buffer_handle)?,
+    };
+    let edit_handle = match existing_edit {
+        Some(handle) => handle,
+        None => edit_buffer::create(ctx, buffer_handle)?,
+    };
+
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    node.text_buffer_handle = Some(buffer_handle);
+    node.text_view_handle = Some(view_handle);
+    node.edit_buffer_handle = Some(edit_handle);
+    Ok(())
+}
+
+fn sync_textarea_content_from_buffer(
+    ctx: &mut TuiContext,
+    handle: u32,
+    buffer_handle: u32,
+) -> Result<String, String> {
+    let content = ctx
+        .text_buffers
+        .get(&buffer_handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {buffer_handle}"))?
+        .content()
+        .to_string();
+    let node = ctx
+        .nodes
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+    node.content = content.clone();
+    Ok(content)
 }
 
 /// Handle a key press on a focused TextArea widget. Returns true if consumed.
 fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: char) -> bool {
+    if ensure_textarea_substrate(ctx, handle).is_err() {
+        return false;
+    }
+
     let mut emit_change = false;
     let mut consumed = false;
-
-    {
+    let (
+        buffer_handle,
+        edit_handle,
+        mut cursor_row,
+        mut cursor_col,
+        wrap_mode,
+        textarea_view_row,
+        mut textarea_view_col,
+        selection_anchor_before,
+        selection_focus_before,
+        history_limit,
+    ) = {
         let node = match ctx.nodes.get_mut(&handle) {
-            Some(n) => n,
+            Some(node) => node,
             None => return false,
         };
-
-        let mut lines = split_textarea_lines_owned(&node.content);
+        let lines = split_textarea_lines_owned(&node.content);
         clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
-
-        // Check if we have a non-empty selection (anchor != focus)
-        let has_selection = node.textarea_state.as_ref().is_some_and(
-            |s| matches!((s.selection_anchor, s.selection_focus), (Some(a), Some(f)) if a != f),
-        );
-
-        // For mutating keys (ENTER, BACKSPACE, DELETE, char input), if selection
-        // is active, delete the selected text first and collapse cursor.
-        let is_mutating = matches!(code, key::ENTER | key::BACKSPACE | key::DELETE)
-            || (character != '\0' && !character.is_control());
-
-        // Snapshot for undo recording — only needed for mutating keys
-        let (content_before, cursor_row_before, cursor_col_before) = if is_mutating {
-            (node.content.clone(), node.cursor_row, node.cursor_col)
-        } else {
-            (String::new(), 0, 0)
+        let state = match node.textarea_state.as_ref() {
+            Some(state) => state,
+            None => return false,
         };
+        (
+            match node.text_buffer_handle {
+                Some(handle) => handle,
+                None => return false,
+            },
+            match node.edit_buffer_handle {
+                Some(handle) => handle,
+                None => return false,
+            },
+            node.cursor_row,
+            node.cursor_col,
+            node.wrap_mode,
+            node.textarea_view_row,
+            node.textarea_view_col,
+            state.selection_anchor,
+            state.selection_focus,
+            state.history_limit,
+        )
+    };
 
-        if has_selection && is_mutating {
-            if let Some(state) = node.textarea_state.as_ref() {
-                if let (Some(anchor), Some(focus)) = (state.selection_anchor, state.selection_focus)
-                {
-                    let (new_content, new_row, new_col) =
-                        textarea::delete_selection(&node.content, anchor, focus);
-                    node.content = new_content;
-                    node.cursor_row = new_row;
-                    node.cursor_col = new_col;
-                    // Re-split lines after selection deletion
-                    lines = split_textarea_lines_owned(&node.content);
-                    clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+    let mut content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+        Ok(content) => content,
+        Err(_) => return false,
+    };
+    let mut lines = split_textarea_lines_owned(&content);
+    clamp_textarea_cursor_lines(&lines, &mut cursor_row, &mut cursor_col);
 
-                    emit_change = true;
+    let has_selection = matches!(
+        (selection_anchor_before, selection_focus_before),
+        (Some(anchor), Some(focus)) if anchor != focus
+    );
+    let is_mutating = matches!(code, key::ENTER | key::BACKSPACE | key::DELETE)
+        || (character != '\0' && !character.is_control());
+    let cursor_row_before = cursor_row;
+    let cursor_col_before = cursor_col;
+    let mut coalesced = false;
 
-                    // BACKSPACE/DELETE: selection delete is the complete action — consume.
-                    // ENTER/character: fall through to insert the key after deletion
-                    // (standard replace-selection behavior).
-                    if code == key::BACKSPACE || code == key::DELETE {
-                        consumed = true;
-                    }
-                }
+    if has_selection && is_mutating {
+        if let (Some(anchor), Some(focus)) = (selection_anchor_before, selection_focus_before) {
+            let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+            let (start_pos, end_pos) = textarea::normalize_selection(anchor, focus);
+            let start_byte = textarea::position_to_byte_offset(&content, start_pos.0, start_pos.1);
+            let end_byte = textarea::position_to_byte_offset(&content, end_pos.0, end_pos.1);
+            let replacement = match code {
+                key::BACKSPACE | key::DELETE => String::new(),
+                key::ENTER => "\n".to_string(),
+                _ if character != '\0' && !character.is_control() => character.to_string(),
+                _ => String::new(),
+            };
+            coalesced = match edit_buffer::apply_replace(
+                ctx,
+                edit_handle,
+                start_byte,
+                end_byte,
+                &replacement,
+            ) {
+                Ok(coalesced) => coalesced,
+                Err(_) => return false,
+            };
+            let buffer_handle = match edit_buffer::buffer_handle(ctx, edit_handle) {
+                Ok(handle) => handle,
+                Err(_) => return false,
+            };
+            content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+                Ok(content) => content,
+                Err(_) => return false,
+            };
+            if replacement.is_empty() {
+                let (_new_content_preview, new_row, new_col) =
+                    textarea::delete_selection(&content, anchor, focus);
+                cursor_row = new_row;
+                cursor_col = new_col;
+            } else {
+                (cursor_row, cursor_col) =
+                    textarea::byte_offset_to_position(&content, start_byte + replacement.len());
             }
-            // Clear selection
-            if let Some(state) = node.textarea_state.as_mut() {
-                state.clear_selection();
-            }
-        }
-
-        if !consumed {
-            match code {
-                key::ENTER => {
-                    let row = node.cursor_row as usize;
-                    let col = node.cursor_col as usize;
-                    let split_at = grapheme_to_byte_idx(&lines[row], col);
-                    let before = lines[row][..split_at].to_string();
-                    let after = lines[row][split_at..].to_string();
-                    lines[row] = before;
-                    lines.insert(row + 1, after);
-                    node.cursor_row += 1;
-                    node.cursor_col = 0;
-                    emit_change = true;
-                    consumed = true;
-                }
-                key::BACKSPACE => {
-                    if node.cursor_col > 0 {
-                        let row = node.cursor_row as usize;
-                        let col = node.cursor_col as usize;
-                        let start = grapheme_to_byte_idx(&lines[row], col - 1);
-                        let end = grapheme_to_byte_idx(&lines[row], col);
-                        lines[row].replace_range(start..end, "");
-                        node.cursor_col -= 1;
-                        emit_change = true;
-                    } else if node.cursor_row > 0 {
-                        let row = node.cursor_row as usize;
-                        let current_line = lines.remove(row);
-                        let prev_row = row - 1;
-                        let prev_len = grapheme_count(&lines[prev_row]) as u32;
-                        lines[prev_row].push_str(&current_line);
-                        node.cursor_row -= 1;
-                        node.cursor_col = prev_len;
-                        emit_change = true;
-                    }
-                    consumed = true;
-                }
-                key::DELETE => {
-                    let row = node.cursor_row as usize;
-                    let col = node.cursor_col as usize;
-                    let line_len = grapheme_count(&lines[row]);
-                    if col < line_len {
-                        let start = grapheme_to_byte_idx(&lines[row], col);
-                        let end = grapheme_to_byte_idx(&lines[row], col + 1);
-                        lines[row].replace_range(start..end, "");
-                        emit_change = true;
-                    } else if row + 1 < lines.len() {
-                        let next_line = lines.remove(row + 1);
-                        lines[row].push_str(&next_line);
-                        emit_change = true;
-                    }
-                    consumed = true;
-                }
-                key::LEFT => {
-                    if node.cursor_col > 0 {
-                        node.cursor_col -= 1;
-                    } else if node.cursor_row > 0 {
-                        node.cursor_row -= 1;
-                        node.cursor_col = grapheme_count(&lines[node.cursor_row as usize]) as u32;
-                    }
-                    consumed = true;
-                }
-                key::RIGHT => {
-                    let row = node.cursor_row as usize;
-                    let line_len = grapheme_count(&lines[row]) as u32;
-                    if node.cursor_col < line_len {
-                        node.cursor_col += 1;
-                    } else if (node.cursor_row as usize) + 1 < lines.len() {
-                        node.cursor_row += 1;
-                        node.cursor_col = 0;
-                    }
-                    consumed = true;
-                }
-                key::UP => {
-                    if node.cursor_row > 0 {
-                        node.cursor_row -= 1;
-                        clamp_textarea_cursor_lines(
-                            &lines,
-                            &mut node.cursor_row,
-                            &mut node.cursor_col,
-                        );
-                    }
-                    consumed = true;
-                }
-                key::DOWN => {
-                    if (node.cursor_row as usize) + 1 < lines.len() {
-                        node.cursor_row += 1;
-                        clamp_textarea_cursor_lines(
-                            &lines,
-                            &mut node.cursor_row,
-                            &mut node.cursor_col,
-                        );
-                    }
-                    consumed = true;
-                }
-                key::HOME => {
-                    node.cursor_col = 0;
-                    consumed = true;
-                }
-                key::END => {
-                    let row = node.cursor_row as usize;
-                    node.cursor_col = grapheme_count(&lines[row]) as u32;
-                    consumed = true;
-                }
-                _ => {}
-            }
-        }
-
-        // Clear selection on navigation keys
-        if consumed && !is_mutating {
-            if let Some(state) = node.textarea_state.as_mut() {
-                state.clear_selection();
-            }
-        }
-
-        if !consumed && character != '\0' && !character.is_control() {
-            let row = node.cursor_row as usize;
-            let col = node.cursor_col as usize;
-            let idx = grapheme_to_byte_idx(&lines[row], col);
-            lines[row].insert(idx, character);
-            node.cursor_col += 1;
+            lines = split_textarea_lines_owned(&content);
+            clamp_textarea_cursor_lines(&lines, &mut cursor_row, &mut cursor_col);
             emit_change = true;
             consumed = true;
         }
+    }
+
+    if !consumed {
+        match code {
+            key::ENTER => {
+                let insert_at = textarea::position_to_byte_offset(&content, cursor_row, cursor_col);
+                coalesced = match edit_buffer::apply_insert(ctx, edit_handle, insert_at, "\n") {
+                    Ok(coalesced) => coalesced,
+                    Err(_) => return false,
+                };
+                let buffer_handle = match edit_buffer::buffer_handle(ctx, edit_handle) {
+                    Ok(handle) => handle,
+                    Err(_) => return false,
+                };
+                content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+                    Ok(content) => content,
+                    Err(_) => return false,
+                };
+                cursor_row += 1;
+                cursor_col = 0;
+                emit_change = true;
+                consumed = true;
+            }
+            key::BACKSPACE => {
+                if cursor_col > 0 {
+                    let row = cursor_row as usize;
+                    let col = cursor_col as usize;
+                    let start = textarea::position_to_byte_offset(&content, cursor_row, cursor_col)
+                        - (grapheme_to_byte_idx(&lines[row], col)
+                            - grapheme_to_byte_idx(&lines[row], col - 1));
+                    let end = textarea::position_to_byte_offset(&content, cursor_row, cursor_col);
+                    coalesced = match edit_buffer::apply_delete(ctx, edit_handle, start, end) {
+                        Ok(coalesced) => coalesced,
+                        Err(_) => return false,
+                    };
+                    cursor_col -= 1;
+                    emit_change = true;
+                } else if cursor_row > 0 {
+                    let prev_row = cursor_row - 1;
+                    let prev_len = grapheme_count(&lines[prev_row as usize]) as u32;
+                    let start = textarea::position_to_byte_offset(&content, prev_row, prev_len);
+                    coalesced = match edit_buffer::apply_delete(ctx, edit_handle, start, start + 1)
+                    {
+                        Ok(coalesced) => coalesced,
+                        Err(_) => return false,
+                    };
+                    cursor_row -= 1;
+                    cursor_col = prev_len;
+                    emit_change = true;
+                }
+                if emit_change {
+                    let buffer_handle = match edit_buffer::buffer_handle(ctx, edit_handle) {
+                        Ok(handle) => handle,
+                        Err(_) => return false,
+                    };
+                    content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+                        Ok(content) => content,
+                        Err(_) => return false,
+                    };
+                }
+                consumed = true;
+            }
+            key::DELETE => {
+                let row = cursor_row as usize;
+                let col = cursor_col as usize;
+                let line_len = grapheme_count(&lines[row]);
+                if col < line_len {
+                    let start = textarea::position_to_byte_offset(&content, cursor_row, cursor_col);
+                    let end =
+                        textarea::position_to_byte_offset(&content, cursor_row, cursor_col + 1);
+                    coalesced = match edit_buffer::apply_delete(ctx, edit_handle, start, end) {
+                        Ok(coalesced) => coalesced,
+                        Err(_) => return false,
+                    };
+                    emit_change = true;
+                } else if row + 1 < lines.len() {
+                    let start = textarea::position_to_byte_offset(&content, cursor_row, cursor_col);
+                    coalesced = match edit_buffer::apply_delete(ctx, edit_handle, start, start + 1)
+                    {
+                        Ok(coalesced) => coalesced,
+                        Err(_) => return false,
+                    };
+                    emit_change = true;
+                }
+                if emit_change {
+                    let buffer_handle = match edit_buffer::buffer_handle(ctx, edit_handle) {
+                        Ok(handle) => handle,
+                        Err(_) => return false,
+                    };
+                    content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+                        Ok(content) => content,
+                        Err(_) => return false,
+                    };
+                }
+                consumed = true;
+            }
+            key::LEFT => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                if cursor_col > 0 {
+                    cursor_col -= 1;
+                } else if cursor_row > 0 {
+                    cursor_row -= 1;
+                    cursor_col = grapheme_count(&lines[cursor_row as usize]) as u32;
+                }
+                consumed = true;
+            }
+            key::RIGHT => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                let row = cursor_row as usize;
+                let line_len = grapheme_count(&lines[row]) as u32;
+                if cursor_col < line_len {
+                    cursor_col += 1;
+                } else if (cursor_row as usize) + 1 < lines.len() {
+                    cursor_row += 1;
+                    cursor_col = 0;
+                }
+                consumed = true;
+            }
+            key::UP => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                if cursor_row > 0 {
+                    cursor_row -= 1;
+                    clamp_textarea_cursor_lines(&lines, &mut cursor_row, &mut cursor_col);
+                }
+                consumed = true;
+            }
+            key::DOWN => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                if (cursor_row as usize) + 1 < lines.len() {
+                    cursor_row += 1;
+                    clamp_textarea_cursor_lines(&lines, &mut cursor_row, &mut cursor_col);
+                }
+                consumed = true;
+            }
+            key::HOME => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                cursor_col = 0;
+                consumed = true;
+            }
+            key::END => {
+                let _ = edit_buffer::break_coalescing(ctx, edit_handle);
+                let row = cursor_row as usize;
+                cursor_col = grapheme_count(&lines[row]) as u32;
+                consumed = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !consumed && character != '\0' && !character.is_control() {
+        let insert_at = textarea::position_to_byte_offset(&content, cursor_row, cursor_col);
+        let mut payload = [0u8; 4];
+        let text = character.encode_utf8(&mut payload);
+        coalesced = match edit_buffer::apply_insert(ctx, edit_handle, insert_at, text) {
+            Ok(coalesced) => coalesced,
+            Err(_) => return false,
+        };
+        let buffer_handle = match edit_buffer::buffer_handle(ctx, edit_handle) {
+            Ok(handle) => handle,
+            Err(_) => return false,
+        };
+        content = match sync_textarea_content_from_buffer(ctx, handle, buffer_handle) {
+            Ok(content) => content,
+            Err(_) => return false,
+        };
+        cursor_col += 1;
+        emit_change = true;
+        consumed = true;
+    }
+
+    lines = split_textarea_lines_owned(&content);
+    clamp_textarea_cursor_lines(&lines, &mut cursor_row, &mut cursor_col);
+
+    let selection_anchor_after = None;
+    let selection_focus_after = None;
+
+    let edit_buffer_handle_for_trim;
+    {
+        let node = match ctx.nodes.get_mut(&handle) {
+            Some(node) => node,
+            None => return false,
+        };
+        node.content = content;
+        node.cursor_row = cursor_row;
+        node.cursor_col = cursor_col;
+        node.textarea_view_row = textarea_view_row.min(cursor_row);
+        if wrap_mode != 0 {
+            textarea_view_col = 0;
+        } else {
+            textarea_view_col = textarea_view_col.min(cursor_col);
+        }
+        node.textarea_view_col = textarea_view_col;
+        let state = match node.textarea_state.as_mut() {
+            Some(state) => state,
+            None => return false,
+        };
+        state.clear_selection();
+        edit_buffer_handle_for_trim = node.edit_buffer_handle;
 
         if emit_change {
-            node.content = join_textarea_lines(&lines);
-
-            // Record undo entry
-            if let Some(state) = node.textarea_state.as_mut() {
-                textarea::record_edit(
-                    state,
-                    TextAreaEdit {
-                        content_before,
-                        cursor_row_before,
-                        cursor_col_before,
-                        content_after: node.content.clone(),
-                        cursor_row_after: node.cursor_row,
-                        cursor_col_after: node.cursor_col,
-                    },
-                );
-            }
-        }
-        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
-
-        // Keep cursor-follow viewport sane; render module applies exact visibility.
-        if node.textarea_view_row > node.cursor_row {
-            node.textarea_view_row = node.cursor_row;
-        }
-        if node.wrap_mode != 0 {
-            node.textarea_view_col = 0;
-        } else if node.textarea_view_col > node.cursor_col {
-            node.textarea_view_col = node.cursor_col;
+            textarea::record_edit(
+                state,
+                TextAreaEdit {
+                    cursor_row_before,
+                    cursor_col_before,
+                    selection_anchor_before,
+                    selection_focus_before,
+                    cursor_row_after: cursor_row,
+                    cursor_col_after: cursor_col,
+                    selection_anchor_after,
+                    selection_focus_after,
+                },
+                coalesced,
+            );
         }
 
         if consumed {
             node.dirty = true;
+        }
+    }
+
+    if emit_change {
+        if let Some(edit_buffer_handle) = edit_buffer_handle_for_trim {
+            if let Err(err) =
+                edit_buffer::trim_history(ctx, edit_buffer_handle, history_limit as usize)
+            {
+                // History trimming is best-effort during typing so a trim
+                // failure does not drop the input event, but debug mode still
+                // surfaces the mismatch to keep native/host state drift visible.
+                ctx.debug_log(&format!(
+                    "handle_textarea_key: trim_history failed for edit buffer {edit_buffer_handle}: {err}"
+                ));
+            }
         }
     }
 
@@ -1182,6 +1375,84 @@ mod tests {
         TuiContext::new(Box::new(MockBackend::new(80, 24)))
     }
 
+    fn textarea_undo_for_test(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
+        let (edit_handle, edit) = {
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+            let edit_handle = node
+                .edit_buffer_handle
+                .ok_or_else(|| format!("Handle {handle} has no EditBuffer"))?;
+            let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
+            let Some(edit) = textarea::take_undo(state) else {
+                return Ok(false);
+            };
+            (edit_handle, edit)
+        };
+        if !edit_buffer::undo(ctx, edit_handle)? {
+            return Ok(false);
+        }
+        let buffer_handle = edit_buffer::buffer_handle(ctx, edit_handle)?;
+        let content = ctx
+            .text_buffers
+            .get(&buffer_handle)
+            .ok_or_else(|| format!("Invalid TextBuffer handle: {buffer_handle}"))?
+            .content()
+            .to_string();
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.content = content;
+        node.cursor_row = edit.cursor_row_before;
+        node.cursor_col = edit.cursor_col_before;
+        if let Some(state) = node.textarea_state.as_mut() {
+            state.selection_anchor = edit.selection_anchor_before;
+            state.selection_focus = edit.selection_focus_before;
+            textarea::push_redo(state, edit);
+        }
+        let lines = split_textarea_lines_owned(&node.content);
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+        Ok(true)
+    }
+
+    fn textarea_redo_for_test(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
+        let (edit_handle, edit) = {
+            let node = ctx
+                .nodes
+                .get_mut(&handle)
+                .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+            let edit_handle = node
+                .edit_buffer_handle
+                .ok_or_else(|| format!("Handle {handle} has no EditBuffer"))?;
+            let state = node.textarea_state.as_mut().ok_or("No textarea state")?;
+            let Some(edit) = textarea::take_redo(state) else {
+                return Ok(false);
+            };
+            (edit_handle, edit)
+        };
+        if !edit_buffer::redo(ctx, edit_handle)? {
+            return Ok(false);
+        }
+        let buffer_handle = edit_buffer::buffer_handle(ctx, edit_handle)?;
+        let content = ctx
+            .text_buffers
+            .get(&buffer_handle)
+            .ok_or_else(|| format!("Invalid TextBuffer handle: {buffer_handle}"))?
+            .content()
+            .to_string();
+        let node = ctx.nodes.get_mut(&handle).unwrap();
+        node.content = content;
+        node.cursor_row = edit.cursor_row_after;
+        node.cursor_col = edit.cursor_col_after;
+        if let Some(state) = node.textarea_state.as_mut() {
+            state.selection_anchor = edit.selection_anchor_after;
+            state.selection_focus = edit.selection_focus_after;
+            textarea::push_undo(state, edit);
+        }
+        let lines = split_textarea_lines_owned(&node.content);
+        clamp_textarea_cursor_lines(&lines, &mut node.cursor_row, &mut node.cursor_col);
+        Ok(true)
+    }
+
     #[test]
     fn test_focus_traversal() {
         let mut ctx = test_ctx();
@@ -1402,35 +1673,29 @@ mod tests {
             node.cursor_col = 5;
         }
 
-        // Type " world" (6 characters → 6 undo entries)
+        // Type " world" as one contiguous insert run.
         for ch in [' ', 'w', 'o', 'r', 'l', 'd'] {
             handle_textarea_key(&mut ctx, textarea, 0, ch);
         }
         assert_eq!(ctx.nodes[&textarea].content, "hello world");
 
-        // Undo all 6 character inserts
-        for _ in 0..6 {
-            let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
-            assert_eq!(result.unwrap(), true);
-        }
+        let result = textarea_undo_for_test(&mut ctx, textarea);
+        assert_eq!(result.unwrap(), true);
         assert_eq!(ctx.nodes[&textarea].content, "hello");
         assert_eq!(ctx.nodes[&textarea].cursor_col, 5);
 
         // Undo on empty stack returns false
-        let result = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        let result = textarea_undo_for_test(&mut ctx, textarea);
         assert_eq!(result.unwrap(), false);
         assert_eq!(ctx.nodes[&textarea].content, "hello");
 
-        // Redo all 6 character inserts
-        for _ in 0..6 {
-            let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
-            assert_eq!(result.unwrap(), true);
-        }
+        let result = textarea_redo_for_test(&mut ctx, textarea);
+        assert_eq!(result.unwrap(), true);
         assert_eq!(ctx.nodes[&textarea].content, "hello world");
         assert_eq!(ctx.nodes[&textarea].cursor_col, 11);
 
         // Redo on empty stack returns false
-        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        let result = textarea_redo_for_test(&mut ctx, textarea);
         assert_eq!(result.unwrap(), false);
     }
 
@@ -1452,13 +1717,13 @@ mod tests {
         assert_eq!(ctx.nodes[&textarea].cursor_col, 0);
 
         // Undo → content restored to "ab", cursor back to (0, 1)
-        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        textarea_undo_for_test(&mut ctx, textarea).unwrap();
         assert_eq!(ctx.nodes[&textarea].content, "ab");
         assert_eq!(ctx.nodes[&textarea].cursor_row, 0);
         assert_eq!(ctx.nodes[&textarea].cursor_col, 1);
 
         // Redo → "a\nb" again
-        textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        textarea_redo_for_test(&mut ctx, textarea).unwrap();
         assert_eq!(ctx.nodes[&textarea].content, "a\nb");
 
         // Now backspace at (1, 0) → joins lines back to "ab"
@@ -1466,7 +1731,7 @@ mod tests {
         assert_eq!(ctx.nodes[&textarea].content, "ab");
 
         // Undo the backspace → "a\nb"
-        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        textarea_undo_for_test(&mut ctx, textarea).unwrap();
         assert_eq!(ctx.nodes[&textarea].content, "a\nb");
     }
 
@@ -1486,7 +1751,7 @@ mod tests {
         assert_eq!(ctx.nodes[&textarea].content, "abcx");
 
         // Undo → "abc"
-        textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+        textarea_undo_for_test(&mut ctx, textarea).unwrap();
         assert_eq!(ctx.nodes[&textarea].content, "abc");
 
         // Type 'y' (diverge from redo history)
@@ -1494,7 +1759,7 @@ mod tests {
         assert_eq!(ctx.nodes[&textarea].content, "abcy");
 
         // Redo should now return false (redo stack was cleared)
-        let result = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        let result = textarea_redo_for_test(&mut ctx, textarea);
         assert_eq!(result.unwrap(), false);
         assert_eq!(ctx.nodes[&textarea].content, "abcy");
     }
@@ -1511,22 +1776,24 @@ mod tests {
             node.textarea_state.as_mut().unwrap().history_limit = 3;
         }
 
-        // Type 5 characters → only last 3 should be in undo stack
+        // Create five distinct edit groups by breaking coalescing with cursor movement.
         for ch in ['a', 'b', 'c', 'd', 'e'] {
             handle_textarea_key(&mut ctx, textarea, 0, ch);
+            handle_textarea_key(&mut ctx, textarea, key::LEFT, '\0');
+            handle_textarea_key(&mut ctx, textarea, key::RIGHT, '\0');
         }
         assert_eq!(ctx.nodes[&textarea].content, "startabcde");
 
         // Undo 3 times (the limit)
         for _ in 0..3 {
-            let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+            let r = textarea_undo_for_test(&mut ctx, textarea);
             assert_eq!(r.unwrap(), true);
         }
         // Should have undone 'e', 'd', 'c' — left with "startab"
         assert_eq!(ctx.nodes[&textarea].content, "startab");
 
         // 4th undo returns false (oldest entries were trimmed)
-        let r = textarea::undo(ctx.nodes.get_mut(&textarea).unwrap());
+        let r = textarea_undo_for_test(&mut ctx, textarea);
         assert_eq!(r.unwrap(), false);
         assert_eq!(ctx.nodes[&textarea].content, "startab");
     }
@@ -1542,47 +1809,58 @@ mod tests {
             node.cursor_col = 1;
         }
 
-        // Type 5 characters with default limit (256)
+        // Type 5 characters with explicit coalescing breaks between groups.
         for ch in ['a', 'b', 'c', 'd', 'e'] {
             handle_textarea_key(&mut ctx, textarea, 0, ch);
+            handle_textarea_key(&mut ctx, textarea, key::LEFT, '\0');
+            handle_textarea_key(&mut ctx, textarea, key::RIGHT, '\0');
         }
         assert_eq!(ctx.nodes[&textarea].content, "xabcde");
 
         // Undo all 5
         for _ in 0..5 {
-            textarea::undo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
+            textarea_undo_for_test(&mut ctx, textarea).unwrap();
         }
         assert_eq!(ctx.nodes[&textarea].content, "x");
-        // Now redo_stack has 5 entries, undo_stack has 0
+        // Now redo exists; lowering the limit clears redo to avoid replaying
+        // steps whose prerequisites were trimmed away from native history.
 
-        // Lower history limit to 2
-        {
-            let state = ctx
-                .nodes
-                .get_mut(&textarea)
-                .unwrap()
-                .textarea_state
-                .as_mut()
-                .unwrap();
-            state.history_limit = 2;
-            // Trim redo_stack like tui_textarea_set_history_limit does
-            while state.redo_stack.len() > 2 {
-                state.redo_stack.pop_front();
-            }
-        }
+        let node = ctx.nodes.get_mut(&textarea).unwrap();
+        node.textarea_state.as_mut().unwrap().history_limit = 2;
+        let edit_handle = node.edit_buffer_handle.unwrap();
+        node.textarea_state.as_mut().unwrap().redo_stack.clear();
+        crate::edit_buffer::discard_redo(&mut ctx, edit_handle).unwrap();
+        crate::edit_buffer::trim_history(&mut ctx, edit_handle, 2).unwrap();
 
-        // Redo both available entries
-        for _ in 0..2 {
-            textarea::redo(ctx.nodes.get_mut(&textarea).unwrap()).unwrap();
-        }
-
-        // Undo stack should not exceed the limit of 2
         let state = ctx.nodes[&textarea].textarea_state.as_ref().unwrap();
+        assert!(state.redo_stack.is_empty());
         assert!(state.undo_stack.len() <= 2);
 
-        // 3rd redo should return false
-        let r = textarea::redo(ctx.nodes.get_mut(&textarea).unwrap());
+        // Redo is intentionally discarded when the limit changes mid-branch.
+        let r = textarea_redo_for_test(&mut ctx, textarea);
         assert_eq!(r.unwrap(), false);
+    }
+
+    #[test]
+    fn test_textarea_selection_replace_undo_restores_original_content() {
+        let mut ctx = test_ctx();
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "hello world".to_string();
+            node.cursor_row = 0;
+            node.cursor_col = 5;
+            let state = node.textarea_state.as_mut().unwrap();
+            state.selection_anchor = Some((0, 0));
+            state.selection_focus = Some((0, 5));
+        }
+
+        assert!(handle_textarea_key(&mut ctx, textarea, 0, 'X'));
+        assert_eq!(ctx.nodes[&textarea].content, "X world");
+
+        let result = textarea_undo_for_test(&mut ctx, textarea);
+        assert_eq!(result.unwrap(), true);
+        assert_eq!(ctx.nodes[&textarea].content, "hello world");
     }
 
     #[test]

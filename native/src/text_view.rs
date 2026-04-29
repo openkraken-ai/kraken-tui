@@ -2,8 +2,9 @@
 //!
 //! Viewport and soft-wrap projection over a `TextBuffer`. Holds an invalidatable
 //! visual-line cache keyed by `(content_epoch, wrap_width, wrap_mode, tab_width,
-//! style_fingerprint, viewport_rows)`. Resize invalidates view projection only;
-//! buffer storage is untouched.
+//! style_fingerprint)`. Viewport scroll/height changes do not rebuild the wrap
+//! projection because visible-row clipping is applied at render time; resize
+//! invalidates projection only when the wrap width changes.
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -36,7 +37,6 @@ struct CacheKey {
     wrap_mode: u8,
     tab_width: u8,
     style_fingerprint: u64,
-    viewport_rows: u32,
 }
 
 impl CacheKey {
@@ -47,7 +47,6 @@ impl CacheKey {
             wrap_mode: u8::MAX,
             tab_width: u8::MAX,
             style_fingerprint: u64::MAX,
-            viewport_rows: u32::MAX,
         }
     }
 }
@@ -440,7 +439,6 @@ pub(crate) fn ensure_projection(ctx: &mut TuiContext, handle: u32) -> Result<(),
         wrap_mode: v.wrap_mode as u8,
         tab_width: v.tab_width,
         style_fingerprint: fingerprint,
-        viewport_rows: v.viewport_rows,
     };
 
     if v.cached_key == key {
@@ -993,6 +991,27 @@ mod tests {
         with_ctx(|ctx| {
             ensure_projection(ctx, view).unwrap();
             let k1 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            ensure_projection(ctx, view).unwrap();
+            let k2 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            assert_eq!(k1, k2);
+        });
+    }
+
+    #[test]
+    fn viewport_row_changes_do_not_invalidate_projection() {
+        let _g = fresh_ctx();
+        let view = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "hello world").unwrap();
+            let v = create(ctx, buf).unwrap();
+            set_wrap(ctx, v, 5, WrapMode::Char as u8, 4).unwrap();
+            set_viewport(ctx, v, 1, 0, 0).unwrap();
+            v
+        });
+        with_ctx(|ctx| {
+            ensure_projection(ctx, view).unwrap();
+            let k1 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
+            set_viewport(ctx, view, 3, 0, 0).unwrap();
             ensure_projection(ctx, view).unwrap();
             let k2 = ctx.text_views.get(&view).unwrap().cache_key_epoch;
             assert_eq!(k1, k2);

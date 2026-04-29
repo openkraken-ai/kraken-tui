@@ -40,3 +40,7 @@ harness = false
 [[bench]]
 name = "devtools_bench"
 harness = false
+
+[[bench]]
+name = "text_substrate_bench"
+harness = false
