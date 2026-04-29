@@ -70,6 +70,18 @@ buffer storage (`buf.content.replace_range`).
   they bump the style fingerprint (see view cache key) instead.
 - The dirty range list is informational. Consumers (notably `TextView`) read
   it to invalidate only affected wrap cache entries.
+- **Scope of "affected region":** the recorded extent is the
+  POST-replacement region only. A shrinking edit such as
+  `replace_range(0, 6, "x")` records `[0, 1)` and does NOT record the
+  removed `[1, 6)` tail. This is sufficient for cache-invalidation
+  consumers (the wrap cache is keyed by `content_epoch` plus geometry,
+  so any mutation invalidates the whole projection). It is NOT
+  sufficient for incremental REPAINT consumers that need to know which
+  cells used to be occupied. Epic N's transcript / renderer rebase must
+  decide explicitly: either keep the cache-invalidation-only contract
+  (matches today's whole-frame redraw), or extend `DirtyRange` to carry
+  both pre- and post-replacement extents. Pinned as an open question on
+  CORE-N3.
 - **Update (PR #35 review wave 5, TechSpec v7.2.5):** an explicit consume API
   shipped — `tui_text_buffer_clear_dirty_ranges` — because the original
   "append-only, size-bounded by mutation count between reads" policy turned

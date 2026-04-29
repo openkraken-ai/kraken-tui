@@ -237,6 +237,12 @@ const lib = dlopen(LIB_PATH, {
 	tui_text_buffer_get_epoch:         { args: ["u32"] as FFIType[],                                returns: "u64" as const },
 	tui_text_buffer_get_byte_len:      { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 	tui_text_buffer_get_line_count:    { args: ["u32"] as FFIType[],                                returns: "u32" as const },
+	tui_text_buffer_set_style_span:    { args: ["u32", "u32", "u32", "u32", "u32", "u8"] as FFIType[], returns: "i32" as const },
+	tui_text_buffer_clear_style_spans: { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_selection:     { args: ["u32", "u32", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_text_buffer_clear_selection:   { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_highlight:     { args: ["u32", "u32", "u32", "u8"] as FFIType[],            returns: "i32" as const },
+	tui_text_buffer_clear_highlights:  { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_buffer_clear_dirty_ranges:{ args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_view_create:              { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 	tui_text_view_destroy:             { args: ["u32"] as FFIType[],                                returns: "i32" as const },
@@ -839,6 +845,41 @@ describe("FFI integration", () => {
 			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(2n);
 			// Drain dirty ranges.
 			expect(ffi.tui_text_buffer_clear_dirty_ranges(buf)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("style span / selection / highlight set + clear round-trip", () => {
+			// Round-trips every style/highlight/selection FFI entry the host
+			// claims to expose. Each call must succeed (return 0) and not
+			// observably perturb buffer epoch (style mutations bump
+			// style_fingerprint, not content epoch) — the substrate
+			// contract documented in TechSpec §3.4.
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const payload = new TextEncoder().encode("hello world");
+			expect(
+				ffi.tui_text_buffer_append(buf, Buffer.from(payload), payload.length),
+			).toBe(0);
+			const baseline_epoch = ffi.tui_text_buffer_get_epoch(buf);
+
+			// Style span: cover bytes [0, 5) ("hello") with red fg, default bg, BOLD.
+			const ATTR_BOLD = 0x01;
+			expect(
+				ffi.tui_text_buffer_set_style_span(buf, 0, 5, 0xff_00_00, 0, ATTR_BOLD),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_clear_style_spans(buf)).toBe(0);
+
+			// Selection: set then clear.
+			expect(ffi.tui_text_buffer_set_selection(buf, 6, 11)).toBe(0);
+			expect(ffi.tui_text_buffer_clear_selection(buf)).toBe(0);
+
+			// Highlight: search-match kind = 0.
+			expect(ffi.tui_text_buffer_set_highlight(buf, 0, 5, 0)).toBe(0);
+			expect(ffi.tui_text_buffer_clear_highlights(buf)).toBe(0);
+
+			// None of the above mutates content; epoch must be unchanged.
+			expect(ffi.tui_text_buffer_get_epoch(buf)).toBe(baseline_epoch);
+
 			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
 		});
 

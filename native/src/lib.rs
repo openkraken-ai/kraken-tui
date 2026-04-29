@@ -117,6 +117,23 @@ fn ffi_wrap_u64(f: impl FnOnce() -> Result<u64, String>) -> u64 {
     }
 }
 
+/// Convert a `usize` to `u32` or return an explicit error if the value
+/// exceeds `u32::MAX`. Substrate getters that surface buffer / view
+/// dimensions through the FFI must not silently truncate when a
+/// long-lived transcript or code substrate crosses the 32-bit ceiling —
+/// the host's cursor mapping and invalidation logic would keep running
+/// on wrapped numbers and quietly corrupt downstream state. Return the
+/// error as a normal `Err`; callers route it through `set_last_error`
+/// in the standard way.
+fn usize_to_u32_or_err(value: usize, label: &str) -> Result<u32, String> {
+    u32::try_from(value).map_err(|_| {
+        format!(
+            "{label} ({value}) exceeds u32::MAX; substrate ABI cannot represent it. \
+             Adopt a u64 ABI shape or trim content before crossing the 32-bit ceiling."
+        )
+    })
+}
+
 /// Wrap an FFI function that returns a u32 handle. Returns 0 on error.
 /// Success paths clear `last_error` so callers consulting it after a
 /// successful zero-sentinel return see a clean slate.
@@ -3109,7 +3126,7 @@ pub extern "C" fn tui_text_buffer_get_byte_len(handle: u32) -> u32 {
             .text_buffers
             .get(&handle)
             .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
-        Ok(buf.byte_len() as u32)
+        usize_to_u32_or_err(buf.byte_len(), "byte_len")
     })
 }
 
@@ -3121,7 +3138,7 @@ pub extern "C" fn tui_text_buffer_get_line_count(handle: u32) -> u32 {
             .text_buffers
             .get(&handle)
             .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
-        Ok(buf.line_count() as u32)
+        usize_to_u32_or_err(buf.line_count(), "line_count")
     })
 }
 
@@ -3322,8 +3339,9 @@ pub extern "C" fn tui_text_view_visual_to_byte(
         }
         let mut ctx = context_write()?;
         let byte = text_view::visual_to_byte(&mut ctx, handle, row, col)?;
+        let byte_u32 = usize_to_u32_or_err(byte, "byte_offset")?;
         unsafe {
-            *out_byte = byte as u32;
+            *out_byte = byte_u32;
         }
         Ok(0)
     })

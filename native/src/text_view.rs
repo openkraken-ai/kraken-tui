@@ -269,7 +269,10 @@ pub(crate) fn clear_cursor(ctx: &mut TuiContext, handle: u32) -> Result<(), Stri
 
 pub(crate) fn get_visual_line_count(ctx: &mut TuiContext, handle: u32) -> Result<u32, String> {
     ensure_projection(ctx, handle)?;
-    Ok(ctx.text_views.get(&handle).unwrap().visual_lines.len() as u32)
+    let count = ctx.text_views.get(&handle).unwrap().visual_lines.len();
+    u32::try_from(count).map_err(|_| {
+        format!("visual_line_count ({count}) exceeds u32::MAX; substrate ABI cannot represent it")
+    })
 }
 
 pub(crate) fn get_cache_epoch(ctx: &mut TuiContext, handle: u32) -> Result<u64, String> {
@@ -318,13 +321,17 @@ pub(crate) fn byte_to_visual(
     }
 
     for (row, line) in view.visual_lines.iter().enumerate() {
-        let row_u32 = row as u32;
         let in_range = if line.byte_start == line.byte_end {
             byte_offset == line.byte_start
         } else {
             byte_offset >= line.byte_start && byte_offset <= line.byte_end
         };
         if in_range {
+            let row_u32 = u32::try_from(row).map_err(|_| {
+                format!(
+                    "Visual row index {row} exceeds u32::MAX; substrate ABI cannot represent it"
+                )
+            })?;
             let segment = &buf.content()[line.byte_start..byte_offset];
             let col = line_cell_width(segment, view.tab_width);
             return Ok((row_u32, col));
@@ -336,7 +343,10 @@ pub(crate) fn byte_to_visual(
     // cursor anchor and resolves to the last row's end column.
     if byte_offset == buf.byte_len() {
         if let Some(last) = view.visual_lines.last() {
-            let row = (view.visual_lines.len() - 1) as u32;
+            let last_idx = view.visual_lines.len() - 1;
+            let row = u32::try_from(last_idx).map_err(|_| {
+                format!("Visual row index {last_idx} exceeds u32::MAX; substrate ABI cannot represent it")
+            })?;
             let segment = &buf.content()[last.byte_start..last.byte_end];
             let col = line_cell_width(segment, view.tab_width);
             return Ok((row, col));
