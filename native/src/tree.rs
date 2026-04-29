@@ -8,9 +8,50 @@
 
 use crate::animation;
 use crate::context::TuiContext;
+use crate::edit_buffer;
+use crate::text_buffer;
+use crate::text_view;
+use crate::transcript;
 use crate::types::{NodeType, TuiNode};
 use std::collections::HashSet;
 use taffy::prelude::*;
+
+fn cleanup_node_substrate(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let (node_type, text_buffer_handle, text_view_handle, edit_buffer_handle) = {
+        let node = ctx
+            .nodes
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid handle: {handle}"))?;
+        (
+            node.node_type,
+            node.text_buffer_handle,
+            node.text_view_handle,
+            node.edit_buffer_handle,
+        )
+    };
+
+    if node_type == NodeType::Transcript {
+        transcript::clear_blocks(ctx, handle)?;
+    }
+
+    if let Some(edit_handle) = edit_buffer_handle {
+        if ctx.edit_buffers.contains_key(&edit_handle) {
+            edit_buffer::destroy(ctx, edit_handle)?;
+        }
+    }
+    if let Some(view_handle) = text_view_handle {
+        if ctx.text_views.contains_key(&view_handle) {
+            text_view::destroy(ctx, view_handle)?;
+        }
+    }
+    if let Some(buffer_handle) = text_buffer_handle {
+        if ctx.text_buffers.contains_key(&buffer_handle) {
+            text_buffer::destroy(ctx, buffer_handle)?;
+        }
+    }
+
+    Ok(())
+}
 
 /// Allocate a new handle and create a node in the tree.
 pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u32, String> {
@@ -61,6 +102,8 @@ pub(crate) fn create_node(ctx: &mut TuiContext, node_type: NodeType) -> Result<u
 
 /// Destroy a node. Detaches from parent. Orphans children (does not cascade).
 pub(crate) fn destroy_node(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    cleanup_node_substrate(ctx, handle)?;
+
     let node = ctx
         .nodes
         .remove(&handle)
@@ -122,6 +165,7 @@ pub(crate) fn destroy_subtree(ctx: &mut TuiContext, handle: u32) -> Result<(), S
     for node_handle in post_order {
         animation::cancel_all_for_node(ctx, node_handle);
         ctx.theme_bindings.remove(&node_handle);
+        cleanup_node_substrate(ctx, node_handle)?;
 
         let node = ctx
             .nodes
@@ -477,8 +521,11 @@ mod tests {
     use super::*;
     use crate::animation;
     use crate::context::TuiContext;
+    use crate::layout;
+    use crate::render;
     use crate::terminal::MockBackend;
     use crate::theme::{self, DARK_THEME_HANDLE};
+    use crate::transcript;
     use crate::types::{NodeType, TuiEvent};
 
     fn test_ctx() -> TuiContext {
@@ -656,6 +703,54 @@ mod tests {
         assert!(ctx.nodes.is_empty());
         assert_eq!(ctx.root, None);
         assert_eq!(ctx.focused, None);
+    }
+
+    #[test]
+    fn test_destroy_subtree_releases_rendered_textarea_substrate() {
+        let mut ctx = test_ctx();
+        let textarea = create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        layout::set_dimension(&mut ctx, textarea, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 3.0, 1).unwrap();
+        ctx.nodes.get_mut(&textarea).unwrap().content = "hello".to_string();
+
+        render::render(&mut ctx).unwrap();
+
+        let node = &ctx.nodes[&textarea];
+        let buffer_handle = node.text_buffer_handle.expect("rendered textarea buffer");
+        let view_handle = node.text_view_handle.expect("rendered textarea view");
+
+        destroy_subtree(&mut ctx, textarea).unwrap();
+
+        assert!(!ctx.text_buffers.contains_key(&buffer_handle));
+        assert!(!ctx.text_views.contains_key(&view_handle));
+    }
+
+    #[test]
+    fn test_destroy_node_releases_transcript_block_substrate() {
+        let mut ctx = test_ctx();
+        let transcript_handle = create_node(&mut ctx, NodeType::Transcript).unwrap();
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            1,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "hello",
+        )
+        .unwrap();
+
+        let state = ctx.nodes[&transcript_handle]
+            .transcript_state
+            .as_ref()
+            .unwrap();
+        let buffer_handle = state.blocks[0].buffer_handle;
+        let view_handle = state.blocks[0].view_handle;
+
+        destroy_node(&mut ctx, transcript_handle).unwrap();
+
+        assert!(!ctx.text_buffers.contains_key(&buffer_handle));
+        assert!(!ctx.text_views.contains_key(&view_handle));
     }
 
     #[test]

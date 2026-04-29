@@ -519,9 +519,7 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
             )
         };
         if node_type == NodeType::TextArea {
-            if let (Some(buffer_handle), Some(edit_handle)) =
-                (text_buffer_handle, edit_buffer_handle)
-            {
+            if let Some(buffer_handle) = text_buffer_handle {
                 let existing_len = ctx
                     .text_buffers
                     .get(&buffer_handle)
@@ -534,7 +532,9 @@ pub extern "C" fn tui_set_content(handle: u32, ptr: *const u8, len: u32) -> i32 
                     existing_len,
                     &content_clone,
                 )?;
-                edit_buffer::clear_history(&mut ctx, edit_handle)?;
+                if let Some(edit_handle) = edit_buffer_handle {
+                    edit_buffer::clear_history(&mut ctx, edit_handle)?;
+                }
             }
         }
         Ok(0)
@@ -3671,6 +3671,15 @@ mod tests {
     use super::*;
     use crate::context::ffi_test_guard;
 
+    fn content_from_handle(handle: u32) -> String {
+        let len = tui_get_content_len(handle);
+        assert!(len >= 0);
+        let mut buf = vec![0u8; len as usize + 1];
+        let written = tui_get_content(handle, buf.as_mut_ptr(), buf.len() as u32);
+        assert_eq!(written, len);
+        String::from_utf8(buf[..len as usize].to_vec()).unwrap()
+    }
+
     #[test]
     fn test_get_last_error_snapshot_round_trip() {
         let _guard = ffi_test_guard();
@@ -3797,6 +3806,38 @@ mod tests {
         assert_eq!(tui_init_headless(80, 24), 0);
         assert_eq!(tui_get_node_count(), 0);
         assert_eq!(tui_destroy_node(handle), -1);
+
+        tui_shutdown();
+    }
+
+    #[test]
+    fn test_textarea_set_content_updates_render_created_buffer() {
+        let _guard = ffi_test_guard();
+        tui_shutdown();
+        assert_eq!(tui_init_headless(40, 8), 0);
+
+        let textarea = tui_create_node(NodeType::TextArea as u8);
+        assert!(textarea > 0);
+        assert_eq!(tui_set_root(textarea), 0);
+        assert_eq!(tui_set_layout_dimension(textarea, 0, 20.0, 1), 0);
+        assert_eq!(tui_set_layout_dimension(textarea, 1, 3.0, 1), 0);
+
+        let first = "first";
+        assert_eq!(
+            tui_set_content(textarea, first.as_ptr(), first.len() as u32),
+            0
+        );
+        assert_eq!(tui_render(), 0);
+
+        let second = "second";
+        assert_eq!(
+            tui_set_content(textarea, second.as_ptr(), second.len() as u32),
+            0
+        );
+        assert_eq!(content_from_handle(textarea), "second");
+
+        assert_eq!(tui_render(), 0);
+        assert_eq!(content_from_handle(textarea), "second");
 
         tui_shutdown();
     }

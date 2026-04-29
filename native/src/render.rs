@@ -1909,10 +1909,7 @@ fn render_transcript(
         };
         let mut refreshed_blocks = Vec::with_capacity(blocks.len());
         for mut block in blocks {
-            if block.kind != crate::types::TranscriptBlockKind::Divider
-                && !block.collapsed
-                && block.view_handle != 0
-            {
+            if block.kind != crate::types::TranscriptBlockKind::Divider && block.view_handle != 0 {
                 let _ = text_view::set_wrap(ctx, block.view_handle, new_width.max(1), 1, 4);
                 if let Ok(rows) = text_view::get_visual_line_count(ctx, block.view_handle) {
                     block.rendered_rows = rows.max(1);
@@ -2825,6 +2822,62 @@ mod tests {
         assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'f');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().ch, 'i');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_render_collapsed_transcript_rewraps_on_resize() {
+        use crate::{layout, transcript, tree};
+
+        let mut ctx = integration_ctx(40, 8);
+        let transcript_handle = tree::create_node(&mut ctx, NodeType::Transcript).unwrap();
+        ctx.root = Some(transcript_handle);
+
+        layout::set_dimension(&mut ctx, transcript_handle, 0, 4.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, transcript_handle, 1, 8.0, 1).unwrap();
+
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            1,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "abcdefghij",
+        )
+        .unwrap();
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            2,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "ZZ",
+        )
+        .unwrap();
+
+        render(&mut ctx).unwrap();
+        let rows_narrow = ctx.nodes[&transcript_handle]
+            .transcript_state
+            .as_ref()
+            .unwrap()
+            .blocks[0]
+            .rendered_rows;
+        assert!(rows_narrow > 1);
+
+        transcript::set_collapsed(&mut ctx, transcript_handle, 1, true).unwrap();
+        layout::set_dimension(&mut ctx, transcript_handle, 0, 20.0, 1).unwrap();
+        render(&mut ctx).unwrap();
+
+        let rows_wide_collapsed = ctx.nodes[&transcript_handle]
+            .transcript_state
+            .as_ref()
+            .unwrap()
+            .blocks[0]
+            .rendered_rows;
+        assert_eq!(rows_wide_collapsed, 1);
+
+        transcript::set_collapsed(&mut ctx, transcript_handle, 1, false).unwrap();
+        render(&mut ctx).unwrap();
+        assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, 'Z');
     }
 
     #[test]
