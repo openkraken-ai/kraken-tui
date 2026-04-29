@@ -23,6 +23,7 @@ Guidance for AI agents working in this repository. Domain-specific details live 
 ## Current Repo Status
 
 - The canonical docs chain is current and should be treated as the source of truth for planning work.
+- `Tasks.md` currently tracks **Epic N — Substrate Surface Rebase** as the active wave, with Epic M archived as shipped.
 - `Tasks.md` now separates **active scope** from **archived completed scope**. Do not mistake the archived v6/v4 delivery wave for the current backlog.
 - The transcript/devtools/split-pane/flagship-example wave is already implemented in source.
 

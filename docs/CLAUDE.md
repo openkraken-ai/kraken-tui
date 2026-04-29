@@ -22,7 +22,7 @@
 | What the logical boundaries are | `Architecture.md` | `1. Architectural Strategy`, `2. System Containers`, `4. Critical Execution Flows` |
 | What concrete interfaces, state, and tests exist | `TechSpec.md` | `1. Stack Specification`, `3. State & Data Modeling`, `4. Interface Contract`, `5. Implementation Guidelines` |
 | What should happen next | `Tasks.md` | `1. Executive Summary & Active Critical Path`, `4. Ticket List` |
-| What was already delivered in the previous wave | `Tasks.md` | `Appendix A-C` |
+| What was already delivered in the previous wave | `Tasks.md` | `2. Project Phasing & Iteration Strategy`, `5. Ticket Summary Table`, `6. Archived Continuity Summary` |
 | How CI and release gates currently work | `reports/GatePolicy.md` | all sections |
 
 ---
@@ -61,5 +61,5 @@
 ## Current Repo-Specific Notes
 
 - `TechSpec.md` is now a **current-state Brownfield spec**, not a future-phase memo.
-- `Tasks.md` currently marks the active plan as intentionally idle until a new post-v4 backlog is ratified, while preserving the large archived v6/v4 delivery appendix.
+- `Tasks.md` currently tracks **Epic N — Substrate Surface Rebase** as the active wave. Epic M is archived as shipped; older v6/v4 material remains continuity context, not the active backlog.
 - `reports/GatePolicy.md` reflects the current CI host test surface, including install smoke and runner tests.

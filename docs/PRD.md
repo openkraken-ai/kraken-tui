@@ -272,12 +272,3 @@ _The following are developer-stated implementation preferences. They are preserv
 | Future reconciler path | Lightweight JSX factory plus `@preact/signals-core`, with optional Effect integration |
 | Build artifact | `cdylib` |
 | Dev environment | `devenv` (Nix) |
-
-## Appendix: References
-- [Ratatui](https://ratatui.rs/) — Rust TUI library
-- [OpenTUI](https://opentui.com/) — Zig + Bun TUI framework
-- [Ink](https://github.com/vadimdemedes/ink) — React for CLI apps
-- [Textual](https://textual.textualize.io/) — Python TUI framework
-- [Taffy](https://github.com/DioxusLabs/taffy) — Rust layout engine
-- [crossterm](https://github.com/crossterm-rs/crossterm) — Rust terminal library
-- [bun:ffi](https://bun.com/reference/bun/ffi) — Bun FFI documentation
