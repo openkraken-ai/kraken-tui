@@ -2046,7 +2046,9 @@ pub extern "C" fn tui_textarea_set_history_limit(handle: u32, limit: u32) -> i32
             node.edit_buffer_handle
         };
         if let Some(edit_handle) = edit_handle {
-            if edit_buffer::can_redo(&ctx, edit_handle)? {
+            let native_history_len = edit_buffer::history_len(&ctx, edit_handle)?;
+            let needs_trim = limit > 0 && native_history_len > limit as usize;
+            if needs_trim && edit_buffer::can_redo(&ctx, edit_handle)? {
                 {
                     let node = ctx.nodes.get_mut(&handle).unwrap();
                     let state = node
@@ -3612,6 +3614,15 @@ pub extern "C" fn tui_edit_buffer_apply_op(
             }
             _ => return Err(format!("Invalid edit op kind: {op_kind}")),
         }
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_edit_buffer_break_coalescing(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        edit_buffer::break_coalescing(&mut ctx, handle)?;
         Ok(0)
     })
 }

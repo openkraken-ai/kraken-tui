@@ -257,6 +257,7 @@ const lib = dlopen(LIB_PATH, {
 	tui_edit_buffer_create:            { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 	tui_edit_buffer_destroy:           { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_edit_buffer_apply_op:          { args: ["u32", "u8", "ptr", "u32", "u32", "u32"] as FFIType[], returns: "i32" as const },
+	tui_edit_buffer_break_coalescing:  { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_edit_buffer_undo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_edit_buffer_redo:              { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_edit_buffer_can_undo:          { args: ["u32"] as FFIType[],                                returns: "u8" as const },
@@ -958,6 +959,24 @@ describe("FFI integration", () => {
 			expect(ffi.tui_edit_buffer_redo(edit)).toBe(1);
 			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length + insertPayload.length);
 
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer break_coalescing splits undo groups", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+
+			const a = new TextEncoder().encode("a");
+			const b = new TextEncoder().encode("b");
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from(a), a.length, 0, 0)).toBe(0);
+			expect(ffi.tui_edit_buffer_break_coalescing(edit)).toBe(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from(b), b.length, 1, 1)).toBe(0);
+
+			expect(ffi.tui_edit_buffer_history_len(edit)).toBe(2);
 			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
 			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
 		});

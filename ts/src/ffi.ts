@@ -753,6 +753,10 @@ const symbols = {
 		args: ["u32", "u8", "ptr", "u32", "u32", "u32"] as FFIType[],
 		returns: "i32" as const,
 	},
+	tui_edit_buffer_break_coalescing: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_edit_buffer_undo: {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
