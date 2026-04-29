@@ -753,7 +753,16 @@ fn handle_textarea_key(ctx: &mut TuiContext, handle: u32, code: u32, character: 
 
     if emit_change {
         if let Some(edit_buffer_handle) = edit_buffer_handle_for_trim {
-            let _ = edit_buffer::trim_history(ctx, edit_buffer_handle, history_limit as usize);
+            if let Err(err) =
+                edit_buffer::trim_history(ctx, edit_buffer_handle, history_limit as usize)
+            {
+                // History trimming is best-effort during typing so a trim
+                // failure does not drop the input event, but debug mode still
+                // surfaces the mismatch to keep native/host state drift visible.
+                ctx.debug_log(&format!(
+                    "handle_textarea_key: trim_history failed for edit buffer {edit_buffer_handle}: {err}"
+                ));
+            }
         }
     }
 

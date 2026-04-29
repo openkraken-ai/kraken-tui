@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::context::TuiContext;
 use crate::text_view;
-use crate::types::{Buffer, Cell, CellAttrs, HighlightRange, SelectionRange, StyleSpan};
+use crate::types::{color_tag, Buffer, Cell, CellAttrs, HighlightRange, SelectionRange, StyleSpan};
 
 /// Axis-aligned target rectangle in absolute screen coordinates.
 #[derive(Debug, Clone, Copy)]
@@ -35,6 +35,7 @@ pub struct BaseStyle {
     pub fg: u32,
     pub bg: u32,
     pub attrs: CellAttrs,
+    pub highlight_palette: HighlightPalette,
 }
 
 impl Default for BaseStyle {
@@ -43,7 +44,45 @@ impl Default for BaseStyle {
             fg: 0,
             bg: 0,
             attrs: CellAttrs::empty(),
+            highlight_palette: HighlightPalette::default(),
         }
+    }
+}
+
+/// Surface-scoped highlight colors derived from the caller's resolved base
+/// style. This keeps highlight rendering theme-aware without mutating the
+/// substrate's stored highlight ranges.
+#[derive(Debug, Clone, Copy)]
+pub struct HighlightPalette {
+    pub search_bg: u32,
+    pub diff_add_bg: u32,
+    pub diff_remove_bg: u32,
+    pub fallback_bg: u32,
+}
+
+impl HighlightPalette {
+    pub fn theme_tinted(base_bg: u32) -> Self {
+        Self {
+            search_bg: tint_highlight_bg(base_bg, 0x01_FF_FF_00),
+            diff_add_bg: tint_highlight_bg(base_bg, 0x01_00_88_00),
+            diff_remove_bg: tint_highlight_bg(base_bg, 0x01_88_00_00),
+            fallback_bg: tint_highlight_bg(base_bg, 0x01_44_44_44),
+        }
+    }
+
+    pub(crate) fn background(self, kind: u8) -> u32 {
+        match kind {
+            0 => self.search_bg,
+            1 => self.diff_add_bg,
+            2 => self.diff_remove_bg,
+            _ => self.fallback_bg,
+        }
+    }
+}
+
+impl Default for HighlightPalette {
+    fn default() -> Self {
+        Self::theme_tinted(0)
     }
 }
 
@@ -199,7 +238,7 @@ pub(crate) fn render_text_view(
 
             for hl in highlights {
                 if g_byte_end > hl.start && g_byte_start < hl.end {
-                    bg = highlight_kind_bg(hl.kind);
+                    bg = base.highlight_palette.background(hl.kind);
                 }
             }
 
@@ -318,21 +357,24 @@ pub(crate) fn render_text_view(
     Ok(())
 }
 
-/// Map a highlight `kind` discriminant to a default background color.
+/// Blend a semantic highlight tone over the caller's resolved background.
 ///
-/// v1 hard-codes a small palette. Future work can route this through theme
-/// bindings without changing the renderer's call site.
-fn highlight_kind_bg(kind: u8) -> u32 {
-    match kind {
-        // 0 → search match (yellow)
-        0 => 0x01_FF_FF_00,
-        // 1 → diff add (green)
-        1 => 0x01_00_88_00,
-        // 2 → diff remove (red)
-        2 => 0x01_88_00_00,
-        // unknown → light gray
-        _ => 0x01_44_44_44,
+/// The palette stays surface-scoped on purpose: the same `TextBuffer`
+/// highlight ranges should automatically recolor when theme bindings change,
+/// instead of baking a renderer-global palette into substrate state.
+fn tint_highlight_bg(base_bg: u32, semantic_bg: u32) -> u32 {
+    if color_tag(base_bg) != 0x01 || color_tag(semantic_bg) != 0x01 {
+        return semantic_bg;
     }
+
+    let blend = |channel_shift: u32| -> u32 {
+        let highlight = ((semantic_bg >> channel_shift) & 0xFF) as f32;
+        let background = ((base_bg >> channel_shift) & 0xFF) as f32;
+        let mixed = (highlight * 0.35) + (background * 0.65);
+        mixed.round().clamp(0.0, 255.0) as u32
+    };
+
+    0x01000000 | (blend(16) << 16) | (blend(8) << 8) | blend(0)
 }
 
 // ============================================================================
@@ -486,6 +528,7 @@ mod tests {
                     fg: 0x01_FF_FF_FF,
                     bg: 0x01_00_00_00,
                     attrs: CellAttrs::empty(),
+                    ..BaseStyle::default()
                 },
             )
             .unwrap();
@@ -849,6 +892,7 @@ mod tests {
                     fg: 0x01_FF_FF_FF,
                     bg: 0x01_00_00_00,
                     attrs: CellAttrs::empty(),
+                    ..BaseStyle::default()
                 },
             )
             .unwrap();
@@ -897,6 +941,7 @@ mod tests {
                     fg: 0x01_FF_FF_FF,
                     bg: 0x01_00_00_00,
                     attrs: CellAttrs::empty(),
+                    ..BaseStyle::default()
                 },
             )
             .unwrap();

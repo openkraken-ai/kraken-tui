@@ -113,6 +113,8 @@ fn apply_styled_text_to_buffer(
     ctx: &mut TuiContext,
     buffer_handle: u32,
     spans: &[crate::types::StyledSpan],
+    default_bg: u32,
+    opacity: f32,
 ) -> Result<(), String> {
     let mut rendered = String::new();
     for span in spans {
@@ -134,12 +136,22 @@ fn apply_styled_text_to_buffer(
     for span in spans {
         let span_len = span.text.len();
         if span_len > 0 && (span.fg != 0 || span.bg != 0 || !span.attrs.is_empty()) {
+            let span_bg = if span.bg != 0 { span.bg } else { default_bg };
+            // Explicit span foregrounds need opacity blending before they
+            // enter the shared substrate. Default-colored spans keep `fg=0`
+            // so the renderer inherits the caller's already-blended base fg
+            // instead of double-applying opacity.
+            let span_fg = if span.fg != 0 {
+                blend_opacity(span.fg, span_bg, opacity)
+            } else {
+                0
+            };
             text_buffer::set_style_span(
                 ctx,
                 buffer_handle,
                 byte_offset,
                 byte_offset + span_len,
-                span.fg,
+                span_fg,
                 span.bg,
                 span.attrs.bits(),
             )?;
@@ -211,7 +223,12 @@ fn render_substrate_view(
                 w: rect.w,
                 h: rect.h,
             },
-            BaseStyle { fg, bg, attrs },
+            BaseStyle {
+                fg,
+                bg,
+                attrs,
+                highlight_palette: text_renderer::HighlightPalette::theme_tinted(bg),
+            },
         )?;
     }
     Ok(())
@@ -489,7 +506,7 @@ fn render_node(
                     )
                 };
                 let wrap_start = std::time::Instant::now();
-                apply_styled_text_to_buffer(ctx, _buffer_handle, &spans)?;
+                apply_styled_text_to_buffer(ctx, _buffer_handle, &spans, bg, opacity)?;
                 text_view::clear_cursor(ctx, view_handle)?;
                 text_view::set_wrap(ctx, view_handle, content_w.max(1) as u32, 1, 4)?;
                 render_substrate_view(
@@ -2643,6 +2660,36 @@ mod tests {
     }
 
     #[test]
+    fn test_render_markdown_inline_code_blends_explicit_span_fg_with_opacity() {
+        use crate::{layout, style, tree};
+
+        let mut ctx = integration_ctx(40, 4);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 4.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 1.0, 1).unwrap();
+        style::set_color(&mut ctx, text, 1, 0x01_00_00_00).unwrap();
+        style::set_color(&mut ctx, text, 0, 0x01_FF_FF_FF).unwrap();
+        style::set_opacity(&mut ctx, text, 0.5).unwrap();
+
+        let node = ctx.nodes.get_mut(&text).unwrap();
+        node.content = "`A`".to_string();
+        node.content_format = ContentFormat::Markdown;
+
+        render(&mut ctx).unwrap();
+
+        let cell = ctx.back_buffer.get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'A');
+        assert_eq!(cell.fg, blend_opacity(0x01_AA_AA_AA, 0x01_00_00_00, 0.5));
+    }
+
+    #[test]
     fn test_render_background_color_fill() {
         use crate::{layout, style, tree};
 
@@ -2878,6 +2925,43 @@ mod tests {
         transcript::set_collapsed(&mut ctx, transcript_handle, 1, false).unwrap();
         render(&mut ctx).unwrap();
         assert_eq!(ctx.back_buffer.get(0, 1).unwrap().ch, 'Z');
+    }
+
+    #[test]
+    fn test_render_text_highlight_uses_theme_tinted_palette() {
+        use crate::{layout, text_buffer, theme, tree};
+
+        let mut ctx = integration_ctx(20, 3);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 3.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 10.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 1.0, 1).unwrap();
+
+        let theme_handle = theme::create_theme(&mut ctx).unwrap();
+        let themed_bg = 0x01_10_20_30;
+        theme::set_theme_color(&mut ctx, theme_handle, 1, themed_bg).unwrap();
+        theme::set_theme_color(&mut ctx, theme_handle, 0, 0x01_FF_FF_FF).unwrap();
+        theme::apply_theme(&mut ctx, theme_handle, root).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "A".to_string();
+        let (buffer_handle, _) = ensure_node_text_handles(&mut ctx, text).unwrap();
+        text_buffer::set_highlight(&mut ctx, buffer_handle, 0, 1, 0).unwrap();
+
+        render(&mut ctx).unwrap();
+
+        let cell = ctx.back_buffer.get(0, 0).unwrap();
+        assert_eq!(cell.ch, 'A');
+        assert_eq!(
+            cell.bg,
+            text_renderer::HighlightPalette::theme_tinted(themed_bg).background(0)
+        );
+        assert_ne!(cell.bg, 0x01_FF_FF_00);
     }
 
     #[test]
