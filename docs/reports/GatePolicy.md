@@ -107,7 +107,7 @@ Repo-side host verification entrypoints that `dlopen` directly are expected to v
 CI Trigger
   |
   |-- native-tests ------ native tests + fmt + clippy + writer assertions
-  |-- native-benchmarks - writer and text-cache benchmark reporting
+  |-- native-benchmarks - writer/text-cache reporting + substrate threshold gate
   |-- host-tests -------- ffi + jsx + examples + install + runner + bundle
   |-- host-benchmarks --- ffi bench + render bench (blocking)
   `-- quality-gate ------ aggregate pass/fail result
@@ -144,6 +144,6 @@ When intentional render changes cause golden mismatches:
 ## 6. Benchmark Baseline Notes
 
 - Criterion baselines are machine-local and are not committed to git.
-- `native-benchmarks` is currently a reporting-only guardrail job for the tracked Criterion suites.
+- `native-benchmarks` reports writer/text-cache suites and blocks on the substrate threshold parser.
 - `host-benchmarks` is currently blocking for the scripted FFI and render budget checks.
 - `devtools_bench` exists in the source tree and should be used during devtools-sensitive changes even though it is not currently a blocking CI step.

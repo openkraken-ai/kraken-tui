@@ -39,6 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
 
       - name: Run writer benchmarks
         shell: bash
