@@ -171,6 +171,15 @@ fn first_buffer_line(ctx: &TuiContext, buffer_handle: u32) -> Option<String> {
         .map(|buffer| buffer.content().lines().next().unwrap_or("").to_string())
 }
 
+fn drain_buffer_dirty_ranges(ctx: &mut TuiContext, buffer_handle: u32) {
+    if buffer_handle != 0 {
+        // Whole-frame rendering still consumes dirty ranges once per frame so
+        // long-lived text surfaces cannot accumulate an unbounded mutation log
+        // while partial-repaint work remains deferred.
+        let _ = text_buffer::clear_dirty_ranges(ctx, buffer_handle);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_substrate_view(
     ctx: &mut TuiContext,
@@ -526,6 +535,7 @@ fn render_node(
                     attrs,
                     clip,
                 )?;
+                drain_buffer_dirty_ranges(ctx, _buffer_handle);
                 ctx.perf_text_wrap_us += wrap_start.elapsed().as_micros() as u64;
             } else {
                 render_plain_text(
@@ -2014,6 +2024,7 @@ fn render_transcript(
 
         // Skip hidden blocks (collapsed ancestors)
         if hidden {
+            drain_buffer_dirty_ranges(ctx, buffer_handle);
             continue;
         }
 
@@ -2055,6 +2066,7 @@ fn render_transcript(
                 clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
             }
             y += 1;
+            drain_buffer_dirty_ranges(ctx, buffer_handle);
         } else if block_kind == crate::types::TranscriptBlockKind::Divider {
             // Render horizontal divider
             for dx in 0..content_w {
@@ -2088,12 +2100,30 @@ fn render_transcript(
                     clip,
                 );
             }
-            if buffer_handle != 0 {
-                let _ = text_buffer::clear_dirty_ranges(ctx, buffer_handle);
-            }
+            drain_buffer_dirty_ranges(ctx, buffer_handle);
             y += visible_rows;
         }
         is_first_block = false;
+    }
+
+    let transcript_buffers = ctx
+        .nodes
+        .get(&handle)
+        .and_then(|node| node.transcript_state.as_ref())
+        .map(|state| {
+            state
+                .blocks
+                .iter()
+                .map(|block| block.buffer_handle)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for buffer_handle in transcript_buffers {
+        // Transcript rendering still redraws whole frames, so every block's
+        // dirty log is consumed once per frame even when the block is
+        // collapsed or hidden and never reaches the visible render loop
+        // above.
+        drain_buffer_dirty_ranges(ctx, buffer_handle);
     }
 }
 
@@ -2722,6 +2752,33 @@ mod tests {
     }
 
     #[test]
+    fn test_render_text_drains_dirty_ranges() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(40, 4);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 4.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 1.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "hello".to_string();
+        render(&mut ctx).unwrap();
+
+        let buffer_handle = ctx.nodes[&text].text_buffer_handle.unwrap();
+        assert!(ctx.text_buffers[&buffer_handle].dirty_ranges().is_empty());
+
+        ctx.nodes.get_mut(&text).unwrap().content = "hello world".to_string();
+        render(&mut ctx).unwrap();
+        assert!(ctx.text_buffers[&buffer_handle].dirty_ranges().is_empty());
+    }
+
+    #[test]
     fn test_render_background_color_fill() {
         use crate::{layout, style, tree};
 
@@ -3023,6 +3080,57 @@ mod tests {
             text_renderer::HighlightPalette::theme_tinted(themed_bg).background(0)
         );
         assert_ne!(cell.bg, 0x01_FF_FF_00);
+    }
+
+    #[test]
+    fn test_render_collapsed_transcript_drains_parent_and_hidden_child_dirty_ranges() {
+        use crate::{layout, transcript, tree};
+
+        let mut ctx = integration_ctx(40, 6);
+        let transcript_handle = tree::create_node(&mut ctx, NodeType::Transcript).unwrap();
+        ctx.root = Some(transcript_handle);
+
+        layout::set_dimension(&mut ctx, transcript_handle, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, transcript_handle, 1, 6.0, 1).unwrap();
+
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            1,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "Parent",
+        )
+        .unwrap();
+        transcript::append_block(
+            &mut ctx,
+            transcript_handle,
+            2,
+            crate::types::TranscriptBlockKind::Message,
+            2,
+            "Child",
+        )
+        .unwrap();
+        transcript::set_parent(&mut ctx, transcript_handle, 2, 1).unwrap();
+        transcript::set_collapsed(&mut ctx, transcript_handle, 1, true).unwrap();
+        transcript::patch_block(&mut ctx, transcript_handle, 1, 0, "!").unwrap();
+        transcript::patch_block(&mut ctx, transcript_handle, 2, 0, "!").unwrap();
+
+        let blocks = ctx.nodes[&transcript_handle]
+            .transcript_state
+            .as_ref()
+            .unwrap()
+            .blocks
+            .clone();
+        let parent_buffer = blocks[0].buffer_handle;
+        let child_buffer = blocks[1].buffer_handle;
+        assert!(!ctx.text_buffers[&parent_buffer].dirty_ranges().is_empty());
+        assert!(!ctx.text_buffers[&child_buffer].dirty_ranges().is_empty());
+
+        render(&mut ctx).unwrap();
+
+        assert!(ctx.text_buffers[&parent_buffer].dirty_ranges().is_empty());
+        assert!(ctx.text_buffers[&child_buffer].dirty_ranges().is_empty());
     }
 
     #[test]
