@@ -227,6 +227,27 @@ pub(crate) fn set_style_span(
     Ok(())
 }
 
+pub(crate) fn replace_style_spans(
+    ctx: &mut TuiContext,
+    handle: u32,
+    spans: &[StyleSpan],
+) -> Result<(), String> {
+    let buf = ctx
+        .text_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+    for span in spans {
+        validate_byte_range(buf, span.start, span.end)?;
+    }
+    if buf.style_spans.as_slice() == spans {
+        return Ok(());
+    }
+    buf.style_spans.clear();
+    buf.style_spans.extend_from_slice(spans);
+    bump_style_fingerprint(buf);
+    Ok(())
+}
+
 pub(crate) fn clear_style_spans(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
     let buf = ctx
         .text_buffers
@@ -250,7 +271,11 @@ pub(crate) fn set_selection(
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
     validate_byte_range(buf, start, end)?;
-    buf.selection = Some(SelectionRange { start, end });
+    let next = Some(SelectionRange { start, end });
+    if buf.selection == next {
+        return Ok(());
+    }
+    buf.selection = next;
     bump_style_fingerprint(buf);
     Ok(())
 }
@@ -649,6 +674,27 @@ mod tests {
     }
 
     #[test]
+    fn replace_style_spans_noop_keeps_fingerprint() {
+        let _g = fresh_ctx();
+        let h = with_ctx(|ctx| create(ctx).unwrap());
+        with_ctx(|ctx| {
+            append(ctx, h, "hello").unwrap();
+            let spans = [StyleSpan {
+                start: 0,
+                end: 5,
+                fg: 0x01FF0000,
+                bg: 0,
+                attrs: CellAttrs::BOLD,
+            }];
+            replace_style_spans(ctx, h, &spans).unwrap();
+            let fp_before = ctx.text_buffers.get(&h).unwrap().style_fingerprint();
+            replace_style_spans(ctx, h, &spans).unwrap();
+            let fp_after = ctx.text_buffers.get(&h).unwrap().style_fingerprint();
+            assert_eq!(fp_before, fp_after);
+        });
+    }
+
+    #[test]
     fn style_spans_reconciled_against_replace() {
         let _g = fresh_ctx();
         let h = with_ctx(|ctx| create(ctx).unwrap());
@@ -681,6 +727,20 @@ mod tests {
             set_selection(ctx, h, 6, 11).unwrap();
             replace_range(ctx, h, 0, 11, "x").unwrap();
             assert!(ctx.text_buffers.get(&h).unwrap().selection().is_none());
+        });
+    }
+
+    #[test]
+    fn set_selection_noop_keeps_fingerprint() {
+        let _g = fresh_ctx();
+        let h = with_ctx(|ctx| create(ctx).unwrap());
+        with_ctx(|ctx| {
+            append(ctx, h, "hello world").unwrap();
+            set_selection(ctx, h, 0, 5).unwrap();
+            let fp_before = ctx.text_buffers.get(&h).unwrap().style_fingerprint();
+            set_selection(ctx, h, 0, 5).unwrap();
+            let fp_after = ctx.text_buffers.get(&h).unwrap().style_fingerprint();
+            assert_eq!(fp_before, fp_after);
         });
     }
 

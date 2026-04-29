@@ -131,7 +131,7 @@ fn apply_styled_text_to_buffer(
         text_buffer::replace_range(ctx, buffer_handle, 0, existing.len(), &rendered)?;
     }
 
-    text_buffer::clear_style_spans(ctx, buffer_handle)?;
+    let mut style_spans = Vec::new();
     let mut byte_offset = 0usize;
     for span in spans {
         let span_len = span.text.len();
@@ -146,18 +146,21 @@ fn apply_styled_text_to_buffer(
             } else {
                 0
             };
-            text_buffer::set_style_span(
-                ctx,
-                buffer_handle,
-                byte_offset,
-                byte_offset + span_len,
-                span_fg,
-                span.bg,
-                span.attrs.bits(),
-            )?;
+            style_spans.push(crate::types::StyleSpan {
+                start: byte_offset,
+                end: byte_offset + span_len,
+                fg: span_fg,
+                // Keep explicit span backgrounds unblended. Node opacity is
+                // defined against foreground/border color only, and storing the
+                // raw span background preserves the pre-substrate semantics if
+                // parsers start emitting background-colored spans later.
+                bg: span.bg,
+                attrs: span.attrs,
+            });
         }
         byte_offset += span_len;
     }
+    text_buffer::replace_style_spans(ctx, buffer_handle, &style_spans)?;
 
     Ok(())
 }
@@ -2690,6 +2693,35 @@ mod tests {
     }
 
     #[test]
+    fn test_render_markdown_second_frame_keeps_projection_cache_epoch() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(40, 4);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 4.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 20.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 2.0, 1).unwrap();
+
+        let node = ctx.nodes.get_mut(&text).unwrap();
+        node.content = "**bold** `code`".to_string();
+        node.content_format = ContentFormat::Markdown;
+
+        render(&mut ctx).unwrap();
+        let view_handle = ctx.nodes[&text].text_view_handle.unwrap();
+        let epoch_before = ctx.text_views[&view_handle].cache_key_epoch();
+
+        render(&mut ctx).unwrap();
+        let epoch_after = ctx.text_views[&view_handle].cache_key_epoch();
+        assert_eq!(epoch_before, epoch_after);
+    }
+
+    #[test]
     fn test_render_background_color_fill() {
         use crate::{layout, style, tree};
 
@@ -2869,6 +2901,35 @@ mod tests {
         assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'f');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().ch, 'i');
         assert_eq!(ctx.back_buffer.get(3, 0).unwrap().bg, 0x01FFFFFF);
+    }
+
+    #[test]
+    fn test_render_textarea_unchanged_selection_keeps_projection_cache_epoch() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(20, 5);
+        let textarea = tree::create_node(&mut ctx, NodeType::TextArea).unwrap();
+        ctx.root = Some(textarea);
+        ctx.focused = Some(textarea);
+
+        layout::set_dimension(&mut ctx, textarea, 0, 5.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, textarea, 1, 2.0, 1).unwrap();
+
+        {
+            let node = ctx.nodes.get_mut(&textarea).unwrap();
+            node.content = "abcdef".to_string();
+            node.wrap_mode = 1;
+            node.textarea_state.as_mut().unwrap().selection_anchor = Some((0, 1));
+            node.textarea_state.as_mut().unwrap().selection_focus = Some((0, 4));
+        }
+
+        render(&mut ctx).unwrap();
+        let view_handle = ctx.nodes[&textarea].text_view_handle.unwrap();
+        let epoch_before = ctx.text_views[&view_handle].cache_key_epoch();
+
+        render(&mut ctx).unwrap();
+        let epoch_after = ctx.text_views[&view_handle].cache_key_epoch();
+        assert_eq!(epoch_before, epoch_after);
     }
 
     #[test]
