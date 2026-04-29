@@ -980,6 +980,73 @@ describe("FFI integration", () => {
 			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
 			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
 		});
+
+		test("edit buffer delete op round-trips through undo", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("hello"), 5)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 1, null, 0, 1, 4)).toBe(0);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(2);
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(5);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer replace op handles multi-byte graphemes", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			const initial = Buffer.from("A🙂B");
+			expect(ffi.tui_text_buffer_append(buf, initial, initial.length)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			const replacement = Buffer.from("界");
+			// Replace the emoji bytes [1,5) with another multi-byte grapheme.
+			expect(
+				ffi.tui_edit_buffer_apply_op(edit, 2, replacement, replacement.length, 1, 5),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(Buffer.from("A界B").length);
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(1);
+			expect(ffi.tui_text_buffer_get_byte_len(buf)).toBe(initial.length);
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer rejects stale history after external buffer mutation", () => {
+			const buf = ffi.tui_text_buffer_create();
+			expect(buf).toBeGreaterThan(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("abc"), 3)).toBe(0);
+
+			const edit = ffi.tui_edit_buffer_create(buf);
+			expect(edit).toBeGreaterThan(0);
+			expect(ffi.tui_edit_buffer_apply_op(edit, 0, Buffer.from("d"), 1, 3, 3)).toBe(0);
+			expect(ffi.tui_text_buffer_append(buf, Buffer.from("!"), 1)).toBe(0);
+
+			expect(ffi.tui_edit_buffer_undo(edit)).toBe(-1);
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBeNull();
+			if (errPtr) {
+				expect(new CString(errPtr).toString()).toContain("history is stale");
+			}
+
+			expect(ffi.tui_edit_buffer_destroy(edit)).toBe(0);
+			expect(ffi.tui_text_buffer_destroy(buf)).toBe(0);
+		});
+
+		test("edit buffer invalid handle reports explicit error", () => {
+			expect(ffi.tui_edit_buffer_apply_op(999999, 0, Buffer.from("x"), 1, 0, 0)).toBe(-1);
+			const errPtr = ffi.tui_get_last_error();
+			expect(errPtr).not.toBeNull();
+			if (errPtr) {
+				expect(new CString(errPtr).toString()).toContain("Invalid EditBuffer handle");
+			}
+		});
 	});
 
 	// ── Code Language ───────────────────────────────────────────────────────

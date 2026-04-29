@@ -19,15 +19,17 @@ struct EditOp {
 #[derive(Debug, Clone)]
 pub struct EditBuffer {
     buffer: u32,
+    buffer_epoch: u64,
     history: Vec<EditOp>,
     undo_cursor: usize,
     generation: u64,
 }
 
 impl EditBuffer {
-    pub fn new(buffer: u32) -> Self {
+    pub fn new(buffer: u32, buffer_epoch: u64) -> Self {
         Self {
             buffer,
+            buffer_epoch,
             history: Vec::new(),
             undo_cursor: 0,
             generation: 0,
@@ -92,12 +94,35 @@ fn try_coalesce(previous: &mut EditOp, next: &EditOp) -> bool {
     false
 }
 
+fn current_buffer_epoch(ctx: &TuiContext, buffer_handle: u32) -> Result<u64, String> {
+    ctx.text_buffers
+        .get(&buffer_handle)
+        .map(|buffer| buffer.epoch())
+        .ok_or_else(|| format!("EditBuffer references missing TextBuffer {buffer_handle}"))
+}
+
+fn ensure_buffer_epoch_current(ctx: &TuiContext, handle: u32) -> Result<u32, String> {
+    let edit_buffer = ctx
+        .edit_buffers
+        .get(&handle)
+        .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    let current_epoch = current_buffer_epoch(ctx, edit_buffer.buffer)?;
+    if current_epoch != edit_buffer.buffer_epoch {
+        return Err(format!(
+            "EditBuffer {handle} history is stale after external TextBuffer mutation; destroy and recreate the EditBuffer before using undo/redo"
+        ));
+    }
+    Ok(edit_buffer.buffer)
+}
+
 pub(crate) fn create(ctx: &mut TuiContext, buffer: u32) -> Result<u32, String> {
     if buffer == 0 || !ctx.text_buffers.contains_key(&buffer) {
         return Err(format!("Invalid TextBuffer handle: {buffer}"));
     }
     let handle = ctx.alloc_substrate_handle()?;
-    ctx.edit_buffers.insert(handle, EditBuffer::new(buffer));
+    let buffer_epoch = current_buffer_epoch(ctx, buffer)?;
+    ctx.edit_buffers
+        .insert(handle, EditBuffer::new(buffer, buffer_epoch));
     Ok(handle)
 }
 
@@ -133,11 +158,7 @@ pub(crate) fn apply_replace(
     end: usize,
     payload: &str,
 ) -> Result<bool, String> {
-    let buffer_handle = ctx
-        .edit_buffers
-        .get(&handle)
-        .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?
-        .buffer();
+    let buffer_handle = ensure_buffer_epoch_current(ctx, handle)?;
     let deleted_text = {
         let buffer = ctx.text_buffers.get(&buffer_handle).ok_or_else(|| {
             format!("EditBuffer {handle} references missing buffer {buffer_handle}")
@@ -159,11 +180,13 @@ pub(crate) fn apply_replace(
     };
 
     text_buffer::replace_range(ctx, buffer_handle, start, end, payload)?;
+    let next_buffer_epoch = current_buffer_epoch(ctx, buffer_handle)?;
 
     let edit_buffer = ctx
         .edit_buffers
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    edit_buffer.buffer_epoch = next_buffer_epoch;
     if edit_buffer.undo_cursor < edit_buffer.history.len() {
         edit_buffer.history.truncate(edit_buffer.undo_cursor);
     }
@@ -185,6 +208,7 @@ pub(crate) fn apply_replace(
 }
 
 pub(crate) fn break_coalescing(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    ensure_buffer_epoch_current(ctx, handle)?;
     let edit_buffer = ctx
         .edit_buffers
         .get_mut(&handle)
@@ -195,26 +219,26 @@ pub(crate) fn break_coalescing(ctx: &mut TuiContext, handle: u32) -> Result<(), 
 
 pub(crate) fn undo(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
     let (buffer_handle, op) = {
-        let edit_buffer = ctx
-            .edit_buffers
-            .get(&handle)
-            .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+        let buffer_handle = ensure_buffer_epoch_current(ctx, handle)?;
+        let edit_buffer = ctx.edit_buffers.get(&handle).unwrap();
         if edit_buffer.undo_cursor == 0 {
             return Ok(false);
         }
         (
-            edit_buffer.buffer(),
+            buffer_handle,
             edit_buffer.history[edit_buffer.undo_cursor - 1].clone(),
         )
     };
 
     let inserted_end = op.start + op.inserted_text.len();
     text_buffer::replace_range(ctx, buffer_handle, op.start, inserted_end, &op.deleted_text)?;
+    let next_buffer_epoch = current_buffer_epoch(ctx, buffer_handle)?;
 
     let edit_buffer = ctx
         .edit_buffers
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    edit_buffer.buffer_epoch = next_buffer_epoch;
     edit_buffer.undo_cursor -= 1;
     edit_buffer.generation = edit_buffer.generation.saturating_add(1);
     Ok(true)
@@ -222,32 +246,33 @@ pub(crate) fn undo(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
 
 pub(crate) fn redo(ctx: &mut TuiContext, handle: u32) -> Result<bool, String> {
     let (buffer_handle, op) = {
-        let edit_buffer = ctx
-            .edit_buffers
-            .get(&handle)
-            .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+        let buffer_handle = ensure_buffer_epoch_current(ctx, handle)?;
+        let edit_buffer = ctx.edit_buffers.get(&handle).unwrap();
         if edit_buffer.undo_cursor >= edit_buffer.history.len() {
             return Ok(false);
         }
         (
-            edit_buffer.buffer(),
+            buffer_handle,
             edit_buffer.history[edit_buffer.undo_cursor].clone(),
         )
     };
 
     let deleted_end = op.start + op.deleted_text.len();
     text_buffer::replace_range(ctx, buffer_handle, op.start, deleted_end, &op.inserted_text)?;
+    let next_buffer_epoch = current_buffer_epoch(ctx, buffer_handle)?;
 
     let edit_buffer = ctx
         .edit_buffers
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    edit_buffer.buffer_epoch = next_buffer_epoch;
     edit_buffer.undo_cursor += 1;
     edit_buffer.generation = edit_buffer.generation.saturating_add(1);
     Ok(true)
 }
 
 pub(crate) fn can_undo(ctx: &TuiContext, handle: u32) -> Result<bool, String> {
+    ensure_buffer_epoch_current(ctx, handle)?;
     let edit_buffer = ctx
         .edit_buffers
         .get(&handle)
@@ -256,6 +281,7 @@ pub(crate) fn can_undo(ctx: &TuiContext, handle: u32) -> Result<bool, String> {
 }
 
 pub(crate) fn can_redo(ctx: &TuiContext, handle: u32) -> Result<bool, String> {
+    ensure_buffer_epoch_current(ctx, handle)?;
     let edit_buffer = ctx
         .edit_buffers
         .get(&handle)
@@ -264,6 +290,7 @@ pub(crate) fn can_redo(ctx: &TuiContext, handle: u32) -> Result<bool, String> {
 }
 
 pub(crate) fn history_len(ctx: &TuiContext, handle: u32) -> Result<usize, String> {
+    ensure_buffer_epoch_current(ctx, handle)?;
     let edit_buffer = ctx
         .edit_buffers
         .get(&handle)
@@ -298,10 +325,19 @@ pub(crate) fn discard_redo(ctx: &mut TuiContext, handle: u32) -> Result<(), Stri
 }
 
 pub(crate) fn clear_history(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let buffer_handle = {
+        let edit_buffer = ctx
+            .edit_buffers
+            .get(&handle)
+            .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+        edit_buffer.buffer
+    };
+    let buffer_epoch = current_buffer_epoch(ctx, buffer_handle)?;
     let edit_buffer = ctx
         .edit_buffers
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid EditBuffer handle: {handle}"))?;
+    edit_buffer.buffer_epoch = buffer_epoch;
     edit_buffer.history.clear();
     edit_buffer.undo_cursor = 0;
     edit_buffer.generation = 0;
@@ -409,6 +445,26 @@ mod tests {
             assert_eq!(ctx.text_buffers.get(&buf).unwrap().content(), "ab");
             assert!(undo(ctx, edit).unwrap());
             assert_eq!(ctx.text_buffers.get(&buf).unwrap().content(), "abcd");
+        });
+    }
+
+    #[test]
+    fn rejects_history_after_external_buffer_mutation() {
+        let _g = fresh_ctx();
+        let (buf, edit) = with_ctx(|ctx| {
+            let buf = text_buffer::create(ctx).unwrap();
+            text_buffer::append(ctx, buf, "abc").unwrap();
+            let edit = create(ctx, buf).unwrap();
+            (buf, edit)
+        });
+        with_ctx(|ctx| {
+            assert!(!apply_insert(ctx, edit, 3, "d").unwrap());
+            text_buffer::append(ctx, buf, "!").unwrap();
+
+            let err = undo(ctx, edit).unwrap_err();
+            assert!(err.contains("history is stale"), "{err}");
+            let err = can_undo(ctx, edit).unwrap_err();
+            assert!(err.contains("history is stale"), "{err}");
         });
     }
 }
