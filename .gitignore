@@ -22,6 +22,9 @@ Cargo.lock
 *.swp
 *.swo
 
+# Agent local state
+.codex
+
 # OS
 .DS_Store
 Thumbs.db
