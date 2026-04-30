@@ -8,7 +8,7 @@
 use std::hash::{Hash, Hasher};
 
 use crate::context::TuiContext;
-use crate::types::{CellAttrs, ContentFormat, StyledSpan, TextCacheKey};
+use crate::types::{CellAttrs, ContentFormat, StyledLink, StyledSpan, TextCacheKey};
 
 /// Resolve a syntax definition from a language hint using tolerant matching.
 ///
@@ -89,6 +89,7 @@ pub(crate) fn parse_content(
             attrs: CellAttrs::empty(),
             fg: 0,
             bg: 0,
+            link: None,
         }],
         ContentFormat::Markdown => parse_markdown(content),
         ContentFormat::Code => parse_code(ctx, content, language),
@@ -179,6 +180,7 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
     let mut italic = false;
     let mut strikethrough = false;
     let mut in_link = false;
+    let mut current_link: Option<String> = None;
 
     // Block context
     let mut heading_level: u8 = 0;
@@ -217,14 +219,19 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
         a
     };
 
-    let push = |spans: &mut Vec<StyledSpan>, text: &str, attrs: CellAttrs, fg: u32| {
-        spans.push(StyledSpan {
-            text: text.to_string(),
-            attrs,
-            fg,
-            bg: 0,
-        });
-    };
+    let push =
+        |spans: &mut Vec<StyledSpan>, text: &str, attrs: CellAttrs, fg: u32, link: Option<&str>| {
+            spans.push(StyledSpan {
+                text: text.to_string(),
+                attrs,
+                fg,
+                bg: 0,
+                link: link.map(|uri| StyledLink {
+                    uri: uri.to_string(),
+                    id: None,
+                }),
+            });
+        };
 
     for event in parser {
         match event {
@@ -250,11 +257,12 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                         prefix,
                         CellAttrs::BOLD,
                         heading_fg(heading_level),
+                        None,
                     );
                 }
                 Tag::Paragraph if blockquote_depth > 0 => {
                     let bar = "▎ ".repeat(blockquote_depth);
-                    push(&mut spans, &bar, CellAttrs::BOLD, 0x018b949e);
+                    push(&mut spans, &bar, CellAttrs::BOLD, 0x018b949e, None);
                 }
                 Tag::Strong => bold = true,
                 Tag::Emphasis => italic = true,
@@ -276,25 +284,28 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                         let indent = "  ".repeat(list_stack.len().saturating_sub(1));
                         format!("{indent} • ")
                     };
-                    push(&mut spans, &prefix, CellAttrs::BOLD, 0x013fb950);
+                    push(&mut spans, &prefix, CellAttrs::BOLD, 0x013fb950, None);
                 }
-                Tag::Link { .. } => in_link = true,
+                Tag::Link { dest_url, .. } => {
+                    in_link = true;
+                    current_link = Some(dest_url.to_string());
+                }
                 _ => {}
             },
 
             // ── Block closes ──────────────────────────────────────────────
             Event::End(tag_end) => match tag_end {
                 TagEnd::Heading(_) => {
-                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                     if heading_level <= 2 {
                         // Extra blank line under major headings
-                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                        push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                     }
                     heading_level = 0;
                     bold = false;
                 }
                 TagEnd::Paragraph => {
-                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                 }
                 TagEnd::Strong => bold = false,
                 TagEnd::Emphasis => italic = false,
@@ -302,24 +313,27 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                 TagEnd::BlockQuote(_) => {
                     blockquote_depth = blockquote_depth.saturating_sub(1);
                     if blockquote_depth == 0 {
-                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                        push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                     }
                 }
                 TagEnd::CodeBlock => {
                     in_code_block = false;
-                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                 }
                 TagEnd::List(_) => {
                     list_stack.pop();
                     item_counters.pop();
                     if list_stack.is_empty() {
-                        push(&mut spans, "\n", CellAttrs::empty(), 0);
+                        push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                     }
                 }
                 TagEnd::Item => {
-                    push(&mut spans, "\n", CellAttrs::empty(), 0);
+                    push(&mut spans, "\n", CellAttrs::empty(), 0, None);
                 }
-                TagEnd::Link => in_link = false,
+                TagEnd::Link => {
+                    in_link = false;
+                    current_link = None;
+                }
                 _ => {}
             },
 
@@ -338,11 +352,11 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                 } else {
                     0 // node default
                 };
-                push(&mut spans, &text, attrs, fg);
+                push(&mut spans, &text, attrs, fg, current_link.as_deref());
             }
             Event::Code(code) => {
                 // Inline code: monospace-style with light-grey colour
-                push(&mut spans, &code, CellAttrs::BOLD, 0x01aaaaaa);
+                push(&mut spans, &code, CellAttrs::BOLD, 0x01aaaaaa, None);
             }
             Event::Rule => {
                 // Horizontal rule: a line of ─ glyphs
@@ -351,10 +365,11 @@ fn parse_markdown(content: &str) -> Vec<StyledSpan> {
                     "──────────────────────────────────────────\n",
                     CellAttrs::empty(),
                     0x01586e75,
+                    None,
                 );
             }
             Event::SoftBreak | Event::HardBreak => {
-                push(&mut spans, "\n", CellAttrs::empty(), 0);
+                push(&mut spans, "\n", CellAttrs::empty(), 0, None);
             }
             _ => {}
         }
@@ -408,6 +423,7 @@ fn parse_code(ctx: &TuiContext, content: &str, language: Option<&str>) -> Vec<St
                         attrs,
                         fg: fg_color,
                         bg: 0,
+                        link: None,
                     });
                 }
             }
@@ -417,6 +433,7 @@ fn parse_code(ctx: &TuiContext, content: &str, language: Option<&str>) -> Vec<St
                     attrs: CellAttrs::empty(),
                     fg: 0,
                     bg: 0,
+                    link: None,
                 });
             }
         }

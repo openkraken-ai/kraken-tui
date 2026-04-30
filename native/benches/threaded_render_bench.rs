@@ -32,6 +32,7 @@ fn synthetic_diff(width: u16, height: u16, density_pct: u32) -> Vec<CellUpdate> 
                 fg: 0x01FF0000,
                 bg: 0x01000000,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         });
     }
@@ -69,7 +70,8 @@ fn bench_emit_frame(c: &mut Criterion) {
             state.reset();
             let mut sink = std::io::sink();
             let metrics =
-                writer::emit_frame(black_box(&mut state), black_box(&runs), &mut sink).unwrap();
+                writer::emit_frame(black_box(&mut state), black_box(&runs), &mut sink, false)
+                    .unwrap();
             black_box(metrics);
         })
     });
@@ -92,6 +94,7 @@ fn bench_buffer_diff(c: &mut Criterion) {
                 fg: 0x01FF0000,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
     }

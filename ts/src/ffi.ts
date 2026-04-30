@@ -25,6 +25,19 @@ const symbols = {
 		returns: "i32" as const,
 	},
 	tui_get_capabilities: { args: [] as FFIType[], returns: "u32" as const },
+	tui_terminal_get_capabilities: { args: [] as FFIType[], returns: "u64" as const },
+	tui_terminal_get_capabilities_checked: {
+		args: ["ptr"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_terminal_get_info: {
+		args: ["ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_terminal_clipboard_write: {
+		args: ["u8", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
 
 	// Node Lifecycle
 	tui_create_node: { args: ["u8"] as FFIType[], returns: "u32" as const },
@@ -671,6 +684,14 @@ const symbols = {
 		returns: "i32" as const,
 	},
 	tui_text_buffer_clear_style_spans: {
+		args: ["u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_set_link: {
+		args: ["u32", "u32", "u32", "ptr", "u32", "ptr", "u32"] as FFIType[],
+		returns: "i32" as const,
+	},
+	tui_text_buffer_clear_links: {
 		args: ["u32"] as FFIType[],
 		returns: "i32" as const,
 	},

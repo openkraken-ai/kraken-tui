@@ -1,21 +1,20 @@
 # Engineering Execution Plan
 
 ## 0. Version History & Changelog
+- v7.5.1 - Marked Epic O shipped after terminal capability state, multiplexer-aware degraded policy, Kitty keyboard disambiguation negotiation, OSC52 write-only clipboard, OSC8 link spans, and host diagnostics landed with native and Bun coverage.
 - v7.5.0 - Framed Epic O as the next work-ready wave, sequenced terminal capability hardening behind a protocol/multiplexer spike, and moved completed Epic N work into archived continuity.
 - v7.4.1 - Marked Epic N complete after the final authority-cut and coalescing audit: substrate-backed text/textarea/transcript paths are shipped, the benchmark gate is live, and the ticket table now reflects completion instead of in-flight target state.
 - v7.4.0 - Reshaped Epic N to match Brownfield reality: added a contract-sync preflight, moved the substrate benchmark gate ahead of transcript migration, and expanded dirty ranges to record both replaced and replacement extents.
 - ... [Older history truncated, refer to git logs]
 
 ## 1. Executive Summary & Active Critical Path
-- **Total Active Story Points:** 37
-- **Critical Path:** `CORE-O0 -> CORE-O1 -> CORE-O2 -> {CORE-O3, CORE-O4, CORE-O5, CORE-O6} -> CORE-O7`
-- **Planning Assumptions:** Epic M and Epic N are shipped. TechSpec ADR-T40 authorizes terminal capability hardening as the next work-ready wave, and ADR-T41 defines detection-first degradation, write-only OSC52, OSC8 range metadata, Kitty keyboard negotiation, and multiplexer-aware backend policy. The Native Core remains the terminal state authority; Host code receives capability diagnostics and issues commands but does not perform terminal detection.
+- **Total Active Story Points:** 0
+- **Critical Path:** Epic O shipped; next active wave is not selected in this artifact.
+- **Planning Assumptions:** Epic M, Epic N, and Epic O are shipped. Terminal capability handling now follows TechSpec ADR-T41: detection-first degradation, write-only OSC52, OSC8 range metadata, Kitty keyboard negotiation, and multiplexer-aware backend policy. The Native Core remains the terminal state authority; Host code receives capability diagnostics and issues commands but does not perform terminal detection.
 
 ## 2. Project Phasing & Iteration Strategy
 ### Current Active Scope
-- Epic O — Terminal Capability Hardening is ready for work.
-- The first work item is protocol and multiplexer validation before implementation so terminal-specific assumptions do not leak into public APIs.
-- The ready scope covers capability state/query APIs, multiplexer-aware backend policy, Kitty keyboard disambiguation, OSC52 clipboard writes, OSC8 hyperlink emission, and runtime color/pixel reporting.
+- No new execution wave is selected after Epic O in this artifact.
 
 ### Future / Deferred Scope
 #### Standing Deferrals Preserved
@@ -27,6 +26,7 @@
 - No React or Solid parity work; the JSX/signals layer stays a thin overlay over the imperative protocol.
 
 ### Archived or Already Completed Scope
+- Epic O (Terminal Capability Hardening) delivered `CORE-O0` through `CORE-O7`: protocol/multiplexer spike, capability state and query APIs, degraded multiplexer policy, Kitty keyboard disambiguation, write-only OSC52 clipboard writes, OSC8 hyperlink emission, runtime color/pixel reporting, and coverage/docs closeout.
 - Epic N (Substrate Surface Rebase) delivered `CORE-N0` through `CORE-N7`: contract sync, dirty-range expansion, substrate-backed text rendering, native `EditBuffer`, `TextArea` rebase, the substrate benchmark gate, transcript substrate migration, and post-substrate coverage/posture updates.
 - Epic M (Native Text Substrate) delivered `CORE-M0` through `CORE-M4`: the substrate contract memo, native `TextBuffer`, native `TextView`, the unified text renderer, and the §5.4.1 Unicode/wrapping native gate suite. Its completed scope is summarized in §5.
 - The v7 docs-maintenance wave completed `DOCS-A001` through `DOCS-A003`: canonical artifact normalization, preservation review, and source-truth reconciliation.
@@ -52,6 +52,7 @@ flowchart LR
     O4 --> O7
     O5 --> O7
     O6 --> O7
+    class O0,O1,O2,O3,O4,O5,O6,O7 done;
     classDef done fill:#dff5dd,stroke:#3f9d3f,color:#1f4d1f;
 ```
 
@@ -188,18 +189,18 @@ Then supported and unsupported terminal capability paths are covered
 And terminal protocol docs, gate policy notes, and agent-facing repo instructions match shipped Brownfield reality
 ```
 
-## 5. Ticket Summary Table (Ready Wave)
+## 5. Ticket Summary Table (Completed Epic O)
 
 | ID | Epic | Type | SP | Dependencies | Phase |
 | --- | --- | --- | --- | --- | --- |
-| CORE-O0 | O | Spike | 3 | Epic N shipped | Ready |
-| CORE-O1 | O | Feature | 5 | CORE-O0 | Ready |
-| CORE-O2 | O | Feature | 5 | CORE-O1 | Ready |
-| CORE-O3 | O | Feature | 8 | CORE-O2 | Ready |
-| CORE-O4 | O | Feature | 3 | CORE-O2 | Ready |
-| CORE-O5 | O | Feature | 5 | CORE-O1, CORE-O2 | Ready |
-| CORE-O6 | O | Feature | 5 | CORE-O2 | Ready |
-| CORE-O7 | O | Chore | 3 | CORE-O3, CORE-O4, CORE-O5, CORE-O6 | Ready |
+| CORE-O0 | O | Spike | 3 | Epic N shipped | Done |
+| CORE-O1 | O | Feature | 5 | CORE-O0 | Done |
+| CORE-O2 | O | Feature | 5 | CORE-O1 | Done |
+| CORE-O3 | O | Feature | 8 | CORE-O2 | Done |
+| CORE-O4 | O | Feature | 3 | CORE-O2 | Done |
+| CORE-O5 | O | Feature | 5 | CORE-O1, CORE-O2 | Done |
+| CORE-O6 | O | Feature | 5 | CORE-O2 | Done |
+| CORE-O7 | O | Chore | 3 | CORE-O3, CORE-O4, CORE-O5, CORE-O6 | Done |
 |  |  | **TOTAL** | **37** |  |  |
 
 ### Archived Epic N Summary

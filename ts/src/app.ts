@@ -6,8 +6,8 @@
  */
 
 import { ffi } from "./ffi";
-import { ptr } from "bun:ffi";
-import { checkResult } from "./errors";
+import { CString, ptr } from "bun:ffi";
+import { checkResult, KrakenError } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
 import { dispatchToJsxHandlers, PERF_ACTIVE_ANIMATIONS } from "./loop";
 import { Widget } from "./widget";
@@ -29,6 +29,148 @@ export interface RunOptions {
 	debugOverlay?: boolean;
 	/** Disable automatic dispatch to JSX event handler props. Default: false. */
 	disableJsxDispatch?: boolean;
+}
+
+const TERMINAL_CAPABILITY_FLAGS = {
+	truecolor: 1n << 0n,
+	color256: 1n << 1n,
+	color16: 1n << 2n,
+	mouse: 1n << 3n,
+	utf8: 1n << 4n,
+	alternateScreen: 1n << 5n,
+	osc52ClipboardWrite: 1n << 6n,
+	osc8Hyperlinks: 1n << 7n,
+	kittyKeyboardDisambiguate: 1n << 8n,
+	pixelSize: 1n << 9n,
+	colorDepthQuery: 1n << 10n,
+	multiplexerPresent: 1n << 11n,
+	synchronizedOutput: 1n << 12n,
+} as const;
+
+export interface TerminalCapabilities {
+	flags: bigint;
+	raw: bigint;
+	truecolor: boolean;
+	color256: boolean;
+	color16: boolean;
+	mouse: boolean;
+	utf8: boolean;
+	alternateScreen: boolean;
+	osc52ClipboardWrite: boolean;
+	osc8Hyperlinks: boolean;
+	kittyKeyboardDisambiguate: boolean;
+	pixelSize: boolean;
+	colorDepthQuery: boolean;
+	multiplexerPresent: boolean;
+	synchronizedOutput: boolean;
+}
+
+export interface TerminalInfo {
+	flags: bigint;
+	terminalName?: string;
+	terminalProgram?: string;
+	multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";
+	cellWidthPx: number;
+	cellHeightPx: number;
+	screenWidthPx: number;
+	screenHeightPx: number;
+	colorDepthBits: number;
+	kittyKeyboardEnabled: boolean;
+}
+
+const TERMINAL_MULTIPLEXERS = new Set(["none", "tmux", "screen", "zellij", "unknown"]);
+
+function expectRecord(value: unknown, label: string): Record<string, unknown> {
+	if (typeof value !== "object" || value == null || Array.isArray(value)) {
+		throw new Error(`Invalid ${label} payload`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	if (value === undefined || value === null) {
+		return undefined;
+	}
+	if (typeof value !== "string") {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number {
+	const value = record[key];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readBoolean(record: Record<string, unknown>, key: string): boolean {
+	const value = record[key];
+	if (typeof value !== "boolean") {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readFlags(record: Record<string, unknown>): bigint {
+	const value = record.flags;
+	// Native serializes u64 flags as a decimal string so JavaScript never
+	// rounds future high capability bits through JSON number parsing.
+	if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+		return BigInt(value);
+	}
+	if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+		return BigInt(value);
+	}
+	throw new Error("Invalid terminal info flags");
+}
+
+function readMultiplexer(record: Record<string, unknown>): TerminalInfo["multiplexer"] {
+	const value = record.multiplexer;
+	if (typeof value === "string" && TERMINAL_MULTIPLEXERS.has(value)) {
+		return value as TerminalInfo["multiplexer"];
+	}
+	throw new Error("Invalid terminal info multiplexer");
+}
+
+function parseTerminalInfo(value: unknown): TerminalInfo {
+	const record = expectRecord(value, "terminal info");
+	return {
+		flags: readFlags(record),
+		terminalName: readOptionalString(record, "terminalName"),
+		terminalProgram: readOptionalString(record, "terminalProgram"),
+		multiplexer: readMultiplexer(record),
+		cellWidthPx: readNumber(record, "cellWidthPx"),
+		cellHeightPx: readNumber(record, "cellHeightPx"),
+		screenWidthPx: readNumber(record, "screenWidthPx"),
+		screenHeightPx: readNumber(record, "screenHeightPx"),
+		colorDepthBits: readNumber(record, "colorDepthBits"),
+		kittyKeyboardEnabled: readBoolean(record, "kittyKeyboardEnabled"),
+	};
+}
+
+function takeNativeError(): string {
+	const errPtr = ffi.tui_get_last_error();
+	if (!errPtr) {
+		return "Unknown error";
+	}
+	const message = new CString(errPtr).toString();
+	ffi.tui_clear_error();
+	return message;
+}
+
+function terminalInfoRetrySize(message: string, currentSize: number): number | undefined {
+	const match = /^terminal info buffer too small: need ([0-9]+), got [0-9]+$/.exec(message);
+	if (!match) {
+		return undefined;
+	}
+	const nextSize = Number(match[1]);
+	if (!Number.isSafeInteger(nextSize) || nextSize <= currentSize || nextSize > 1_048_576) {
+		return undefined;
+	}
+	return nextSize;
 }
 
 export class Kraken {
@@ -101,6 +243,73 @@ export class Kraken {
 		const hBuf = new Int32Array(1);
 		checkResult(ffi.tui_get_terminal_size(wBuf, hBuf), "getTerminalSize");
 		return { width: wBuf[0]!, height: hBuf[0]! };
+	}
+
+	getCapabilities(): TerminalCapabilities {
+		const out = new BigUint64Array(1);
+		// Use the status-returning ABI so a destroyed or uninitialized native
+		// context cannot be mistaken for a valid all-false capability mask.
+		checkResult(ffi.tui_terminal_get_capabilities_checked(ptr(out)), "getCapabilities");
+		const raw = out[0]!;
+		const has = (flag: bigint): boolean => (raw & flag) !== 0n;
+		return {
+			flags: raw,
+			// Keep `raw` as a compatibility alias for early Epic O callers while
+			// the documented public contract uses the clearer `flags` name.
+			raw,
+			truecolor: has(TERMINAL_CAPABILITY_FLAGS.truecolor),
+			color256: has(TERMINAL_CAPABILITY_FLAGS.color256),
+			color16: has(TERMINAL_CAPABILITY_FLAGS.color16),
+			mouse: has(TERMINAL_CAPABILITY_FLAGS.mouse),
+			utf8: has(TERMINAL_CAPABILITY_FLAGS.utf8),
+			alternateScreen: has(TERMINAL_CAPABILITY_FLAGS.alternateScreen),
+			osc52ClipboardWrite: has(TERMINAL_CAPABILITY_FLAGS.osc52ClipboardWrite),
+			osc8Hyperlinks: has(TERMINAL_CAPABILITY_FLAGS.osc8Hyperlinks),
+			kittyKeyboardDisambiguate: has(TERMINAL_CAPABILITY_FLAGS.kittyKeyboardDisambiguate),
+			pixelSize: has(TERMINAL_CAPABILITY_FLAGS.pixelSize),
+			colorDepthQuery: has(TERMINAL_CAPABILITY_FLAGS.colorDepthQuery),
+			multiplexerPresent: has(TERMINAL_CAPABILITY_FLAGS.multiplexerPresent),
+			synchronizedOutput: has(TERMINAL_CAPABILITY_FLAGS.synchronizedOutput),
+		};
+	}
+
+	getTerminalInfo(): TerminalInfo {
+		let size = 4096;
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const buf = Buffer.alloc(size);
+			const written = ffi.tui_terminal_get_info(ptr(buf), buf.byteLength);
+			if (written >= 0) {
+				const parsed: unknown = JSON.parse(buf.toString("utf-8", 0, written));
+				return parseTerminalInfo(parsed);
+			}
+			const message = takeNativeError();
+			// Native includes environment-derived terminal names in diagnostics,
+			// so one bounded retry keeps large-but-valid JSON from becoming a
+			// public wrapper failure while still surfacing malformed states.
+			const retrySize = terminalInfoRetrySize(message, size);
+			if (retrySize !== undefined) {
+				size = retrySize;
+				continue;
+			}
+			throw new KrakenError(`getTerminalInfo: ${message}`, written);
+		}
+		throw new KrakenError("getTerminalInfo: terminal info buffer retry exhausted", -1);
+	}
+
+	writeClipboard(text: string, target: "clipboard" | "primary" = "clipboard"): boolean {
+		// Runtime validation keeps untyped JS callers from accidentally mapping
+		// arbitrary strings onto the native primary-selection target.
+		if (target !== "clipboard" && target !== "primary") {
+			throw new TypeError(`Invalid clipboard target: ${String(target)}`);
+		}
+		const encoded = new TextEncoder().encode(text);
+		const targetCode = target === "clipboard" ? 0 : 1;
+		// Bun rejects ptr() on zero-length buffers; native accepts null+0 so an
+		// empty write can still clear clipboard contents on supported terminals.
+		const payloadPtr = encoded.byteLength === 0 ? 0 : ptr(encoded);
+		const result = ffi.tui_terminal_clipboard_write(targetCode, payloadPtr, encoded.byteLength);
+		checkResult(result, "writeClipboard");
+		return result > 0;
 	}
 
 	/**

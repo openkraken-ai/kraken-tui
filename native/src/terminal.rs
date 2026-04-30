@@ -6,6 +6,7 @@
 
 use crate::types::TerminalInputEvent;
 use crate::writer::{WriteRun, WriterMetrics, WriterState};
+use crate::{terminal_capabilities, terminal_capabilities::TerminalCapabilityState};
 
 // ============================================================================
 // TerminalBackend Trait
@@ -15,6 +16,13 @@ pub trait TerminalBackend {
     fn init(&mut self) -> Result<(), String>;
     fn shutdown(&mut self) -> Result<(), String>;
     fn size(&self) -> (u16, u16);
+    fn capabilities(&mut self) -> TerminalCapabilityState;
+    fn write_clipboard(
+        &mut self,
+        state: &TerminalCapabilityState,
+        target: u8,
+        text: &str,
+    ) -> Result<bool, String>;
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent>;
 
     /// Emit compacted writer runs through this backend's output channel.
@@ -25,6 +33,8 @@ pub trait TerminalBackend {
         state: &mut WriterState,
         runs: &[WriteRun],
         root_bg: u32,
+        osc8_enabled: bool,
+        synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String>;
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
@@ -45,6 +55,7 @@ pub struct CrosstermBackend {
     /// background, not the application's RGB bg.  By syncing OSC 11 to the
     /// application's root bg, any gaps become invisible.
     osc11_bg: u32,
+    kitty_keyboard_enabled: bool,
 }
 
 impl CrosstermBackend {
@@ -54,6 +65,22 @@ impl CrosstermBackend {
             width: w,
             height: h,
             osc11_bg: 0,
+            kitty_keyboard_enabled: false,
+        }
+    }
+
+    fn window_pixels(&self) -> (u32, u32, u16, u16) {
+        match crossterm::terminal::window_size() {
+            Ok(size) => (
+                u32::from(size.width),
+                u32::from(size.height),
+                size.columns,
+                size.rows,
+            ),
+            Err(_) => {
+                let (w, h) = self.size();
+                (0, 0, w, h)
+            }
         }
     }
 }
@@ -62,7 +89,7 @@ impl TerminalBackend for CrosstermBackend {
     fn init(&mut self) -> Result<(), String> {
         use crossterm::{
             cursor,
-            event::EnableMouseCapture,
+            event::{EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
             terminal::{enable_raw_mode, EnterAlternateScreen},
             ExecutableCommand,
         };
@@ -84,6 +111,24 @@ impl TerminalBackend for CrosstermBackend {
             .execute(cursor::Hide)
             .map_err(|e| format!("hide cursor: {e}"))?;
 
+        // Kitty keyboard enhancement mutates terminal input mode. Keep it
+        // direct-terminal only in Epic O so tmux/screen/Zellij sessions never
+        // inherit a mode we cannot reliably restore through their passthroughs.
+        if terminal_capabilities::current_env_allows_kitty_keyboard_probe()
+            && crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
+        {
+            match stdout.execute(PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+            )) {
+                Ok(_) => {
+                    self.kitty_keyboard_enabled = true;
+                }
+                Err(_) => {
+                    self.kitty_keyboard_enabled = false;
+                }
+            }
+        }
+
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
         self.width = w;
         self.height = h;
@@ -94,37 +139,115 @@ impl TerminalBackend for CrosstermBackend {
     fn shutdown(&mut self) -> Result<(), String> {
         use crossterm::{
             cursor,
-            event::DisableMouseCapture,
+            event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
             terminal::{disable_raw_mode, LeaveAlternateScreen},
             ExecutableCommand,
         };
         use std::io::Write;
 
         let mut stdout = std::io::stdout();
+        let mut first_error: Option<String> = None;
+        fn remember(first_error: &mut Option<String>, result: Result<(), String>) {
+            if let Err(error) = result {
+                if first_error.is_none() {
+                    *first_error = Some(error);
+                }
+            }
+        }
+
         // Reset terminal default background if we changed it via OSC 11.
         if self.osc11_bg != 0 {
-            stdout
-                .write_all(b"\x1b]111\x1b\\")
-                .map_err(|e| format!("osc111: {e}"))?;
+            remember(
+                &mut first_error,
+                stdout
+                    .write_all(b"\x1b]111\x1b\\")
+                    .map_err(|e| format!("osc111: {e}")),
+            );
         }
+        if self.kitty_keyboard_enabled {
+            // Pop only if the push succeeded. This avoids sending a stray
+            // restore sequence after partial init failures or unsupported probes.
+            remember(
+                &mut first_error,
+                stdout
+                    .execute(PopKeyboardEnhancementFlags)
+                    .map(|_| ())
+                    .map_err(|e| format!("kitty keyboard restore: {e}")),
+            );
+            self.kitty_keyboard_enabled = false;
+        }
+        // Teardown is best-effort by design: after a failed restore command we
+        // still try the remaining terminal resets so the user's shell is not
+        // left in raw mode or the alternate screen.
         // Restore the OS cursor before leaving so the shell prompt renders
         // correctly after the TUI exits.
-        stdout
-            .execute(cursor::Show)
-            .map_err(|e| format!("show cursor: {e}"))?;
-        stdout
-            .execute(DisableMouseCapture)
-            .map_err(|e| format!("disable mouse: {e}"))?;
-        stdout
-            .execute(LeaveAlternateScreen)
-            .map_err(|e| format!("leave alternate screen: {e}"))?;
-        disable_raw_mode().map_err(|e| format!("disable raw mode: {e}"))?;
+        remember(
+            &mut first_error,
+            stdout
+                .execute(cursor::Show)
+                .map(|_| ())
+                .map_err(|e| format!("show cursor: {e}")),
+        );
+        remember(
+            &mut first_error,
+            stdout
+                .execute(DisableMouseCapture)
+                .map(|_| ())
+                .map_err(|e| format!("disable mouse: {e}")),
+        );
+        remember(
+            &mut first_error,
+            stdout
+                .execute(LeaveAlternateScreen)
+                .map(|_| ())
+                .map_err(|e| format!("leave alternate screen: {e}")),
+        );
+        remember(
+            &mut first_error,
+            disable_raw_mode().map_err(|e| format!("disable raw mode: {e}")),
+        );
 
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     fn size(&self) -> (u16, u16) {
         crossterm::terminal::size().unwrap_or((self.width, self.height))
+    }
+
+    fn capabilities(&mut self) -> TerminalCapabilityState {
+        let (pixel_width, pixel_height, columns, rows) = self.window_pixels();
+        TerminalCapabilityState::from_current_env(
+            columns,
+            rows,
+            pixel_width,
+            pixel_height,
+            self.kitty_keyboard_enabled,
+        )
+    }
+
+    fn write_clipboard(
+        &mut self,
+        state: &TerminalCapabilityState,
+        target: u8,
+        text: &str,
+    ) -> Result<bool, String> {
+        // Malformed host input is always an error, even when the current
+        // backend would otherwise no-op because OSC52 is unsupported.
+        terminal_capabilities::clipboard_target_code(target)?;
+        terminal_capabilities::validate_clipboard_text(text)?;
+        if !state.supports(terminal_capabilities::terminal_capability::OSC52_CLIPBOARD_WRITE) {
+            return Ok(false);
+        }
+        // Native owns OSC52 encoding so the host cannot smuggle raw escape
+        // payloads into the terminal stream.
+        let seq = terminal_capabilities::build_osc52_sequence(target, text)?;
+        use std::io::Write;
+        let mut stdout = std::io::stdout();
+        stdout
+            .write_all(&seq)
+            .map_err(|e| format!("osc52 write: {e}"))?;
+        stdout.flush().map_err(|e| format!("osc52 flush: {e}"))?;
+        Ok(true)
     }
 
     fn read_events(&mut self, timeout_ms: u32) -> Vec<TerminalInputEvent> {
@@ -253,6 +376,8 @@ impl TerminalBackend for CrosstermBackend {
         state: &mut WriterState,
         runs: &[WriteRun],
         root_bg: u32,
+        osc8_enabled: bool,
+        synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
         let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
@@ -270,11 +395,13 @@ impl TerminalBackend for CrosstermBackend {
             self.osc11_bg = root_bg;
         }
 
-        // Synchronized output (mode 2026) + buffered write
-        buf.extend_from_slice(b"\x1b[?2026h");
-        let metrics =
-            crate::writer::emit_frame(state, runs, &mut buf).map_err(|e| format!("writer: {e}"))?;
-        buf.extend_from_slice(b"\x1b[?2026l");
+        let metrics = emit_writer_frame(
+            state,
+            runs,
+            &mut buf,
+            osc8_enabled,
+            synchronized_output_enabled,
+        )?;
 
         let mut stdout = std::io::stdout();
         stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
@@ -316,6 +443,26 @@ impl TerminalBackend for HeadlessBackend {
         (self.width, self.height)
     }
 
+    fn capabilities(&mut self) -> TerminalCapabilityState {
+        TerminalCapabilityState::headless(self.width, self.height)
+    }
+
+    fn write_clipboard(
+        &mut self,
+        state: &TerminalCapabilityState,
+        target: u8,
+        text: &str,
+    ) -> Result<bool, String> {
+        // Validate even on unsupported backends so malformed host requests
+        // fail consistently instead of being masked by headless no-op behavior.
+        terminal_capabilities::clipboard_target_code(target)?;
+        terminal_capabilities::validate_clipboard_text(text)?;
+        if !state.supports(terminal_capabilities::terminal_capability::OSC52_CLIPBOARD_WRITE) {
+            return Ok(false);
+        }
+        Ok(false)
+    }
+
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         Vec::new() // No terminal input
     }
@@ -325,9 +472,12 @@ impl TerminalBackend for HeadlessBackend {
         state: &mut WriterState,
         runs: &[WriteRun],
         _root_bg: u32,
+        osc8_enabled: bool,
+        _synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
-        crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
+        crate::writer::emit_frame(state, runs, &mut sink, osc8_enabled)
+            .map_err(|e| format!("writer: {e}"))
     }
 
     #[cfg(test)]
@@ -345,6 +495,8 @@ pub struct MockBackend {
     pub width: u16,
     pub height: u16,
     pub injected_events: Vec<TerminalInputEvent>,
+    pub output: Vec<u8>,
+    pub capabilities: TerminalCapabilityState,
 }
 
 #[cfg(test)]
@@ -354,6 +506,8 @@ impl MockBackend {
             width,
             height,
             injected_events: Vec::new(),
+            output: Vec::new(),
+            capabilities: TerminalCapabilityState::headless(width, height),
         }
     }
 }
@@ -372,6 +526,26 @@ impl TerminalBackend for MockBackend {
         (self.width, self.height)
     }
 
+    fn capabilities(&mut self) -> TerminalCapabilityState {
+        self.capabilities.clone()
+    }
+
+    fn write_clipboard(
+        &mut self,
+        state: &TerminalCapabilityState,
+        target: u8,
+        text: &str,
+    ) -> Result<bool, String> {
+        if !state.supports(terminal_capabilities::terminal_capability::OSC52_CLIPBOARD_WRITE) {
+            terminal_capabilities::clipboard_target_code(target)?;
+            terminal_capabilities::validate_clipboard_text(text)?;
+            return Ok(false);
+        }
+        let seq = terminal_capabilities::build_osc52_sequence(target, text)?;
+        self.output.extend_from_slice(&seq);
+        Ok(true)
+    }
+
     fn read_events(&mut self, _timeout_ms: u32) -> Vec<TerminalInputEvent> {
         std::mem::take(&mut self.injected_events)
     }
@@ -381,13 +555,66 @@ impl TerminalBackend for MockBackend {
         state: &mut WriterState,
         runs: &[WriteRun],
         _root_bg: u32,
+        osc8_enabled: bool,
+        _synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
-        let mut sink = std::io::sink();
-        crate::writer::emit_frame(state, runs, &mut sink).map_err(|e| format!("writer: {e}"))
+        crate::writer::emit_frame(state, runs, &mut self.output, osc8_enabled)
+            .map_err(|e| format!("writer: {e}"))
     }
 
     #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+fn emit_writer_frame(
+    state: &mut WriterState,
+    runs: &[WriteRun],
+    buf: &mut Vec<u8>,
+    osc8_enabled: bool,
+    synchronized_output_enabled: bool,
+) -> Result<WriterMetrics, String> {
+    // Mode 2026 is a terminal protocol, not a generic buffering primitive.
+    // Emit it only when capability detection has positively allowed it.
+    if synchronized_output_enabled {
+        buf.extend_from_slice(b"\x1b[?2026h");
+    }
+    let metrics = crate::writer::emit_frame(state, runs, buf, osc8_enabled)
+        .map_err(|e| format!("writer: {e}"))?;
+    if synchronized_output_enabled {
+        buf.extend_from_slice(b"\x1b[?2026l");
+    }
+    Ok(metrics)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emit_writer_frame_omits_sync_mode_when_disabled() {
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+
+        emit_writer_frame(&mut state, &[], &mut buf, false, false).unwrap();
+
+        assert!(!buf
+            .windows(b"\x1b[?2026h".len())
+            .any(|w| w == b"\x1b[?2026h"));
+        assert!(!buf
+            .windows(b"\x1b[?2026l".len())
+            .any(|w| w == b"\x1b[?2026l"));
+    }
+
+    #[test]
+    fn emit_writer_frame_wraps_sync_mode_when_enabled() {
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+
+        emit_writer_frame(&mut state, &[], &mut buf, false, true).unwrap();
+
+        assert!(buf.starts_with(b"\x1b[?2026h"));
+        assert!(buf.ends_with(b"\x1b[?2026l"));
     }
 }

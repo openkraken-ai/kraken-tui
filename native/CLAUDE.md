@@ -38,9 +38,9 @@ cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench
 | `animation.rs` | Animation registry, interpolation, easing, chains, and choreography groups. |
 | `text.rs` | Markdown parsing, syntax highlighting, and styled span generation. |
 | `text_cache.rs` | Bounded LRU cache for text parse/highlight/wrap artifacts. |
-| `text_buffer.rs` | Native Text Substrate (ADR-T37): canonical content storage with content epochs, line-start markers, dirty ranges, cached width metrics, style spans, selection, and highlights. Exposes `tui_text_buffer_*`. |
+| `text_buffer.rs` | Native Text Substrate (ADR-T37): canonical content storage with content epochs, line-start markers, dirty ranges, cached width metrics, style spans, selection, highlights, and terminal link spans. Exposes `tui_text_buffer_*`. |
 | `text_view.rs` | Native Text Substrate (ADR-T37): viewport / wrap projection over a `TextBuffer` with composite-keyed wrap cache, scroll, cursor mapping, and byte/visual conversions. Exposes `tui_text_view_*`. |
-| `text_renderer.rs` | Unified text renderer: single path that draws a `TextView` into the cell buffer with clipping, wide-glyph handling, combining marks, ZWJ/CJK width, tab expansion, selections, highlights, cursor, and style merging. Idle until Epic N rebases widget render paths. |
+| `text_renderer.rs` | Unified text renderer: single path that draws a `TextView` into the cell buffer with clipping, wide-glyph handling, combining marks, ZWJ/CJK width, tab expansion, selections, highlights, cursor, terminal links, and style merging. |
 | `substrate_gates.rs` | `#[cfg(test)]` substrate gate suite (CORE-M4) enforcing every TechSpec §5.4.1 invariant by named native test. |
 | `render.rs` | Core render pipeline: animation advancement, theme resolution, layout, transcript rendering, diffing, and overlay staging. |
 | `writer.rs` | Run compaction, cursor/style delta tracking, and efficient terminal emission. |
@@ -52,6 +52,7 @@ cargo bench --manifest-path native/Cargo.toml --bench text_substrate_bench
 | `splitpane.rs` | Two-child pane layout, ratio constraints, keyboard/mouse resize behavior, and child layout synchronization. |
 | `devtools.rs` | Debug trace rings, JSON snapshots, JSON traces, overlay rendering, and trace clearing. |
 | `terminal.rs` | Terminal backend abstraction plus Crossterm and headless backends. |
+| `terminal_capabilities.rs` | Detection-first capability flags, multiplexer policy, OSC52/OSC8 payload validation, protocol builders, and terminal info diagnostics. |
 | `golden.rs` | Deterministic golden snapshot test helpers. |
 | `threaded_render.rs` | Experimental opt-in background render path behind `--features threaded-render` only. |
 
@@ -120,6 +121,7 @@ pub extern "C" fn tui_something(handle: u32) -> i32 {
 | `regex` | `1` | Pattern matching |
 | `serde` | `1.0` | Serialization derives |
 | `serde_json` | `1.0` | Debug snapshot and trace JSON copy-out |
+| `base64` | `0.22` | Native OSC52 clipboard payload encoding |
 | `criterion` | `0.5` | Benchmarks (`dev-dependencies`) |
 
 ---
@@ -131,6 +133,7 @@ pub extern "C" fn tui_something(handle: u32) -> i32 {
 - Devtools overlays, snapshots, and bounded trace rings are implemented
 - Transcript anchors, unread behavior, and transcript-specific input handling are implemented
 - `SplitPane` native layout and resize behavior are implemented
+- Terminal capability state, write-only OSC52, OSC8 link spans, Kitty keyboard disambiguation negotiation, and diagnostic copy-out APIs are implemented
 - No `TODO` / `FIXME` markers are expected in production code paths
 
 ### Known Substrate Limitations

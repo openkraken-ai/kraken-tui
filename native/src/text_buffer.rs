@@ -10,7 +10,9 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::context::TuiContext;
-use crate::types::{CellAttrs, DirtyRange, HighlightRange, SelectionRange, StyleSpan};
+use crate::types::{
+    CellAttrs, DirtyRange, HighlightRange, SelectionRange, StyleSpan, TerminalLinkSpan,
+};
 
 const DEFAULT_TAB_WIDTH: u8 = 4;
 
@@ -31,6 +33,7 @@ pub struct TextBuffer {
     /// Cached per-line cell width, computed against `tab_width`.
     line_widths: Vec<u32>,
     style_spans: Vec<StyleSpan>,
+    terminal_link_spans: Vec<TerminalLinkSpan>,
     selection: Option<SelectionRange>,
     highlights: Vec<HighlightRange>,
     dirty_ranges: Vec<DirtyRange>,
@@ -46,6 +49,7 @@ impl TextBuffer {
             line_starts: vec![0],
             line_widths: vec![0],
             style_spans: Vec::new(),
+            terminal_link_spans: Vec::new(),
             selection: None,
             highlights: Vec::new(),
             dirty_ranges: Vec::new(),
@@ -87,6 +91,10 @@ impl TextBuffer {
 
     pub fn style_spans(&self) -> &[StyleSpan] {
         &self.style_spans
+    }
+
+    pub fn terminal_link_spans(&self) -> &[TerminalLinkSpan] {
+        &self.terminal_link_spans
     }
 
     pub fn selection(&self) -> Option<SelectionRange> {
@@ -260,6 +268,74 @@ pub(crate) fn clear_style_spans(ctx: &mut TuiContext, handle: u32) -> Result<(),
     Ok(())
 }
 
+pub(crate) fn set_link(
+    ctx: &mut TuiContext,
+    handle: u32,
+    start: usize,
+    end: usize,
+    uri: &str,
+    id: Option<&str>,
+) -> Result<(), String> {
+    crate::terminal_capabilities::validate_osc8_uri(uri)?;
+    if let Some(id) = id {
+        crate::terminal_capabilities::validate_osc8_id(id)?;
+    }
+    let buf = ctx
+        .text_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+    validate_byte_range(buf, start, end)?;
+    validate_link_range_non_empty(start, end)?;
+    buf.terminal_link_spans.push(TerminalLinkSpan {
+        start,
+        end,
+        uri: uri.to_string(),
+        id: id.map(str::to_string),
+    });
+    bump_style_fingerprint(buf);
+    Ok(())
+}
+
+pub(crate) fn replace_link_spans(
+    ctx: &mut TuiContext,
+    handle: u32,
+    spans: &[TerminalLinkSpan],
+) -> Result<(), String> {
+    for span in spans {
+        crate::terminal_capabilities::validate_osc8_uri(&span.uri)?;
+        if let Some(id) = span.id.as_deref() {
+            crate::terminal_capabilities::validate_osc8_id(id)?;
+        }
+    }
+    let buf = ctx
+        .text_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+    for span in spans {
+        validate_byte_range(buf, span.start, span.end)?;
+        validate_link_range_non_empty(span.start, span.end)?;
+    }
+    if buf.terminal_link_spans.as_slice() == spans {
+        return Ok(());
+    }
+    buf.terminal_link_spans.clear();
+    buf.terminal_link_spans.extend_from_slice(spans);
+    bump_style_fingerprint(buf);
+    Ok(())
+}
+
+pub(crate) fn clear_links(ctx: &mut TuiContext, handle: u32) -> Result<(), String> {
+    let buf = ctx
+        .text_buffers
+        .get_mut(&handle)
+        .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
+    if !buf.terminal_link_spans.is_empty() {
+        buf.terminal_link_spans.clear();
+        bump_style_fingerprint(buf);
+    }
+    Ok(())
+}
+
 pub(crate) fn set_selection(
     ctx: &mut TuiContext,
     handle: u32,
@@ -357,6 +433,16 @@ fn validate_byte_range(buf: &TextBuffer, start: usize, end: usize) -> Result<(),
     }
     if !buf.content.is_char_boundary(end) {
         return Err(format!("Byte offset {end} is not a UTF-8 boundary"));
+    }
+    Ok(())
+}
+
+fn validate_link_range_non_empty(start: usize, end: usize) -> Result<(), String> {
+    // OSC8 spans are projected by overlap with rendered graphemes; a zero-width
+    // range can never produce output, so accepting it would falsely signal that
+    // link metadata was attached.
+    if start == end {
+        return Err("Terminal link range must not be empty".to_string());
     }
     Ok(())
 }
@@ -493,6 +579,19 @@ fn reconcile_ranges_after_replace(
     }
     buf.style_spans = new_spans;
 
+    let mut new_links = Vec::with_capacity(buf.terminal_link_spans.len());
+    for link in buf.terminal_link_spans.iter() {
+        if let Some((a, b)) = reconcile(link.start, link.end) {
+            new_links.push(TerminalLinkSpan {
+                start: a,
+                end: b,
+                uri: link.uri.clone(),
+                id: link.id.clone(),
+            });
+        }
+    }
+    buf.terminal_link_spans = new_links;
+
     if let Some(sel) = buf.selection {
         buf.selection =
             reconcile(sel.start, sel.end).map(|(a, b)| SelectionRange { start: a, end: b });
@@ -617,6 +716,38 @@ mod tests {
                     new_end: 4,
                 })
             );
+        });
+    }
+
+    #[test]
+    fn link_spans_validate_and_reconcile_after_replace() {
+        let _g = fresh_ctx();
+        let h = with_ctx(|ctx| create(ctx).unwrap());
+        with_ctx(|ctx| {
+            append(ctx, h, "hello world").unwrap();
+            set_link(ctx, h, 6, 11, "https://example.com", Some("doc-1")).unwrap();
+            assert_eq!(
+                ctx.text_buffers
+                    .get(&h)
+                    .unwrap()
+                    .terminal_link_spans()
+                    .len(),
+                1
+            );
+            replace_range(ctx, h, 0, 6, "").unwrap();
+            let links = ctx.text_buffers.get(&h).unwrap().terminal_link_spans();
+            assert_eq!(links.len(), 1);
+            assert_eq!(links[0].start, 0);
+            assert_eq!(links[0].end, 5);
+            assert!(set_link(ctx, h, 0, 5, "javascript:alert(1)", None).is_err());
+            assert!(set_link(ctx, h, 2, 2, "https://example.com/empty", None).is_err());
+            clear_links(ctx, h).unwrap();
+            assert!(ctx
+                .text_buffers
+                .get(&h)
+                .unwrap()
+                .terminal_link_spans()
+                .is_empty());
         });
     }
 

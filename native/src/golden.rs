@@ -232,6 +232,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         buf.set(
@@ -242,6 +243,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         buf.set(
@@ -252,6 +254,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         buf.set(
@@ -262,6 +265,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
 
@@ -280,6 +284,7 @@ mod tests {
                 fg: 0x01FF0000,
                 bg: 0x0100FF00,
                 attrs: CellAttrs::BOLD,
+                link: None,
             },
         );
         buf.set(
@@ -290,6 +295,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
 

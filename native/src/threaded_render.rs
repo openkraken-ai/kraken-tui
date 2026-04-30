@@ -18,6 +18,17 @@
 //! 3. `tui_render()` now snapshots state and dispatches to the render thread
 //! 4. Call `tui_threaded_render_stop()` to join and return to synchronous mode
 
+// The threaded renderer is an opt-in experimental feature. Many snapshot
+// fields are intentionally reserved for parity with the synchronous renderer
+// before every widget-specific threaded path consumes them.
+#![allow(
+    dead_code,
+    clippy::explicit_counter_loop,
+    clippy::too_many_arguments,
+    clippy::unnecessary_map_or,
+    clippy::while_let_loop
+)]
+
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -372,7 +383,11 @@ fn render_thread_main(
                         Ok(guard) => guard,
                         Err(poisoned) => poisoned.into_inner(),
                     };
-                    match be.emit_runs(&mut writer_state, &runs) {
+                    // Threaded rendering uses snapshot cells that intentionally
+                    // omit live capability state; keep OSC8 and synchronized
+                    // output disabled until the experimental path is promoted
+                    // with a capability-safe snapshot contract.
+                    match be.emit_runs(&mut writer_state, &runs, 0, false, false) {
                         Ok(m) => m,
                         Err(_) => WriterMetrics {
                             bytes_estimated: 0,
@@ -496,6 +511,7 @@ fn render_snapshot_node(
                         fg,
                         bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -522,6 +538,7 @@ fn render_snapshot_node(
                 fg: border_fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -534,6 +551,7 @@ fn render_snapshot_node(
                 fg: border_fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -546,6 +564,7 @@ fn render_snapshot_node(
                 fg: border_fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -558,6 +577,7 @@ fn render_snapshot_node(
                 fg: border_fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -572,6 +592,7 @@ fn render_snapshot_node(
                     fg: border_fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
                 clip,
             );
@@ -584,6 +605,7 @@ fn render_snapshot_node(
                     fg: border_fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
                 clip,
             );
@@ -598,6 +620,7 @@ fn render_snapshot_node(
                     fg: border_fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
                 clip,
             );
@@ -610,6 +633,7 @@ fn render_snapshot_node(
                     fg: border_fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
                 clip,
             );
@@ -739,7 +763,19 @@ fn render_snapshot_text(
             continue;
         }
         if dx < w {
-            clip_set_snapshot(buffer, x + dx, y + dy, Cell { ch, fg, bg, attrs }, clip);
+            clip_set_snapshot(
+                buffer,
+                x + dx,
+                y + dy,
+                Cell {
+                    ch,
+                    fg,
+                    bg,
+                    attrs,
+                    link: None,
+                },
+                clip,
+            );
         }
         dx += 1;
     }
@@ -769,7 +805,19 @@ fn render_snapshot_input(
         if dx >= w {
             break;
         }
-        clip_set_snapshot(buffer, x + dx, y, Cell { ch, fg, bg, attrs }, clip);
+        clip_set_snapshot(
+            buffer,
+            x + dx,
+            y,
+            Cell {
+                ch,
+                fg,
+                bg,
+                attrs,
+                link: None,
+            },
+            clip,
+        );
         dx += 1;
     }
 
@@ -787,6 +835,7 @@ fn render_snapshot_input(
                     fg: bg, // Inverted
                     bg: fg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -829,7 +878,13 @@ fn render_snapshot_textarea(
                 buffer,
                 x + dx,
                 y + dy as i32,
-                Cell { ch, fg, bg, attrs },
+                Cell {
+                    ch,
+                    fg,
+                    bg,
+                    attrs,
+                    link: None,
+                },
                 clip,
             );
             dx += 1;
@@ -855,6 +910,7 @@ fn render_snapshot_textarea(
                     fg: bg,
                     bg: fg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -902,6 +958,7 @@ fn render_snapshot_table(
                         fg,
                         bg,
                         attrs: attrs | CellAttrs::BOLD,
+                        link: None,
                     },
                     clip,
                 );
@@ -936,6 +993,7 @@ fn render_snapshot_table(
                         fg: row_fg,
                         bg: row_bg,
                         attrs,
+                        link: None,
                     },
                     clip,
                 );
@@ -986,6 +1044,7 @@ fn render_snapshot_list(
                     fg: item_fg,
                     bg: item_bg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1032,6 +1091,7 @@ fn render_snapshot_tabs(
                     fg: tab_fg,
                     bg: tab_bg,
                     attrs: tab_attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1050,6 +1110,7 @@ fn render_snapshot_tabs(
                     fg: tab_fg,
                     bg: tab_bg,
                     attrs: tab_attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1066,6 +1127,7 @@ fn render_snapshot_tabs(
                     fg: tab_fg,
                     bg: tab_bg,
                     attrs: tab_attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1232,6 +1294,7 @@ mod tests {
                 fg: 0x01FF0000,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         let diff = diff_snapshot_buffers(&front, &back);

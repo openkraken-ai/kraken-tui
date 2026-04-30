@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { dlopen, CString, type FFIType } from "bun:ffi";
+import { Kraken } from "./src/app";
 import { resolveSourceBuildPath } from "./src/resolver";
 
 // ── Load native library ─────────────────────────────────────────────────────
@@ -21,6 +22,10 @@ const lib = dlopen(LIB_PATH, {
 	tui_init_headless:   { args: ["u16", "u16"] as FFIType[],                    returns: "i32" as const },
 	tui_shutdown:        { args: [] as FFIType[],                               returns: "i32" as const },
 	tui_get_capabilities:{ args: [] as FFIType[],                               returns: "u32" as const },
+	tui_terminal_get_capabilities:{ args: [] as FFIType[],                      returns: "u64" as const },
+	tui_terminal_get_capabilities_checked:{ args: ["ptr"] as FFIType[],         returns: "i32" as const },
+	tui_terminal_get_info:{ args: ["ptr", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_terminal_clipboard_write:{ args: ["u8", "ptr", "u32"] as FFIType[],     returns: "i32" as const },
 
 	// Node Lifecycle
 	tui_create_node:     { args: ["u8"] as FFIType[],                            returns: "u32" as const },
@@ -239,6 +244,8 @@ const lib = dlopen(LIB_PATH, {
 	tui_text_buffer_get_line_count:    { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 	tui_text_buffer_set_style_span:    { args: ["u32", "u32", "u32", "u32", "u32", "u8"] as FFIType[], returns: "i32" as const },
 	tui_text_buffer_clear_style_spans: { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_link:          { args: ["u32", "u32", "u32", "ptr", "u32", "ptr", "u32"] as FFIType[], returns: "i32" as const },
+	tui_text_buffer_clear_links:       { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_buffer_set_selection:     { args: ["u32", "u32", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_text_buffer_clear_selection:   { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_buffer_set_highlight:     { args: ["u32", "u32", "u32", "u8"] as FFIType[],            returns: "i32" as const },
@@ -815,6 +822,56 @@ describe("FFI integration", () => {
 			expect(wBuf[0]).toBe(80);
 			expect(hBuf[0]).toBe(24);
 		});
+
+		test("terminal capability ABI returns headless diagnostics", () => {
+			const legacy = ffi.tui_get_capabilities();
+			const full = ffi.tui_terminal_get_capabilities();
+			expect(BigInt(legacy)).toBe(full & 0xffff_ffffn);
+			expect((full & (1n << 4n)) !== 0n).toBe(true);
+			const checked = new BigUint64Array(1);
+			expect(ffi.tui_terminal_get_capabilities_checked(checked)).toBe(0);
+			expect(checked[0]).toBe(full);
+
+			const buf = Buffer.alloc(4096);
+			const written = ffi.tui_terminal_get_info(buf, buf.byteLength);
+			expect(written).toBeGreaterThan(0);
+			const info = JSON.parse(buf.toString("utf-8", 0, written));
+			expect(typeof info.flags).toBe("string");
+			expect(info.terminalName).toBe("headless");
+			expect(info.multiplexer).toBe("none");
+			expect(info.screenWidthPx).toBe(80);
+			expect(info.screenHeightPx).toBe(24);
+		});
+
+		test("terminal wrappers expose capabilities and unsupported clipboard no-op", () => {
+			const app = Object.create(Kraken.prototype) as Kraken;
+			const caps = app.getCapabilities();
+			expect(caps.flags).toBe(caps.raw);
+			expect(caps.utf8).toBe(true);
+			expect(caps.osc52ClipboardWrite).toBe(false);
+			const info = app.getTerminalInfo();
+			expect(info.terminalName).toBe("headless");
+			expect(typeof info.flags).toBe("bigint");
+			expect(app.writeClipboard("hello")).toBe(false);
+			expect(app.writeClipboard("")).toBe(false);
+		});
+
+		test("terminal wrapper rejects invalid clipboard target strings", () => {
+			const app = Object.create(Kraken.prototype) as Kraken;
+			expect(() =>
+				app.writeClipboard("hello", "bogus" as unknown as "clipboard"),
+			).toThrow("Invalid clipboard target");
+		});
+
+		test("clipboard write rejects malformed target", () => {
+			const payload = Buffer.from("hello");
+			expect(ffi.tui_terminal_clipboard_write(9, payload, payload.byteLength)).toBe(-1);
+		});
+
+		test("clipboard write accepts multiline text before unsupported no-op", () => {
+			const payload = Buffer.from("line\n\tbreak\r\n");
+			expect(ffi.tui_terminal_clipboard_write(0, payload, payload.byteLength)).toBe(0);
+		});
 	});
 
 	// ── Native Text Substrate (ADR-T37) ─────────────────────────────────────
@@ -877,6 +934,16 @@ describe("FFI integration", () => {
 				ffi.tui_text_buffer_set_style_span(buf, 0, 5, 0xff_00_00, 0, ATTR_BOLD),
 			).toBe(0);
 			expect(ffi.tui_text_buffer_clear_style_spans(buf)).toBe(0);
+
+			const uri = Buffer.from("https://example.com");
+			const id = Buffer.from("doc-1");
+			expect(
+				ffi.tui_text_buffer_set_link(buf, 0, 5, uri, uri.byteLength, id, id.byteLength),
+			).toBe(0);
+			expect(
+				ffi.tui_text_buffer_set_link(buf, 2, 2, uri, uri.byteLength, id, id.byteLength),
+			).toBe(-1);
+			expect(ffi.tui_text_buffer_clear_links(buf)).toBe(0);
 
 			// Selection: set then clear.
 			expect(ffi.tui_text_buffer_set_selection(buf, 6, 11)).toBe(0);
@@ -2355,6 +2422,16 @@ describe("FFI integration", () => {
 	// ── Post-shutdown safety ────────────────────────────────────────────────
 
 	describe("post-shutdown", () => {
+		test("terminal capability wrapper surfaces native lifecycle errors", () => {
+			ffi.tui_shutdown();
+			const app = Kraken.initHeadless(80, 24);
+			app.shutdown();
+
+			expect(() => app.getCapabilities()).toThrow("getCapabilities");
+
+			ffi.tui_init_headless(80, 24);
+		});
+
 		test("double init fails with explicit error", () => {
 			ffi.tui_shutdown();
 			expect(ffi.tui_init_headless(80, 24)).toBe(0);

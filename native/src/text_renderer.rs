@@ -16,7 +16,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::context::TuiContext;
 use crate::text_view;
-use crate::types::{color_tag, Buffer, Cell, CellAttrs, HighlightRange, SelectionRange, StyleSpan};
+use crate::types::{
+    color_tag, Buffer, Cell, CellAttrs, HighlightRange, SelectionRange, StyleSpan, TerminalLink,
+    TerminalLinkSpan,
+};
 
 /// Axis-aligned target rectangle in absolute screen coordinates.
 #[derive(Debug, Clone, Copy)]
@@ -132,6 +135,7 @@ pub(crate) fn render_text_view(
         .ok_or_else(|| format!("Buffer {buffer_handle} missing for view {view_handle}"))?;
     let content = buf.content();
     let style_spans: &[StyleSpan] = buf.style_spans();
+    let link_spans: &[TerminalLinkSpan] = buf.terminal_link_spans();
     let selection: Option<SelectionRange> = buf.selection();
     let highlights: &[HighlightRange] = buf.highlights();
 
@@ -227,12 +231,22 @@ pub(crate) fn render_text_view(
             let mut fg = base.fg;
             let mut bg = base.bg;
             let mut attrs = base.attrs;
+            let mut link: Option<TerminalLink> = None;
 
             for span in style_spans {
                 if g_byte_end > span.start && g_byte_start < span.end {
                     fg = span.fg;
                     bg = span.bg;
                     attrs |= span.attrs;
+                }
+            }
+
+            for span in link_spans {
+                if g_byte_end > span.start && g_byte_start < span.end {
+                    link = Some(TerminalLink {
+                        uri: span.uri.clone(),
+                        id: span.id.clone(),
+                    });
                 }
             }
 
@@ -273,6 +287,7 @@ pub(crate) fn render_text_view(
                     fg,
                     bg,
                     attrs: primary_attrs,
+                    link: link.clone(),
                 };
                 target.set(screen_col as u16, screen_y as u16, primary);
             }
@@ -303,6 +318,7 @@ pub(crate) fn render_text_view(
                             fg,
                             bg,
                             attrs,
+                            link: link.clone(),
                         };
                         target.set(trailing_col as u16, screen_y as u16, trailing);
                     }
@@ -346,6 +362,7 @@ pub(crate) fn render_text_view(
                             fg: base.fg,
                             bg: base.bg,
                             attrs: base.attrs | CellAttrs::UNDERLINE,
+                            link: None,
                         };
                         target.set(screen_col as u16, screen_y as u16, marker);
                     }
@@ -776,6 +793,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         with_ctx(|ctx| {

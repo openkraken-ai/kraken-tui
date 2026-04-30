@@ -34,7 +34,7 @@ fn bench_emit_frame(c: &mut Criterion) {
         b.iter(|| {
             let mut state = WriterState::new();
             let mut buf = Vec::with_capacity(8192);
-            black_box(emit_frame(&mut state, &full_runs, &mut buf).unwrap());
+            black_box(emit_frame(&mut state, &full_runs, &mut buf, false).unwrap());
         });
     });
 
@@ -42,7 +42,7 @@ fn bench_emit_frame(c: &mut Criterion) {
         b.iter(|| {
             let mut state = WriterState::new();
             let mut buf = Vec::with_capacity(8192);
-            black_box(emit_frame(&mut state, &medium_runs, &mut buf).unwrap());
+            black_box(emit_frame(&mut state, &medium_runs, &mut buf, false).unwrap());
         });
     });
 
@@ -50,7 +50,7 @@ fn bench_emit_frame(c: &mut Criterion) {
         b.iter(|| {
             let mut state = WriterState::new();
             let mut buf = Vec::with_capacity(8192);
-            black_box(emit_frame(&mut state, &sparse_runs, &mut buf).unwrap());
+            black_box(emit_frame(&mut state, &sparse_runs, &mut buf, false).unwrap());
         });
     });
 }
@@ -64,7 +64,7 @@ fn bench_throughput_reduction(c: &mut Criterion) {
             let runs = compact_runs(&diff);
             let mut state = WriterState::new();
             let mut buf = Vec::with_capacity(8192);
-            let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+            let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
             let baseline = baseline_metrics(&diff);
             black_box((metrics, baseline));
         });

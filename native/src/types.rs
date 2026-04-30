@@ -375,11 +375,32 @@ impl Default for VisualStyle {
 // ============================================================================
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TerminalLink {
+    pub uri: String,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalLinkSpan {
+    pub start: usize,
+    pub end: usize,
+    pub uri: String,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyledLink {
+    pub uri: String,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cell {
     pub ch: char,
     pub fg: u32,
     pub bg: u32,
     pub attrs: CellAttrs,
+    pub link: Option<TerminalLink>,
 }
 
 impl Default for Cell {
@@ -389,6 +410,7 @@ impl Default for Cell {
             fg: 0,
             bg: 0,
             attrs: CellAttrs::empty(),
+            link: None,
         }
     }
 }
@@ -543,6 +565,7 @@ pub struct StyledSpan {
     pub attrs: CellAttrs,
     pub fg: u32,
     pub bg: u32,
+    pub link: Option<StyledLink>,
 }
 
 // ============================================================================
@@ -1185,6 +1208,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         );
         assert_eq!(buf.get(3, 2).unwrap().ch, 'X');

@@ -1,6 +1,7 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.4.1 - Landed Epic O Brownfield updates: native terminal capability state, diagnostic query APIs, write-only OSC52, OSC8 text-buffer link spans, Kitty keyboard disambiguation negotiation, and conservative multiplexer degradation are now implemented.
 - v7.4.0 - Activated the Epic O terminal-capability contract: capability discovery becomes detection-first, OSC52 is write-only, OSC8 hyperlinks are range-scoped, Kitty keyboard support is negotiated, and multiplexer variance is an explicit implementation concern.
 - v7.3.2 - Closed the last Epic N contract drift: `EditBuffer` coalescing and substrate-backed text surfaces are now documented as shipped Brownfield reality rather than pending target state.
 - v7.3.1 - Completed the substrate authority cut for Epic N: transcript blocks now store substrate handles instead of mirrored mutable strings, the substrate benchmark suite is a first-class native gate, and the pre-public contract no longer preserves backward compatibility for its own sake.
@@ -137,7 +138,7 @@ The repo-owned release workflow currently publishes **versioned GitHub release a
 - The prior v6 TechSpec described transcript, devtools, split-pane, and flagship examples as future work. The current source tree implements them.
 - This v7 artifact is therefore intentionally present-tense and canonical rather than future-tense and phase-only.
 - ADR-T37 through ADR-T40 introduced forward-looking scope during the rebase wave. Sections 3.4 and 4.4 now describe Brownfield reality for `TextBuffer`, `TextView`, `EditBuffer`, and the rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks`) after Epic N shipped.
-- ADR-T41 introduces the next active target-state contract for Epic O. Existing source currently has a coarse `tui_get_capabilities()` bitmask and Crossterm-backed raw mode, alternate screen, mouse, resize, focus, synchronized output, and OSC11 background sync; Epic O replaces the coarse assumptions with explicit capability state and tested degraded behavior.
+- ADR-T41 is now shipped under Epic O. The source tree has explicit terminal capability state, diagnostic query APIs, conservative multiplexer degradation, write-only OSC52, OSC8 link metadata, Kitty keyboard disambiguation negotiation, and tested fallback behavior.
 
 ## 3. State & Data Modeling
 ### 3.1 Native UI State Model
@@ -174,17 +175,18 @@ erDiagram
 
 ### 3.1.1 Terminal Capability State
 - **Purpose:** Represent terminal features that affect input parsing, escape-sequence emission, color behavior, clipboard integration, hyperlink rendering, and runtime diagnostics.
-- **Storage Shape:** `TerminalCapabilityState` lives inside `TuiContext` and is initialized by the active `TerminalBackend` during `tui_init()` / `tui_init_headless()`. Headless mode reports only deterministic synthetic capabilities. The legacy `tui_get_capabilities()` bitmask remains available, but Epic O extends it to return the new `terminal_capability::*` flags.
+- **Storage Shape:** `TerminalCapabilityState` lives inside `TuiContext` and is initialized by the active `TerminalBackend` during `tui_init()` / `tui_init_headless()`. Capability copy-out APIs and resize handling refresh this state from the backend before reporting diagnostics, so pixel and cell-size values do not remain pinned to init-time geometry. Headless mode reports only deterministic synthetic capabilities. The legacy `tui_get_capabilities()` bitmask remains available, but Epic O extends it to return the new `terminal_capability::*` flags.
 - **Constraints / Invariants:**
   - Capability flags are observations, not promises from the Host Layer.
   - Unsupported or unknown capabilities degrade to no-op or legacy terminal behavior.
   - Clipboard reads are not represented in Epic O. OSC52 is write-only because reads are security-sensitive and often disabled or prompt-gated by terminals.
   - Kitty keyboard enhancement must be negotiated on init and restored on shutdown; failed negotiation leaves legacy input parsing untouched.
-  - OSC8 and OSC52 payloads must reject control bytes and malformed data before reaching the terminal output stream.
+  - OSC8 payloads must reject control bytes and malformed data before reaching the terminal output stream; OSC52 clipboard text may contain ordinary UTF-8 controls because the native encoder emits only base64 payload bytes.
   - Multiplexer detection never bypasses the backend abstraction; tmux/screen/Zellij handling is encoded as terminal backend policy.
 - **Indexes / Access Paths:**
   - `tui_get_capabilities() -> u32` remains a compatibility getter for the low 32 capability bits.
-  - `tui_terminal_get_capabilities() -> u64` returns the full bitset.
+  - `tui_terminal_get_capabilities() -> u64` returns the full bitset for legacy callers that can tolerate the zero sentinel.
+  - `tui_terminal_get_capabilities_checked(out_ptr) -> i32` is the preferred status-returning full-bitset ABI for host wrappers.
   - `tui_terminal_get_info(out_ptr, out_len) -> i32` copies JSON capability diagnostics for devtools and tests.
   - Host wrappers expose `app.getCapabilities()` and `app.getTerminalInfo()` without owning detection logic.
 - **Migration Notes:** Existing consumers that only check the coarse v0 bitmask continue to work. Epic O host additions are additive; if a terminal cannot support a feature, the native call returns `0` with a false capability or an explicit `-1` for invalid input, not a partial escape sequence.
@@ -391,7 +393,7 @@ pub struct TuiContext {
 ### 3.4 Native Text Substrate
 - **Purpose:** Own all substantial text content and its viewport projections inside the Native Core so widget code stops re-implementing measurement, wrapping, clipping, and Unicode handling.
 - **Storage Shape:**
-  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight changes today and link changes after CORE-O5), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, Epic O target `terminal_link_spans`, `dirty_ranges`, and a configurable `tab_width`. Each dirty-range entry records `start`, `old_end`, and `new_end` so shrinking and growing edits preserve both the replaced extent and the replacement extent. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
+  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight/link changes), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, `terminal_link_spans`, `dirty_ranges`, and a configurable `tab_width`. Each dirty-range entry records `start`, `old_end`, and `new_end` so shrinking and growing edits preserve both the replaced extent and the replacement extent. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
   - `TextView` — viewport projection over a `TextBuffer`, parameterized by wrap width, wrap mode, tab width, viewport rows, scroll row and column, and optional cursor position. Holds a soft-wrap visual-line cache keyed by content epoch and wrap parameters.
   - `EditBuffer` — wraps a `TextBuffer` with an operation history for `insert`, `delete`, and `replace`, plus explicit coalescing boundaries that keep ordinary single-edit operations grouped without forcing unrelated edits into the same undo unit.
 - **Constraints / Invariants:**
@@ -406,9 +408,9 @@ pub struct TuiContext {
   - `text_buffers: HashMap<u32, TextBuffer>` keyed by buffer Handle
   - `text_views: HashMap<u32, TextView>` keyed by view Handle, each referencing a buffer Handle
   - `edit_buffers: HashMap<u32, EditBuffer>` keyed by edit-buffer Handle, each referencing a buffer Handle
-  - Per-buffer `Vec<usize>` line-start index, Epic O target `Vec<TerminalLinkSpan>` range metadata, and `Vec<DirtyRange>` dirty-range list, where each entry carries both pre- and post-replacement extents
+  - Per-buffer `Vec<usize>` line-start index, `Vec<TerminalLinkSpan>` range metadata, and `Vec<DirtyRange>` dirty-range list, where each entry carries both pre- and post-replacement extents
   - Per-view `Vec<VisualLine>` wrap cache plus the cache key
-- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`). `EditBuffer` storage and the substrate-rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) landed under Epic N. `terminal_link_spans` is the active Epic O target extension and should not be treated as shipped Brownfield reality until CORE-O5 lands. Replay fixtures and example replay tests remain green across the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
+- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`). `EditBuffer` storage and the substrate-rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) landed under Epic N. `terminal_link_spans`, OSC8 projection, and writer emission landed under Epic O. Replay fixtures and example replay tests remain green across the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
 - **Known Limitations (Brownfield):** The shared `Cell` model (`types.rs`) stores a single `char` per cell. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) are segmented and advance the column by their measured cell width, so layout, hit-testing, soft wrap, and selection are correct, but the visible glyph emitted into the cell grid is the cluster's first scalar rather than the composed cluster. Widening the cell model to carry full grapheme strings is post-Epic-N work and is not blocked by the substrate ABI.
 
 ```rust
@@ -421,7 +423,7 @@ pub struct TextBuffer {
     pub style_spans: Vec<StyleSpan>,
     pub selection: Option<SelectionRange>,
     pub highlights: Vec<HighlightRange>,
-    pub terminal_link_spans: Vec<TerminalLinkSpan>, // Epic O target extension
+    pub terminal_link_spans: Vec<TerminalLinkSpan>,
     pub dirty_ranges: Vec<DirtyRange>,
     pub tab_width: u8,
     // The content `String` itself is a private implementation detail; the
@@ -489,7 +491,7 @@ conventions:
 | **Transcript** | `tui_transcript_clear`, `append_block`, `patch_block`, `finish_block`, `set_parent`, `set_collapsed`, `set_hidden`, `jump_to_block`, `jump_to_unread`, `set_follow_mode`, `get_follow_mode`, `set_role_color`, `mark_read`, `get_unread_count` | Block-oriented transcript mutation and viewport control |
 | **SplitPane** | `tui_splitpane_set_axis`, `set_ratio`, `get_ratio`, `set_min_sizes`, `set_resize_step`, `set_resizable` | Native pane layout and resize behavior |
 | **Debug / Devtools** | `tui_debug_set_overlay`, `set_trace_flags`, `get_snapshot_len`, `get_snapshot`, `get_trace_len`, `get_trace`, `clear_traces` | Copy-out diagnostics surface and overlay control |
-| **Terminal Capabilities** | `tui_get_capabilities`, `tui_terminal_get_capabilities`, `tui_terminal_get_info`, `tui_terminal_clipboard_write`, `tui_text_buffer_set_link`, `tui_text_buffer_clear_links` | Capability bitset, diagnostic copy-out, write-only OSC52 clipboard, and OSC8 hyperlink metadata |
+| **Terminal Capabilities** | `tui_get_capabilities`, `tui_terminal_get_capabilities`, `tui_terminal_get_capabilities_checked`, `tui_terminal_get_info`, `tui_terminal_clipboard_write`, `tui_text_buffer_set_link`, `tui_text_buffer_clear_links` | Capability bitset, diagnostic copy-out, write-only OSC52 clipboard, and OSC8 hyperlink metadata |
 
 #### Event and Counter Notes
 - `Change` events are emitted for `SplitPane` ratio updates.
@@ -506,9 +508,12 @@ conventions:
 ```ts
 interface TerminalCapabilities {
   flags: bigint;
+  raw: bigint; // compatibility alias for early Epic O callers
   truecolor: boolean;
   color256: boolean;
+  color16: boolean;
   mouse: boolean;
+  utf8: boolean;
   alternateScreen: boolean;
   synchronizedOutput: boolean;
   osc52ClipboardWrite: boolean;
@@ -520,14 +525,15 @@ interface TerminalCapabilities {
 }
 
 interface TerminalInfo {
+  flags: bigint;
   terminalName?: string;
   terminalProgram?: string;
   multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";
-  cellWidthPx?: number;
-  cellHeightPx?: number;
-  screenWidthPx?: number;
-  screenHeightPx?: number;
-  colorDepthBits?: number;
+  cellWidthPx: number;
+  cellHeightPx: number;
+  screenWidthPx: number;
+  screenHeightPx: number;
+  colorDepthBits: number;
   kittyKeyboardEnabled: boolean;
 }
 
@@ -687,6 +693,7 @@ capability_flags:
 native_abi:
   - tui_get_capabilities() -> u32
   - tui_terminal_get_capabilities() -> u64
+  - tui_terminal_get_capabilities_checked(out_ptr) -> i32
   - tui_terminal_get_info(out_ptr, out_len) -> i32
   - tui_terminal_clipboard_write(target, ptr, len) -> i32
   - tui_text_buffer_set_link(handle, start_byte, end_byte, uri_ptr, uri_len, id_ptr, id_len) -> i32
@@ -698,13 +705,15 @@ osc52_clipboard:
     clipboard: "c"
     primary: "p"
   read_sequence: "out of scope for Epic O"
-  payload_limits: "bounded implementation-defined byte ceiling; oversized payloads fail before emission"
+  payload_limits: "bounded implementation-defined UTF-8 byte ceiling; ordinary text controls are allowed because the terminal stream receives base64"
 
 osc8_hyperlinks:
   open_sequence: "OSC 8 ; params ; uri ST"
   close_sequence: "OSC 8 ; ; ST"
   params: "empty or id=<printable-ascii-id>"
   uri: "printable ASCII / percent-encoded URI without control bytes"
+  uri_limit_bytes: 4096
+  id_limit_bytes: 128
   rendering: "writer opens and closes links around projected link spans while preserving style/run compaction"
 
 kitty_keyboard:
@@ -755,7 +764,7 @@ multiplexer_policy:
 │       ├── writer.rs
 │       ├── event.rs
 │       ├── scroll.rs
-│       ├── terminal_capabilities.rs # Epic O target module for capability flags, protocol payload validation, and diagnostics
+│       ├── terminal_capabilities.rs # Capability flags, protocol payload validation, and diagnostics
 │       ├── text.rs
 │       ├── text_cache.rs
 │       ├── text_buffer.rs
