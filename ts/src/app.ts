@@ -224,7 +224,11 @@ export class Kraken {
 	}
 
 	getCapabilities(): TerminalCapabilities {
-		const raw = ffi.tui_terminal_get_capabilities();
+		const out = new BigUint64Array(1);
+		// Use the status-returning ABI so a destroyed or uninitialized native
+		// context cannot be mistaken for a valid all-false capability mask.
+		checkResult(ffi.tui_terminal_get_capabilities_checked(ptr(out)), "getCapabilities");
+		const raw = out[0]!;
 		const has = (flag: bigint): boolean => (raw & flag) !== 0n;
 		return {
 			flags: raw,
@@ -256,6 +260,11 @@ export class Kraken {
 	}
 
 	writeClipboard(text: string, target: "clipboard" | "primary" = "clipboard"): boolean {
+		// Runtime validation keeps untyped JS callers from accidentally mapping
+		// arbitrary strings onto the native primary-selection target.
+		if (target !== "clipboard" && target !== "primary") {
+			throw new TypeError(`Invalid clipboard target: ${String(target)}`);
+		}
 		const encoded = new TextEncoder().encode(text);
 		const targetCode = target === "clipboard" ? 0 : 1;
 		const result = ffi.tui_terminal_clipboard_write(targetCode, ptr(encoded), encoded.byteLength);

@@ -490,7 +490,7 @@ conventions:
 | **Transcript** | `tui_transcript_clear`, `append_block`, `patch_block`, `finish_block`, `set_parent`, `set_collapsed`, `set_hidden`, `jump_to_block`, `jump_to_unread`, `set_follow_mode`, `get_follow_mode`, `set_role_color`, `mark_read`, `get_unread_count` | Block-oriented transcript mutation and viewport control |
 | **SplitPane** | `tui_splitpane_set_axis`, `set_ratio`, `get_ratio`, `set_min_sizes`, `set_resize_step`, `set_resizable` | Native pane layout and resize behavior |
 | **Debug / Devtools** | `tui_debug_set_overlay`, `set_trace_flags`, `get_snapshot_len`, `get_snapshot`, `get_trace_len`, `get_trace`, `clear_traces` | Copy-out diagnostics surface and overlay control |
-| **Terminal Capabilities** | `tui_get_capabilities`, `tui_terminal_get_capabilities`, `tui_terminal_get_info`, `tui_terminal_clipboard_write`, `tui_text_buffer_set_link`, `tui_text_buffer_clear_links` | Capability bitset, diagnostic copy-out, write-only OSC52 clipboard, and OSC8 hyperlink metadata |
+| **Terminal Capabilities** | `tui_get_capabilities`, `tui_terminal_get_capabilities`, `tui_terminal_get_capabilities_checked`, `tui_terminal_get_info`, `tui_terminal_clipboard_write`, `tui_text_buffer_set_link`, `tui_text_buffer_clear_links` | Capability bitset, diagnostic copy-out, write-only OSC52 clipboard, and OSC8 hyperlink metadata |
 
 #### Event and Counter Notes
 - `Change` events are emitted for `SplitPane` ratio updates.
@@ -690,6 +690,7 @@ capability_flags:
 native_abi:
   - tui_get_capabilities() -> u32
   - tui_terminal_get_capabilities() -> u64
+  - tui_terminal_get_capabilities_checked(out_ptr) -> i32
   - tui_terminal_get_info(out_ptr, out_len) -> i32
   - tui_terminal_clipboard_write(target, ptr, len) -> i32
   - tui_text_buffer_set_link(handle, start_byte, end_byte, uri_ptr, uri_len, id_ptr, id_len) -> i32

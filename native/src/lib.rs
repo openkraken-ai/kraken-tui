@@ -287,6 +287,22 @@ pub extern "C" fn tui_terminal_get_capabilities() -> u64 {
 }
 
 #[no_mangle]
+pub extern "C" fn tui_terminal_get_capabilities_checked(out_ptr: *mut u64) -> i32 {
+    ffi_wrap(|| {
+        if out_ptr.is_null() {
+            return Err("terminal capability output pointer is null".to_string());
+        }
+        let ctx = context_read()?;
+        // This status-returning ABI exists because the legacy u64 getter uses
+        // 0 as its error sentinel, which is ambiguous for JS wrappers.
+        unsafe {
+            *out_ptr = ctx.terminal_capabilities.flags;
+        }
+        Ok(0)
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn tui_terminal_get_info(out_ptr: *mut u8, out_len: u32) -> i32 {
     ffi_wrap(|| {
         if out_len > 0 && out_ptr.is_null() {

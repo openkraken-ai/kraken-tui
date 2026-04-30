@@ -23,6 +23,7 @@ const lib = dlopen(LIB_PATH, {
 	tui_shutdown:        { args: [] as FFIType[],                               returns: "i32" as const },
 	tui_get_capabilities:{ args: [] as FFIType[],                               returns: "u32" as const },
 	tui_terminal_get_capabilities:{ args: [] as FFIType[],                      returns: "u64" as const },
+	tui_terminal_get_capabilities_checked:{ args: ["ptr"] as FFIType[],         returns: "i32" as const },
 	tui_terminal_get_info:{ args: ["ptr", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_terminal_clipboard_write:{ args: ["u8", "ptr", "u32"] as FFIType[],     returns: "i32" as const },
 
@@ -827,6 +828,9 @@ describe("FFI integration", () => {
 			const full = ffi.tui_terminal_get_capabilities();
 			expect(BigInt(legacy)).toBe(full & 0xffff_ffffn);
 			expect((full & (1n << 4n)) !== 0n).toBe(true);
+			const checked = new BigUint64Array(1);
+			expect(ffi.tui_terminal_get_capabilities_checked(checked)).toBe(0);
+			expect(checked[0]).toBe(full);
 
 			const buf = Buffer.alloc(4096);
 			const written = ffi.tui_terminal_get_info(buf, buf.byteLength);
@@ -849,6 +853,13 @@ describe("FFI integration", () => {
 			expect(info.terminalName).toBe("headless");
 			expect(typeof info.flags).toBe("bigint");
 			expect(app.writeClipboard("hello")).toBe(false);
+		});
+
+		test("terminal wrapper rejects invalid clipboard target strings", () => {
+			const app = Object.create(Kraken.prototype) as Kraken;
+			expect(() =>
+				app.writeClipboard("hello", "bogus" as unknown as "clipboard"),
+			).toThrow("Invalid clipboard target");
 		});
 
 		test("clipboard write rejects malformed target", () => {
@@ -2407,6 +2418,16 @@ describe("FFI integration", () => {
 	// ── Post-shutdown safety ────────────────────────────────────────────────
 
 	describe("post-shutdown", () => {
+		test("terminal capability wrapper surfaces native lifecycle errors", () => {
+			ffi.tui_shutdown();
+			const app = Kraken.initHeadless(80, 24);
+			app.shutdown();
+
+			expect(() => app.getCapabilities()).toThrow("getCapabilities");
+
+			ffi.tui_init_headless(80, 24);
+		});
+
 		test("double init fails with explicit error", () => {
 			ffi.tui_shutdown();
 			expect(ffi.tui_init_headless(80, 24)).toBe(0);

@@ -26,6 +26,10 @@ const symbols = {
 	},
 	tui_get_capabilities: { args: [] as FFIType[], returns: "u32" as const },
 	tui_terminal_get_capabilities: { args: [] as FFIType[], returns: "u64" as const },
+	tui_terminal_get_capabilities_checked: {
+		args: ["ptr"] as FFIType[],
+		returns: "i32" as const,
+	},
 	tui_terminal_get_info: {
 		args: ["ptr", "u32"] as FFIType[],
 		returns: "i32" as const,
