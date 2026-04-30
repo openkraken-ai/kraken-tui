@@ -12,9 +12,16 @@ use crate::types::{StyledSpan, TextCache, TextCacheEntry, TextCacheKey};
 /// Accounts for: text bytes + struct overhead per span + fixed entry overhead.
 fn estimate_entry_size(spans: &[StyledSpan]) -> u32 {
     let text_bytes: usize = spans.iter().map(|s| s.text.len()).sum();
+    let link_bytes: usize = spans
+        .iter()
+        .filter_map(|span| span.link.as_ref())
+        .map(|link| link.uri.len() + link.id.as_ref().map_or(0, String::len))
+        .sum();
+    // Link metadata can dwarf short labels; count URI/id bytes so the bounded
+    // cache budget reflects OSC8 payload storage, not just visible text.
     let struct_overhead = spans.len() * 32; // StyledSpan struct fields
     let entry_overhead = 64; // TextCacheEntry + HashMap slot
-    (text_bytes + struct_overhead + entry_overhead) as u32
+    (text_bytes + link_bytes + struct_overhead + entry_overhead).min(u32::MAX as usize) as u32
 }
 
 /// Look up a cache entry, updating LRU order on hit.
@@ -208,6 +215,27 @@ mod tests {
         assert!(get(&mut cache, &key).is_none());
         assert_eq!(cache.used_bytes, 0);
         assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn test_link_metadata_counts_toward_entry_size() {
+        let mut cache = TextCache::new(500);
+        let key = make_key(1);
+        let spans = vec![StyledSpan {
+            text: "x".to_string(),
+            attrs: CellAttrs::empty(),
+            fg: 0,
+            bg: 0,
+            link: Some(crate::types::StyledLink {
+                uri: "https://example.com/".to_string() + &"a".repeat(1000),
+                id: Some("link-id".to_string()),
+            }),
+        }];
+
+        insert(&mut cache, key.clone(), spans);
+
+        assert!(get(&mut cache, &key).is_none());
+        assert_eq!(cache.used_bytes, 0);
     }
 
     #[test]

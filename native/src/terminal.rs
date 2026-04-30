@@ -82,12 +82,6 @@ impl CrosstermBackend {
             }
         }
     }
-
-    fn multiplexer_allows_keyboard() -> bool {
-        let env = std::env::vars().collect::<std::collections::HashMap<_, _>>();
-        let state = TerminalCapabilityState::from_env_map(&env, 80, 24, 0, 0, false);
-        state.multiplexer == terminal_capabilities::TerminalMultiplexer::None
-    }
 }
 
 impl TerminalBackend for CrosstermBackend {
@@ -119,7 +113,7 @@ impl TerminalBackend for CrosstermBackend {
         // Kitty keyboard enhancement mutates terminal input mode. Keep it
         // direct-terminal only in Epic O so tmux/screen/Zellij sessions never
         // inherit a mode we cannot reliably restore through their passthroughs.
-        if Self::multiplexer_allows_keyboard()
+        if terminal_capabilities::current_env_allows_kitty_keyboard_probe()
             && crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false)
         {
             match stdout.execute(PushKeyboardEnhancementFlags(

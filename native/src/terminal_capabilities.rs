@@ -119,7 +119,6 @@ impl TerminalCapabilityState {
             | terminal_capability::COLOR_16
             | terminal_capability::MOUSE
             | terminal_capability::ALTERNATE_SCREEN
-            | terminal_capability::SYNCHRONIZED_OUTPUT
             | terminal_capability::COLOR_DEPTH_QUERY;
 
         if color_depth_bits >= 8 {
@@ -140,6 +139,7 @@ impl TerminalCapabilityState {
         if direct_protocols_allowed {
             flags |=
                 terminal_capability::OSC52_CLIPBOARD_WRITE | terminal_capability::OSC8_HYPERLINKS;
+            flags |= terminal_capability::SYNCHRONIZED_OUTPUT;
         } else if multiplexer == TerminalMultiplexer::Tmux
             && allows_direct_risky_protocols(None, terminal_program.as_deref())
         {
@@ -149,7 +149,7 @@ impl TerminalCapabilityState {
             flags |= terminal_capability::OSC8_HYPERLINKS;
         }
 
-        if direct_protocols_allowed && kitty_keyboard_enabled {
+        if direct_terminal && kitty_keyboard_enabled {
             flags |= terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE;
         }
 
@@ -159,7 +159,7 @@ impl TerminalCapabilityState {
         // Pixel dimensions from mux sessions are often the pane geometry rather
         // than the host emulator's cell metrics. Keep the Epic O flag direct-only
         // until a mux-specific probe proves those values are trustworthy.
-        if direct_terminal && has_pixels {
+        if direct_terminal && has_pixels && cell_width_px > 0 && cell_height_px > 0 {
             flags |= terminal_capability::PIXEL_SIZE;
         }
 
@@ -173,7 +173,7 @@ impl TerminalCapabilityState {
             screen_width_px: pixel_width,
             screen_height_px: pixel_height,
             color_depth_bits,
-            kitty_keyboard_enabled: direct_protocols_allowed && kitty_keyboard_enabled,
+            kitty_keyboard_enabled: direct_terminal && kitty_keyboard_enabled,
         }
     }
 
@@ -184,6 +184,29 @@ impl TerminalCapabilityState {
     pub fn to_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|e| format!("terminal info json: {e}"))
     }
+}
+
+pub(crate) fn allows_kitty_keyboard_probe(term: Option<&str>, term_program: Option<&str>) -> bool {
+    let term = term.map(str::to_ascii_lowercase).unwrap_or_default();
+    let program = term_program
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+
+    // The Crossterm support probe can be slow on terminals that do not speak
+    // Kitty's protocol. Keep init fast by probing only known implementations.
+    ["kitty", "wezterm", "ghostty", "foot"]
+        .iter()
+        .any(|needle| term.contains(needle) || program.contains(needle))
+}
+
+pub(crate) fn current_env_allows_kitty_keyboard_probe() -> bool {
+    let env = std::env::vars().collect::<HashMap<_, _>>();
+    let terminal_name = get_env(&env, "TERM");
+    let terminal_program = get_env(&env, "TERM_PROGRAM");
+    let multiplexer =
+        detect_multiplexer(&env, terminal_name.as_deref(), terminal_program.as_deref());
+    multiplexer == TerminalMultiplexer::None
+        && allows_kitty_keyboard_probe(terminal_name.as_deref(), terminal_program.as_deref())
 }
 
 fn allows_direct_risky_protocols(term: Option<&str>, term_program: Option<&str>) -> bool {
@@ -392,6 +415,7 @@ mod tests {
         assert!(caps.supports(terminal_capability::TRUECOLOR));
         assert!(caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
         assert!(caps.supports(terminal_capability::OSC8_HYPERLINKS));
+        assert!(caps.supports(terminal_capability::SYNCHRONIZED_OUTPUT));
         assert!(caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
         assert!(caps.supports(terminal_capability::PIXEL_SIZE));
         assert_eq!(caps.cell_width_px, 20);
@@ -428,6 +452,7 @@ mod tests {
         assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
         assert!(!caps.supports(terminal_capability::OSC8_HYPERLINKS));
         assert!(!caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+        assert!(!caps.supports(terminal_capability::SYNCHRONIZED_OUTPUT));
     }
 
     #[test]
@@ -467,13 +492,44 @@ mod tests {
             24,
             1600,
             720,
-            true,
+            false,
         );
         assert_eq!(caps.multiplexer, TerminalMultiplexer::None);
         assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
         assert!(!caps.supports(terminal_capability::OSC8_HYPERLINKS));
         assert!(!caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+        assert!(!caps.supports(terminal_capability::SYNCHRONIZED_OUTPUT));
         assert!(caps.supports(terminal_capability::PIXEL_SIZE));
+    }
+
+    #[test]
+    fn kitty_keyboard_state_reports_successful_probe_outside_osc_allowlist() {
+        let caps =
+            TerminalCapabilityState::from_env_map(&env(&[("TERM", "dumb")]), 80, 24, 0, 0, true);
+        assert!(caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+        assert!(caps.kitty_keyboard_enabled);
+        assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
+    }
+
+    #[test]
+    fn pixel_flag_requires_derived_cell_dimensions() {
+        let caps = TerminalCapabilityState::from_env_map(
+            &env(&[("TERM", "xterm-256color")]),
+            0,
+            24,
+            1600,
+            720,
+            false,
+        );
+        assert_eq!(caps.cell_width_px, 0);
+        assert!(!caps.supports(terminal_capability::PIXEL_SIZE));
+    }
+
+    #[test]
+    fn kitty_keyboard_probe_uses_narrow_terminal_policy() {
+        assert!(allows_kitty_keyboard_probe(Some("xterm-kitty"), None));
+        assert!(allows_kitty_keyboard_probe(None, Some("WezTerm")));
+        assert!(!allows_kitty_keyboard_probe(Some("xterm-256color"), None));
     }
 
     #[test]
