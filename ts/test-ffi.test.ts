@@ -853,6 +853,7 @@ describe("FFI integration", () => {
 			expect(info.terminalName).toBe("headless");
 			expect(typeof info.flags).toBe("bigint");
 			expect(app.writeClipboard("hello")).toBe(false);
+			expect(app.writeClipboard("")).toBe(false);
 		});
 
 		test("terminal wrapper rejects invalid clipboard target strings", () => {

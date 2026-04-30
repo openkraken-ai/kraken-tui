@@ -267,7 +267,10 @@ export class Kraken {
 		}
 		const encoded = new TextEncoder().encode(text);
 		const targetCode = target === "clipboard" ? 0 : 1;
-		const result = ffi.tui_terminal_clipboard_write(targetCode, ptr(encoded), encoded.byteLength);
+		// Bun rejects ptr() on zero-length buffers; native accepts null+0 so an
+		// empty write can still clear clipboard contents on supported terminals.
+		const payloadPtr = encoded.byteLength === 0 ? 0 : ptr(encoded);
+		const result = ffi.tui_terminal_clipboard_write(targetCode, payloadPtr, encoded.byteLength);
 		checkResult(result, "writeClipboard");
 		return result > 0;
 	}
