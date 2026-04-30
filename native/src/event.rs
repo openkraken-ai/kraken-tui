@@ -244,6 +244,10 @@ pub(crate) fn read_input(ctx: &mut TuiContext, timeout_ms: u32) -> Result<usize,
                 count += 1;
             }
             TerminalInputEvent::Resize { width, height } => {
+                // Resize events are the point where backend pixel/cell
+                // diagnostics can change, so refresh the cached capability
+                // state before devtools or host copy-out APIs read it.
+                ctx.terminal_capabilities = ctx.backend.capabilities();
                 ctx.event_buffer
                     .push(TuiEvent::resize(width as u32, height as u32));
                 count += 1;
@@ -1876,6 +1880,36 @@ mod tests {
         assert_eq!(e2.event_type, TuiEventType::Key as u32);
 
         assert!(next_event(&mut ctx).is_none());
+    }
+
+    #[test]
+    fn test_resize_refreshes_terminal_capabilities() {
+        let mut ctx = test_ctx();
+        let before = ctx.terminal_capabilities.flags;
+        {
+            let mock = ctx
+                .backend
+                .as_any_mut()
+                .downcast_mut::<MockBackend>()
+                .expect("test context must use MockBackend");
+            mock.capabilities.flags |=
+                crate::terminal_capabilities::terminal_capability::OSC8_HYPERLINKS;
+        }
+
+        inject_events(
+            &mut ctx,
+            vec![TerminalInputEvent::Resize {
+                width: 100,
+                height: 40,
+            }],
+        );
+
+        let count = read_input(&mut ctx, 0).unwrap();
+        assert_eq!(count, 1);
+        assert_ne!(ctx.terminal_capabilities.flags, before);
+        assert!(ctx
+            .terminal_capabilities
+            .supports(crate::terminal_capabilities::terminal_capability::OSC8_HYPERLINKS));
     }
 
     // =========================================================================

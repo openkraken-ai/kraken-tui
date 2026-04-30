@@ -59,6 +59,12 @@ use terminal::{CrosstermBackend, TerminalBackend};
 use text_utils::{clamp_textarea_cursor_lines, grapheme_count, split_textarea_lines_owned};
 use types::{NodeType, TuiEvent};
 
+fn refresh_terminal_capabilities(ctx: &mut TuiContext) {
+    // Capability diagnostics include terminal pixel/cell geometry, so copy-out
+    // APIs refresh from the backend instead of serving init-time resize data.
+    ctx.terminal_capabilities = ctx.backend.capabilities();
+}
+
 // The snapshot pointer returned by `tui_get_last_error()` must outlive the
 // function call without borrowing the context lock guard. We keep it in TLS so
 // each caller thread gets stable ownership of its latest snapshot.
@@ -262,8 +268,11 @@ pub extern "C" fn tui_get_terminal_size(width: *mut i32, height: *mut i32) -> i3
 #[no_mangle]
 pub extern "C" fn tui_get_capabilities() -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
-        match context_read() {
-            Ok(ctx) => ctx.terminal_capabilities.flags as u32,
+        match context_write() {
+            Ok(mut ctx) => {
+                refresh_terminal_capabilities(&mut ctx);
+                ctx.terminal_capabilities.flags as u32
+            }
             Err(_) => {
                 let fallback = terminal_capabilities::terminal_capability::TRUECOLOR
                     | terminal_capabilities::terminal_capability::COLOR_256
@@ -281,7 +290,8 @@ pub extern "C" fn tui_get_capabilities() -> u32 {
 #[no_mangle]
 pub extern "C" fn tui_terminal_get_capabilities() -> u64 {
     ffi_wrap_u64(|| {
-        let ctx = context_read()?;
+        let mut ctx = context_write()?;
+        refresh_terminal_capabilities(&mut ctx);
         Ok(ctx.terminal_capabilities.flags)
     })
 }
@@ -292,7 +302,8 @@ pub extern "C" fn tui_terminal_get_capabilities_checked(out_ptr: *mut u64) -> i3
         if out_ptr.is_null() {
             return Err("terminal capability output pointer is null".to_string());
         }
-        let ctx = context_read()?;
+        let mut ctx = context_write()?;
+        refresh_terminal_capabilities(&mut ctx);
         // This status-returning ABI exists because the legacy u64 getter uses
         // 0 as its error sentinel, which is ambiguous for JS wrappers.
         unsafe {
@@ -308,7 +319,8 @@ pub extern "C" fn tui_terminal_get_info(out_ptr: *mut u8, out_len: u32) -> i32 {
         if out_len > 0 && out_ptr.is_null() {
             return Err("Null terminal info output pointer".to_string());
         }
-        let ctx = context_read()?;
+        let mut ctx = context_write()?;
+        refresh_terminal_capabilities(&mut ctx);
         let json = ctx.terminal_capabilities.to_json()?;
         let bytes = json.as_bytes();
         if bytes.len() > out_len as usize {

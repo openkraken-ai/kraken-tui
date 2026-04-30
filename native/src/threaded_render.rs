@@ -18,6 +18,17 @@
 //! 3. `tui_render()` now snapshots state and dispatches to the render thread
 //! 4. Call `tui_threaded_render_stop()` to join and return to synchronous mode
 
+// The threaded renderer is an opt-in experimental feature. Many snapshot
+// fields are intentionally reserved for parity with the synchronous renderer
+// before every widget-specific threaded path consumes them.
+#![allow(
+    dead_code,
+    clippy::explicit_counter_loop,
+    clippy::too_many_arguments,
+    clippy::unnecessary_map_or,
+    clippy::while_let_loop
+)]
+
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};

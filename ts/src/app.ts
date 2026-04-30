@@ -6,8 +6,8 @@
  */
 
 import { ffi } from "./ffi";
-import { ptr } from "bun:ffi";
-import { checkResult } from "./errors";
+import { CString, ptr } from "bun:ffi";
+import { checkResult, KrakenError } from "./errors";
 import { readInput, drainEvents, type KrakenEvent } from "./events";
 import { dispatchToJsxHandlers, PERF_ACTIVE_ANIMATIONS } from "./loop";
 import { Widget } from "./widget";
@@ -151,6 +151,28 @@ function parseTerminalInfo(value: unknown): TerminalInfo {
 	};
 }
 
+function takeNativeError(): string {
+	const errPtr = ffi.tui_get_last_error();
+	if (!errPtr) {
+		return "Unknown error";
+	}
+	const message = new CString(errPtr).toString();
+	ffi.tui_clear_error();
+	return message;
+}
+
+function terminalInfoRetrySize(message: string, currentSize: number): number | undefined {
+	const match = /^terminal info buffer too small: need ([0-9]+), got [0-9]+$/.exec(message);
+	if (!match) {
+		return undefined;
+	}
+	const nextSize = Number(match[1]);
+	if (!Number.isSafeInteger(nextSize) || nextSize <= currentSize || nextSize > 1_048_576) {
+		return undefined;
+	}
+	return nextSize;
+}
+
 export class Kraken {
 	private idMap: Map<string, number> = new Map();
 	private _running = false;
@@ -252,11 +274,26 @@ export class Kraken {
 	}
 
 	getTerminalInfo(): TerminalInfo {
-		const buf = Buffer.alloc(4096);
-		const written = ffi.tui_terminal_get_info(ptr(buf), buf.byteLength);
-		checkResult(written, "getTerminalInfo");
-		const parsed: unknown = JSON.parse(buf.toString("utf-8", 0, written));
-		return parseTerminalInfo(parsed);
+		let size = 4096;
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const buf = Buffer.alloc(size);
+			const written = ffi.tui_terminal_get_info(ptr(buf), buf.byteLength);
+			if (written >= 0) {
+				const parsed: unknown = JSON.parse(buf.toString("utf-8", 0, written));
+				return parseTerminalInfo(parsed);
+			}
+			const message = takeNativeError();
+			// Native includes environment-derived terminal names in diagnostics,
+			// so one bounded retry keeps large-but-valid JSON from becoming a
+			// public wrapper failure while still surfacing malformed states.
+			const retrySize = terminalInfoRetrySize(message, size);
+			if (retrySize !== undefined) {
+				size = retrySize;
+				continue;
+			}
+			throw new KrakenError(`getTerminalInfo: ${message}`, written);
+		}
+		throw new KrakenError("getTerminalInfo: terminal info buffer retry exhausted", -1);
 	}
 
 	writeClipboard(text: string, target: "clipboard" | "primary" = "clipboard"): boolean {

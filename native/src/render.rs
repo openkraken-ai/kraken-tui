@@ -2787,6 +2787,43 @@ mod tests {
     }
 
     #[test]
+    fn test_render_markdown_absolute_link_projects_osc8_output() {
+        use crate::{layout, terminal_capabilities::terminal_capability, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        ctx.terminal_capabilities.flags |= terminal_capability::OSC8_HYPERLINKS;
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 3.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "[Open](https://example.com)".to_string();
+        ctx.nodes.get_mut(&text).unwrap().content_format = ContentFormat::Markdown;
+
+        render(&mut ctx).unwrap();
+
+        let first = ctx.back_buffer.get(0, 0).unwrap();
+        assert_eq!(first.ch, 'O');
+        assert_eq!(
+            first.link.as_ref().map(|link| link.uri.as_str()),
+            Some("https://example.com")
+        );
+        let mock = ctx
+            .backend
+            .as_any_mut()
+            .downcast_mut::<crate::terminal::MockBackend>()
+            .expect("integration renderer uses MockBackend");
+        let output = String::from_utf8_lossy(&mock.output);
+        assert!(output.contains("\x1b]8;;https://example.com\x1b\\Open\x1b]8;;\x1b\\"));
+    }
+
+    #[test]
     fn test_render_markdown_inline_code_blends_explicit_span_fg_with_opacity() {
         use crate::{layout, style, tree};
 

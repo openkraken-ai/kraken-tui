@@ -140,10 +140,12 @@ impl TerminalCapabilityState {
         if direct_protocols_allowed {
             flags |=
                 terminal_capability::OSC52_CLIPBOARD_WRITE | terminal_capability::OSC8_HYPERLINKS;
-        } else if multiplexer == TerminalMultiplexer::Tmux {
-            // tmux has mature OSC8 pass-through behavior in modern versions; we
-            // still leave OSC52 disabled because clipboard writes are security
-            // sensitive and require explicit mux wrapping that CORE-O0 deferred.
+        } else if multiplexer == TerminalMultiplexer::Tmux
+            && allows_direct_risky_protocols(None, terminal_program.as_deref())
+        {
+            // tmux OSC8 is allowed only when the underlying terminal program is
+            // a known OSC8-capable emulator. Older/unknown tmux stacks degrade
+            // to plain text instead of leaking raw hyperlink escapes.
             flags |= terminal_capability::OSC8_HYPERLINKS;
         }
 
@@ -190,7 +192,9 @@ fn allows_direct_risky_protocols(term: Option<&str>, term_program: Option<&str>)
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
 
-    if term.is_empty() || matches!(term.as_str(), "dumb" | "unknown" | "linux" | "vt100") {
+    let unsupported_term =
+        term.is_empty() || matches!(term.as_str(), "dumb" | "unknown" | "linux" | "vt100");
+    if unsupported_term && program.is_empty() {
         return false;
     }
 
@@ -424,6 +428,35 @@ mod tests {
         assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
         assert!(!caps.supports(terminal_capability::OSC8_HYPERLINKS));
         assert!(!caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+    }
+
+    #[test]
+    fn tmux_requires_known_host_terminal_for_osc8() {
+        let unknown = TerminalCapabilityState::from_env_map(
+            &env(&[("TERM", "tmux-256color"), ("TMUX", "/tmp/tmux")]),
+            80,
+            24,
+            0,
+            0,
+            false,
+        );
+        assert_eq!(unknown.multiplexer, TerminalMultiplexer::Tmux);
+        assert!(!unknown.supports(terminal_capability::OSC8_HYPERLINKS));
+
+        let known = TerminalCapabilityState::from_env_map(
+            &env(&[
+                ("TERM", "tmux-256color"),
+                ("TMUX", "/tmp/tmux"),
+                ("TERM_PROGRAM", "WezTerm"),
+            ]),
+            80,
+            24,
+            0,
+            0,
+            false,
+        );
+        assert!(known.supports(terminal_capability::OSC8_HYPERLINKS));
+        assert!(!known.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
     }
 
     #[test]

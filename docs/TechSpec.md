@@ -175,7 +175,7 @@ erDiagram
 
 ### 3.1.1 Terminal Capability State
 - **Purpose:** Represent terminal features that affect input parsing, escape-sequence emission, color behavior, clipboard integration, hyperlink rendering, and runtime diagnostics.
-- **Storage Shape:** `TerminalCapabilityState` lives inside `TuiContext` and is initialized by the active `TerminalBackend` during `tui_init()` / `tui_init_headless()`. Headless mode reports only deterministic synthetic capabilities. The legacy `tui_get_capabilities()` bitmask remains available, but Epic O extends it to return the new `terminal_capability::*` flags.
+- **Storage Shape:** `TerminalCapabilityState` lives inside `TuiContext` and is initialized by the active `TerminalBackend` during `tui_init()` / `tui_init_headless()`. Capability copy-out APIs and resize handling refresh this state from the backend before reporting diagnostics, so pixel and cell-size values do not remain pinned to init-time geometry. Headless mode reports only deterministic synthetic capabilities. The legacy `tui_get_capabilities()` bitmask remains available, but Epic O extends it to return the new `terminal_capability::*` flags.
 - **Constraints / Invariants:**
   - Capability flags are observations, not promises from the Host Layer.
   - Unsupported or unknown capabilities degrade to no-op or legacy terminal behavior.
@@ -185,7 +185,8 @@ erDiagram
   - Multiplexer detection never bypasses the backend abstraction; tmux/screen/Zellij handling is encoded as terminal backend policy.
 - **Indexes / Access Paths:**
   - `tui_get_capabilities() -> u32` remains a compatibility getter for the low 32 capability bits.
-  - `tui_terminal_get_capabilities() -> u64` returns the full bitset.
+  - `tui_terminal_get_capabilities() -> u64` returns the full bitset for legacy callers that can tolerate the zero sentinel.
+  - `tui_terminal_get_capabilities_checked(out_ptr) -> i32` is the preferred status-returning full-bitset ABI for host wrappers.
   - `tui_terminal_get_info(out_ptr, out_len) -> i32` copies JSON capability diagnostics for devtools and tests.
   - Host wrappers expose `app.getCapabilities()` and `app.getTerminalInfo()` without owning detection logic.
 - **Migration Notes:** Existing consumers that only check the coarse v0 bitmask continue to work. Epic O host additions are additive; if a terminal cannot support a feature, the native call returns `0` with a false capability or an explicit `-1` for invalid input, not a partial escape sequence.
