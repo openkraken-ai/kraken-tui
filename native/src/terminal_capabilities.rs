@@ -1,7 +1,7 @@
 //! Terminal capability state and protocol helpers for Epic O.
 
 use base64::Engine;
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 
 pub const OSC52_MAX_BYTES: usize = 100 * 1024;
@@ -35,6 +35,7 @@ pub enum TerminalMultiplexer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalCapabilityState {
+    #[serde(serialize_with = "serialize_u64_string")]
     pub flags: u64,
     pub terminal_name: Option<String>,
     pub terminal_program: Option<String>,
@@ -45,6 +46,15 @@ pub struct TerminalCapabilityState {
     pub screen_height_px: u32,
     pub color_depth_bits: u8,
     pub kitty_keyboard_enabled: bool,
+}
+
+fn serialize_u64_string<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    // JSON numbers cannot safely carry the full u64 flag mask into JavaScript.
+    // Emit a decimal string so host diagnostics preserve every capability bit.
+    serializer.serialize_str(&value.to_string())
 }
 
 impl TerminalCapabilityState {
@@ -244,8 +254,8 @@ pub fn validate_clipboard_text(text: &str) -> Result<(), String> {
             text.len()
         ));
     }
-    if text.bytes().any(|b| b == 0x1b || b == 0x07) {
-        return Err("OSC52 payload must not contain ESC or BEL controls".to_string());
+    if text.chars().any(char::is_control) {
+        return Err("OSC52 payload must not contain control characters".to_string());
     }
     Ok(())
 }
@@ -378,6 +388,8 @@ mod tests {
         assert_eq!(String::from_utf8(seq).unwrap(), "\x1b]52;c;aGVsbG8=\x1b\\");
         assert!(build_osc52_sequence(9, "hello").is_err());
         assert!(build_osc52_sequence(0, "\x1b").is_err());
+        assert!(build_osc52_sequence(0, "\0").is_err());
+        assert!(build_osc52_sequence(0, "line\nbreak").is_err());
     }
 
     #[test]

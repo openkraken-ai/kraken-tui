@@ -161,12 +161,22 @@ fn apply_styled_text_to_buffer(
         }
         if span_len > 0 {
             if let Some(link) = &span.link {
-                link_spans.push(crate::types::TerminalLinkSpan {
-                    start: byte_offset,
-                    end: byte_offset + span_len,
-                    uri: link.uri.clone(),
-                    id: link.id.clone(),
-                });
+                // Markdown text remains renderable even when a link URI is not
+                // OSC8-safe (for example relative docs links). Drop only the
+                // terminal hyperlink metadata; keep the visible styled text.
+                let uri_ok = crate::terminal_capabilities::validate_osc8_uri(&link.uri).is_ok();
+                let id_ok = link
+                    .id
+                    .as_deref()
+                    .is_none_or(|id| crate::terminal_capabilities::validate_osc8_id(id).is_ok());
+                if uri_ok && id_ok {
+                    link_spans.push(crate::types::TerminalLinkSpan {
+                        start: byte_offset,
+                        end: byte_offset + span_len,
+                        uri: link.uri.clone(),
+                        id: link.id.clone(),
+                    });
+                }
             }
         }
         byte_offset += span_len;
@@ -2742,6 +2752,38 @@ mod tests {
         let p = ctx.back_buffer.get(5, 0).unwrap();
         assert_eq!(p.ch, 'p');
         assert!(!p.attrs.contains(CellAttrs::BOLD));
+    }
+
+    #[test]
+    fn test_render_markdown_relative_link_drops_osc8_metadata_but_renders_text() {
+        use crate::{layout, tree};
+
+        let mut ctx = integration_ctx(80, 24);
+        let root = tree::create_node(&mut ctx, NodeType::Box).unwrap();
+        let text = tree::create_node(&mut ctx, NodeType::Text).unwrap();
+
+        tree::append_child(&mut ctx, root, text).unwrap();
+        ctx.root = Some(root);
+
+        layout::set_dimension(&mut ctx, root, 0, 80.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, root, 1, 24.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 0, 40.0, 1).unwrap();
+        layout::set_dimension(&mut ctx, text, 1, 3.0, 1).unwrap();
+
+        ctx.nodes.get_mut(&text).unwrap().content = "[guide](./guide.md)".to_string();
+        ctx.nodes.get_mut(&text).unwrap().content_format = ContentFormat::Markdown;
+
+        render(&mut ctx).unwrap();
+
+        assert_eq!(ctx.back_buffer.get(0, 0).unwrap().ch, 'g');
+        assert_eq!(ctx.back_buffer.get(4, 0).unwrap().ch, 'e');
+        let buffer_handle = ctx.nodes.get(&text).unwrap().text_buffer_handle.unwrap();
+        assert!(ctx
+            .text_buffers
+            .get(&buffer_handle)
+            .unwrap()
+            .terminal_link_spans()
+            .is_empty());
     }
 
     #[test]

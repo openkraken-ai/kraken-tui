@@ -151,34 +151,68 @@ impl TerminalBackend for CrosstermBackend {
         use std::io::Write;
 
         let mut stdout = std::io::stdout();
+        let mut first_error: Option<String> = None;
+        fn remember(first_error: &mut Option<String>, result: Result<(), String>) {
+            if let Err(error) = result {
+                if first_error.is_none() {
+                    *first_error = Some(error);
+                }
+            }
+        }
+
         // Reset terminal default background if we changed it via OSC 11.
         if self.osc11_bg != 0 {
-            stdout
-                .write_all(b"\x1b]111\x1b\\")
-                .map_err(|e| format!("osc111: {e}"))?;
+            remember(
+                &mut first_error,
+                stdout
+                    .write_all(b"\x1b]111\x1b\\")
+                    .map_err(|e| format!("osc111: {e}")),
+            );
         }
         if self.kitty_keyboard_enabled {
             // Pop only if the push succeeded. This avoids sending a stray
             // restore sequence after partial init failures or unsupported probes.
-            stdout
-                .execute(PopKeyboardEnhancementFlags)
-                .map_err(|e| format!("kitty keyboard restore: {e}"))?;
+            remember(
+                &mut first_error,
+                stdout
+                    .execute(PopKeyboardEnhancementFlags)
+                    .map(|_| ())
+                    .map_err(|e| format!("kitty keyboard restore: {e}")),
+            );
             self.kitty_keyboard_enabled = false;
         }
+        // Teardown is best-effort by design: after a failed restore command we
+        // still try the remaining terminal resets so the user's shell is not
+        // left in raw mode or the alternate screen.
         // Restore the OS cursor before leaving so the shell prompt renders
         // correctly after the TUI exits.
-        stdout
-            .execute(cursor::Show)
-            .map_err(|e| format!("show cursor: {e}"))?;
-        stdout
-            .execute(DisableMouseCapture)
-            .map_err(|e| format!("disable mouse: {e}"))?;
-        stdout
-            .execute(LeaveAlternateScreen)
-            .map_err(|e| format!("leave alternate screen: {e}"))?;
-        disable_raw_mode().map_err(|e| format!("disable raw mode: {e}"))?;
+        remember(
+            &mut first_error,
+            stdout
+                .execute(cursor::Show)
+                .map(|_| ())
+                .map_err(|e| format!("show cursor: {e}")),
+        );
+        remember(
+            &mut first_error,
+            stdout
+                .execute(DisableMouseCapture)
+                .map(|_| ())
+                .map_err(|e| format!("disable mouse: {e}")),
+        );
+        remember(
+            &mut first_error,
+            stdout
+                .execute(LeaveAlternateScreen)
+                .map(|_| ())
+                .map_err(|e| format!("leave alternate screen: {e}")),
+        );
+        remember(
+            &mut first_error,
+            disable_raw_mode().map_err(|e| format!("disable raw mode: {e}")),
+        );
 
-        Ok(())
+        first_error.map_or(Ok(()), Err)
     }
 
     fn size(&self) -> (u16, u16) {
@@ -202,6 +236,10 @@ impl TerminalBackend for CrosstermBackend {
         target: u8,
         text: &str,
     ) -> Result<bool, String> {
+        // Malformed host input is always an error, even when the current
+        // backend would otherwise no-op because OSC52 is unsupported.
+        terminal_capabilities::clipboard_target_code(target)?;
+        terminal_capabilities::validate_clipboard_text(text)?;
         if !state.supports(terminal_capabilities::terminal_capability::OSC52_CLIPBOARD_WRITE) {
             return Ok(false);
         }

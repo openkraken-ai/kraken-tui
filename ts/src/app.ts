@@ -65,7 +65,7 @@ export interface TerminalCapabilities {
 }
 
 export interface TerminalInfo {
-	flags: number;
+	flags: bigint;
 	terminalName?: string;
 	terminalProgram?: string;
 	multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";
@@ -75,6 +75,79 @@ export interface TerminalInfo {
 	screenHeightPx: number;
 	colorDepthBits: number;
 	kittyKeyboardEnabled: boolean;
+}
+
+const TERMINAL_MULTIPLEXERS = new Set(["none", "tmux", "screen", "zellij", "unknown"]);
+
+function expectRecord(value: unknown, label: string): Record<string, unknown> {
+	if (typeof value !== "object" || value == null || Array.isArray(value)) {
+		throw new Error(`Invalid ${label} payload`);
+	}
+	return value as Record<string, unknown>;
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+	const value = record[key];
+	if (value === undefined || value === null) {
+		return undefined;
+	}
+	if (typeof value !== "string") {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readNumber(record: Record<string, unknown>, key: string): number {
+	const value = record[key];
+	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readBoolean(record: Record<string, unknown>, key: string): boolean {
+	const value = record[key];
+	if (typeof value !== "boolean") {
+		throw new Error(`Invalid terminal info ${key}`);
+	}
+	return value;
+}
+
+function readFlags(record: Record<string, unknown>): bigint {
+	const value = record.flags;
+	// Native serializes u64 flags as a decimal string so JavaScript never
+	// rounds future high capability bits through JSON number parsing.
+	if (typeof value === "string" && /^[0-9]+$/.test(value)) {
+		return BigInt(value);
+	}
+	if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+		return BigInt(value);
+	}
+	throw new Error("Invalid terminal info flags");
+}
+
+function readMultiplexer(record: Record<string, unknown>): TerminalInfo["multiplexer"] {
+	const value = record.multiplexer;
+	if (typeof value === "string" && TERMINAL_MULTIPLEXERS.has(value)) {
+		return value as TerminalInfo["multiplexer"];
+	}
+	throw new Error("Invalid terminal info multiplexer");
+}
+
+function parseTerminalInfo(value: unknown): TerminalInfo {
+	const record = expectRecord(value, "terminal info");
+	return {
+		flags: readFlags(record),
+		terminalName: readOptionalString(record, "terminalName"),
+		terminalProgram: readOptionalString(record, "terminalProgram"),
+		multiplexer: readMultiplexer(record),
+		cellWidthPx: readNumber(record, "cellWidthPx"),
+		cellHeightPx: readNumber(record, "cellHeightPx"),
+		screenWidthPx: readNumber(record, "screenWidthPx"),
+		screenHeightPx: readNumber(record, "screenHeightPx"),
+		colorDepthBits: readNumber(record, "colorDepthBits"),
+		kittyKeyboardEnabled: readBoolean(record, "kittyKeyboardEnabled"),
+	};
 }
 
 export class Kraken {
@@ -175,10 +248,7 @@ export class Kraken {
 		const written = ffi.tui_terminal_get_info(ptr(buf), buf.byteLength);
 		checkResult(written, "getTerminalInfo");
 		const parsed: unknown = JSON.parse(buf.toString("utf-8", 0, written));
-		if (typeof parsed !== "object" || parsed == null) {
-			throw new Error("Invalid terminal info payload");
-		}
-		return parsed as TerminalInfo;
+		return parseTerminalInfo(parsed);
 	}
 
 	writeClipboard(text: string, target: "clipboard" | "primary" = "clipboard"): boolean {

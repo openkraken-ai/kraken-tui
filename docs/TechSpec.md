@@ -521,6 +521,7 @@ interface TerminalCapabilities {
 }
 
 interface TerminalInfo {
+  flags: bigint;
   terminalName?: string;
   terminalProgram?: string;
   multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";

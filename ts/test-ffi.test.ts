@@ -832,6 +832,7 @@ describe("FFI integration", () => {
 			const written = ffi.tui_terminal_get_info(buf, buf.byteLength);
 			expect(written).toBeGreaterThan(0);
 			const info = JSON.parse(buf.toString("utf-8", 0, written));
+			expect(typeof info.flags).toBe("string");
 			expect(info.terminalName).toBe("headless");
 			expect(info.multiplexer).toBe("none");
 			expect(info.screenWidthPx).toBe(80);
@@ -843,13 +844,20 @@ describe("FFI integration", () => {
 			const caps = app.getCapabilities();
 			expect(caps.utf8).toBe(true);
 			expect(caps.osc52ClipboardWrite).toBe(false);
-			expect(app.getTerminalInfo().terminalName).toBe("headless");
+			const info = app.getTerminalInfo();
+			expect(info.terminalName).toBe("headless");
+			expect(typeof info.flags).toBe("bigint");
 			expect(app.writeClipboard("hello")).toBe(false);
 		});
 
 		test("clipboard write rejects malformed target", () => {
 			const payload = Buffer.from("hello");
 			expect(ffi.tui_terminal_clipboard_write(9, payload, payload.byteLength)).toBe(-1);
+		});
+
+		test("clipboard write rejects control characters before unsupported no-op", () => {
+			const payload = Buffer.from([0]);
+			expect(ffi.tui_terminal_clipboard_write(0, payload, payload.byteLength)).toBe(-1);
 		});
 	});
 
