@@ -285,6 +285,7 @@ pub(crate) fn set_link(
         .get_mut(&handle)
         .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
     validate_byte_range(buf, start, end)?;
+    validate_link_range_non_empty(start, end)?;
     buf.terminal_link_spans.push(TerminalLinkSpan {
         start,
         end,
@@ -312,6 +313,7 @@ pub(crate) fn replace_link_spans(
         .ok_or_else(|| format!("Invalid TextBuffer handle: {handle}"))?;
     for span in spans {
         validate_byte_range(buf, span.start, span.end)?;
+        validate_link_range_non_empty(span.start, span.end)?;
     }
     if buf.terminal_link_spans.as_slice() == spans {
         return Ok(());
@@ -431,6 +433,16 @@ fn validate_byte_range(buf: &TextBuffer, start: usize, end: usize) -> Result<(),
     }
     if !buf.content.is_char_boundary(end) {
         return Err(format!("Byte offset {end} is not a UTF-8 boundary"));
+    }
+    Ok(())
+}
+
+fn validate_link_range_non_empty(start: usize, end: usize) -> Result<(), String> {
+    // OSC8 spans are projected by overlap with rendered graphemes; a zero-width
+    // range can never produce output, so accepting it would falsely signal that
+    // link metadata was attached.
+    if start == end {
+        return Err("Terminal link range must not be empty".to_string());
     }
     Ok(())
 }
@@ -728,6 +740,7 @@ mod tests {
             assert_eq!(links[0].start, 0);
             assert_eq!(links[0].end, 5);
             assert!(set_link(ctx, h, 0, 5, "javascript:alert(1)", None).is_err());
+            assert!(set_link(ctx, h, 2, 2, "https://example.com/empty", None).is_err());
             clear_links(ctx, h).unwrap();
             assert!(ctx
                 .text_buffers

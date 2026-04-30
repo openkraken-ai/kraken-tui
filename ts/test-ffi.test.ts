@@ -868,9 +868,9 @@ describe("FFI integration", () => {
 			expect(ffi.tui_terminal_clipboard_write(9, payload, payload.byteLength)).toBe(-1);
 		});
 
-		test("clipboard write rejects control characters before unsupported no-op", () => {
-			const payload = Buffer.from([0]);
-			expect(ffi.tui_terminal_clipboard_write(0, payload, payload.byteLength)).toBe(-1);
+		test("clipboard write accepts multiline text before unsupported no-op", () => {
+			const payload = Buffer.from("line\n\tbreak\r\n");
+			expect(ffi.tui_terminal_clipboard_write(0, payload, payload.byteLength)).toBe(0);
 		});
 	});
 
@@ -940,6 +940,9 @@ describe("FFI integration", () => {
 			expect(
 				ffi.tui_text_buffer_set_link(buf, 0, 5, uri, uri.byteLength, id, id.byteLength),
 			).toBe(0);
+			expect(
+				ffi.tui_text_buffer_set_link(buf, 2, 2, uri, uri.byteLength, id, id.byteLength),
+			).toBe(-1);
 			expect(ffi.tui_text_buffer_clear_links(buf)).toBe(0);
 
 			// Selection: set then clear.

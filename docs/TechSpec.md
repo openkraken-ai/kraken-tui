@@ -181,7 +181,7 @@ erDiagram
   - Unsupported or unknown capabilities degrade to no-op or legacy terminal behavior.
   - Clipboard reads are not represented in Epic O. OSC52 is write-only because reads are security-sensitive and often disabled or prompt-gated by terminals.
   - Kitty keyboard enhancement must be negotiated on init and restored on shutdown; failed negotiation leaves legacy input parsing untouched.
-  - OSC8 and OSC52 payloads must reject control bytes and malformed data before reaching the terminal output stream.
+  - OSC8 payloads must reject control bytes and malformed data before reaching the terminal output stream; OSC52 clipboard text may contain ordinary UTF-8 controls because the native encoder emits only base64 payload bytes.
   - Multiplexer detection never bypasses the backend abstraction; tmux/screen/Zellij handling is encoded as terminal backend policy.
 - **Indexes / Access Paths:**
   - `tui_get_capabilities() -> u32` remains a compatibility getter for the low 32 capability bits.
@@ -705,7 +705,7 @@ osc52_clipboard:
     clipboard: "c"
     primary: "p"
   read_sequence: "out of scope for Epic O"
-  payload_limits: "bounded implementation-defined byte ceiling; oversized payloads fail before emission"
+  payload_limits: "bounded implementation-defined UTF-8 byte ceiling; ordinary text controls are allowed because the terminal stream receives base64"
 
 osc8_hyperlinks:
   open_sequence: "OSC 8 ; params ; uri ST"

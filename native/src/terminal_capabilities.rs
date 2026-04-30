@@ -327,9 +327,9 @@ pub fn validate_clipboard_text(text: &str) -> Result<(), String> {
             text.len()
         ));
     }
-    if text.chars().any(char::is_control) {
-        return Err("OSC52 payload must not contain control characters".to_string());
-    }
+    // OSC52 carries the clipboard payload as base64, so raw text controls such
+    // as newlines, tabs, and pasted stack traces cannot escape into the stream.
+    // The FFI reader has already enforced UTF-8; the remaining bound is size.
     Ok(())
 }
 
@@ -566,10 +566,13 @@ mod tests {
     fn osc52_sequence_is_bounded_and_encoded() {
         let seq = build_osc52_sequence(0, "hello").unwrap();
         assert_eq!(String::from_utf8(seq).unwrap(), "\x1b]52;c;aGVsbG8=\x1b\\");
+        let multiline = build_osc52_sequence(0, "line\n\tbreak\r\n").unwrap();
+        assert_eq!(
+            String::from_utf8(multiline).unwrap(),
+            "\x1b]52;c;bGluZQoJYnJlYWsNCg==\x1b\\"
+        );
         assert!(build_osc52_sequence(9, "hello").is_err());
-        assert!(build_osc52_sequence(0, "\x1b").is_err());
-        assert!(build_osc52_sequence(0, "\0").is_err());
-        assert!(build_osc52_sequence(0, "line\nbreak").is_err());
+        assert!(build_osc52_sequence(0, &"x".repeat(OSC52_MAX_BYTES + 1)).is_err());
     }
 
     #[test]
