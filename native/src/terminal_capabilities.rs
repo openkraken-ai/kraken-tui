@@ -5,6 +5,8 @@ use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 
 pub const OSC52_MAX_BYTES: usize = 100 * 1024;
+pub const OSC8_MAX_URI_BYTES: usize = 4096;
+pub const OSC8_MAX_ID_BYTES: usize = 128;
 
 pub mod terminal_capability {
     pub const TRUECOLOR: u64 = 1 << 0;
@@ -342,6 +344,14 @@ pub fn validate_osc8_uri(uri: &str) -> Result<(), String> {
     if uri.is_empty() {
         return Err("OSC8 URI must not be empty".to_string());
     }
+    // Link metadata is cloned into visible cells during render; keep payloads
+    // bounded before storage so a valid-but-huge URI cannot amplify per cell.
+    if uri.len() > OSC8_MAX_URI_BYTES {
+        return Err(format!(
+            "OSC8 URI is {} bytes; limit is {OSC8_MAX_URI_BYTES}",
+            uri.len()
+        ));
+    }
     if !uri.is_ascii() {
         return Err("OSC8 URI must be ASCII or percent-encoded".to_string());
     }
@@ -367,6 +377,12 @@ pub fn validate_osc8_uri(uri: &str) -> Result<(), String> {
 }
 
 pub fn validate_osc8_id(id: &str) -> Result<(), String> {
+    if id.len() > OSC8_MAX_ID_BYTES {
+        return Err(format!(
+            "OSC8 id is {} bytes; limit is {OSC8_MAX_ID_BYTES}",
+            id.len()
+        ));
+    }
     if !id.is_ascii() {
         return Err("OSC8 id must be ASCII".to_string());
     }
@@ -562,5 +578,9 @@ mod tests {
         assert!(build_osc8_open("javascript:alert(1)", None).is_err());
         assert!(build_osc8_open("https://exa\u{1b}mple.com", None).is_err());
         assert!(build_osc8_open("https://example.com", Some("bad=value")).is_err());
+        let long_uri = format!("https://{}", "a".repeat(OSC8_MAX_URI_BYTES));
+        let long_id = "a".repeat(OSC8_MAX_ID_BYTES + 1);
+        assert!(build_osc8_open(&long_uri, None).is_err());
+        assert!(build_osc8_open("https://example.com", Some(&long_id)).is_err());
     }
 }

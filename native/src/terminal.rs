@@ -34,6 +34,7 @@ pub trait TerminalBackend {
         runs: &[WriteRun],
         root_bg: u32,
         osc8_enabled: bool,
+        synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String>;
 
     /// Downcast support for test code. Returns self as Any for type-safe downcasting.
@@ -376,6 +377,7 @@ impl TerminalBackend for CrosstermBackend {
         runs: &[WriteRun],
         root_bg: u32,
         osc8_enabled: bool,
+        synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
         use std::io::Write;
         let mut buf: Vec<u8> = Vec::with_capacity(32 * 1024);
@@ -393,11 +395,13 @@ impl TerminalBackend for CrosstermBackend {
             self.osc11_bg = root_bg;
         }
 
-        // Synchronized output (mode 2026) + buffered write
-        buf.extend_from_slice(b"\x1b[?2026h");
-        let metrics = crate::writer::emit_frame(state, runs, &mut buf, osc8_enabled)
-            .map_err(|e| format!("writer: {e}"))?;
-        buf.extend_from_slice(b"\x1b[?2026l");
+        let metrics = emit_writer_frame(
+            state,
+            runs,
+            &mut buf,
+            osc8_enabled,
+            synchronized_output_enabled,
+        )?;
 
         let mut stdout = std::io::stdout();
         stdout.write_all(&buf).map_err(|e| format!("write: {e}"))?;
@@ -469,6 +473,7 @@ impl TerminalBackend for HeadlessBackend {
         runs: &[WriteRun],
         _root_bg: u32,
         osc8_enabled: bool,
+        _synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
         let mut sink = std::io::sink();
         crate::writer::emit_frame(state, runs, &mut sink, osc8_enabled)
@@ -551,6 +556,7 @@ impl TerminalBackend for MockBackend {
         runs: &[WriteRun],
         _root_bg: u32,
         osc8_enabled: bool,
+        _synchronized_output_enabled: bool,
     ) -> Result<WriterMetrics, String> {
         crate::writer::emit_frame(state, runs, &mut self.output, osc8_enabled)
             .map_err(|e| format!("writer: {e}"))
@@ -559,5 +565,56 @@ impl TerminalBackend for MockBackend {
     #[cfg(test)]
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+}
+
+fn emit_writer_frame(
+    state: &mut WriterState,
+    runs: &[WriteRun],
+    buf: &mut Vec<u8>,
+    osc8_enabled: bool,
+    synchronized_output_enabled: bool,
+) -> Result<WriterMetrics, String> {
+    // Mode 2026 is a terminal protocol, not a generic buffering primitive.
+    // Emit it only when capability detection has positively allowed it.
+    if synchronized_output_enabled {
+        buf.extend_from_slice(b"\x1b[?2026h");
+    }
+    let metrics = crate::writer::emit_frame(state, runs, buf, osc8_enabled)
+        .map_err(|e| format!("writer: {e}"))?;
+    if synchronized_output_enabled {
+        buf.extend_from_slice(b"\x1b[?2026l");
+    }
+    Ok(metrics)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emit_writer_frame_omits_sync_mode_when_disabled() {
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+
+        emit_writer_frame(&mut state, &[], &mut buf, false, false).unwrap();
+
+        assert!(!buf
+            .windows(b"\x1b[?2026h".len())
+            .any(|w| w == b"\x1b[?2026h"));
+        assert!(!buf
+            .windows(b"\x1b[?2026l".len())
+            .any(|w| w == b"\x1b[?2026l"));
+    }
+
+    #[test]
+    fn emit_writer_frame_wraps_sync_mode_when_enabled() {
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+
+        emit_writer_frame(&mut state, &[], &mut buf, false, true).unwrap();
+
+        assert!(buf.starts_with(b"\x1b[?2026h"));
+        assert!(buf.ends_with(b"\x1b[?2026l"));
     }
 }

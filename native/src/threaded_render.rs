@@ -384,10 +384,10 @@ fn render_thread_main(
                         Err(poisoned) => poisoned.into_inner(),
                     };
                     // Threaded rendering uses snapshot cells that intentionally
-                    // omit live capability state; keep OSC8 disabled here until
-                    // the experimental path is promoted with a capability-safe
-                    // snapshot contract.
-                    match be.emit_runs(&mut writer_state, &runs, 0, false) {
+                    // omit live capability state; keep OSC8 and synchronized
+                    // output disabled until the experimental path is promoted
+                    // with a capability-safe snapshot contract.
+                    match be.emit_runs(&mut writer_state, &runs, 0, false, false) {
                         Ok(m) => m,
                         Err(_) => WriterMetrics {
                             bytes_estimated: 0,

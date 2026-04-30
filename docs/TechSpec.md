@@ -511,7 +511,9 @@ interface TerminalCapabilities {
   raw: bigint; // compatibility alias for early Epic O callers
   truecolor: boolean;
   color256: boolean;
+  color16: boolean;
   mouse: boolean;
+  utf8: boolean;
   alternateScreen: boolean;
   synchronizedOutput: boolean;
   osc52ClipboardWrite: boolean;
@@ -527,11 +529,11 @@ interface TerminalInfo {
   terminalName?: string;
   terminalProgram?: string;
   multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";
-  cellWidthPx?: number;
-  cellHeightPx?: number;
-  screenWidthPx?: number;
-  screenHeightPx?: number;
-  colorDepthBits?: number;
+  cellWidthPx: number;
+  cellHeightPx: number;
+  screenWidthPx: number;
+  screenHeightPx: number;
+  colorDepthBits: number;
   kittyKeyboardEnabled: boolean;
 }
 
@@ -710,6 +712,8 @@ osc8_hyperlinks:
   close_sequence: "OSC 8 ; ; ST"
   params: "empty or id=<printable-ascii-id>"
   uri: "printable ASCII / percent-encoded URI without control bytes"
+  uri_limit_bytes: 4096
+  id_limit_bytes: 128
   rendering: "writer opens and closes links around projected link spans while preserving style/run compaction"
 
 kitty_keyboard:
