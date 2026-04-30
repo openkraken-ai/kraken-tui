@@ -51,7 +51,7 @@ Kraken only supports write operations in Epic O.
 - Payloads are UTF-8 bytes accepted from the host, base64-encoded by Rust, and bounded before emission.
 - Payload ceiling: 100 KiB raw UTF-8.
 - Unsupported valid writes return `0` and emit nothing.
-- Invalid targets, null pointers with non-zero lengths, invalid UTF-8, oversized payloads, or control bytes return `-1`.
+- Invalid targets, null pointers with non-zero lengths, invalid UTF-8, or oversized payloads return `-1`. Ordinary text controls such as newlines and tabs are valid clipboard content because Rust base64-encodes the payload before any terminal emission.
 - Emitted form: `ESC ] 52 ; target ; base64_utf8 ESC \`.
 
 ## OSC8 Hyperlinks
