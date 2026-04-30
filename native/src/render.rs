@@ -132,6 +132,7 @@ fn apply_styled_text_to_buffer(
     }
 
     let mut style_spans = Vec::new();
+    let mut link_spans = Vec::new();
     let mut byte_offset = 0usize;
     for span in spans {
         let span_len = span.text.len();
@@ -158,9 +159,20 @@ fn apply_styled_text_to_buffer(
                 attrs: span.attrs,
             });
         }
+        if span_len > 0 {
+            if let Some(link) = &span.link {
+                link_spans.push(crate::types::TerminalLinkSpan {
+                    start: byte_offset,
+                    end: byte_offset + span_len,
+                    uri: link.uri.clone(),
+                    id: link.id.clone(),
+                });
+            }
+        }
         byte_offset += span_len;
     }
     text_buffer::replace_style_spans(ctx, buffer_handle, &style_spans)?;
+    text_buffer::replace_link_spans(ctx, buffer_handle, &link_spans)?;
 
     Ok(())
 }
@@ -354,10 +366,13 @@ pub(crate) fn render(ctx: &mut TuiContext) -> Result<(), String> {
         Some(h) if ctx.nodes.contains_key(&h) => crate::style::resolve_style(h, ctx).bg_color,
         _ => 0,
     };
+    let osc8_enabled = ctx
+        .terminal_capabilities
+        .supports(crate::terminal_capabilities::terminal_capability::OSC8_HYPERLINKS);
     ctx.writer_state.reset();
     let metrics = ctx
         .backend
-        .emit_runs(&mut ctx.writer_state, &runs, root_bg)?;
+        .emit_runs(&mut ctx.writer_state, &runs, root_bg, osc8_enabled)?;
     ctx.perf_write_bytes_estimate = metrics.bytes_estimated;
     ctx.perf_write_runs = metrics.run_count;
     ctx.perf_style_deltas = metrics.style_delta_count;
@@ -462,6 +477,7 @@ fn render_node(
                         fg: fill_fg,
                         bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -507,6 +523,7 @@ fn render_node(
                         attrs: CellAttrs::empty(),
                         fg: 0,
                         bg: 0,
+                        link: None,
                     }]
                 } else {
                     crate::text::parse_content_cached(
@@ -698,6 +715,7 @@ fn render_node(
                             fg: inv_fg,
                             bg: inv_bg,
                             attrs: CellAttrs::empty(),
+                            link: None,
                         },
                         clip,
                     );
@@ -763,6 +781,7 @@ fn render_node(
                                 fg: 0,
                                 bg,
                                 attrs: CellAttrs::empty(),
+                                link: None,
                             },
                             clip,
                         );
@@ -844,6 +863,7 @@ fn render_border(
             fg,
             bg,
             attrs,
+            link: None,
         },
         clip,
     );
@@ -857,6 +877,7 @@ fn render_border(
                 fg,
                 bg,
                 attrs,
+                link: None,
             },
             clip,
         );
@@ -871,6 +892,7 @@ fn render_border(
                 fg,
                 bg,
                 attrs,
+                link: None,
             },
             clip,
         );
@@ -885,6 +907,7 @@ fn render_border(
                 fg,
                 bg,
                 attrs,
+                link: None,
             },
             clip,
         );
@@ -901,6 +924,7 @@ fn render_border(
                 fg,
                 bg,
                 attrs,
+                link: None,
             },
             clip,
         );
@@ -914,6 +938,7 @@ fn render_border(
                     fg,
                     bg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -931,6 +956,7 @@ fn render_border(
                 fg,
                 bg,
                 attrs,
+                link: None,
             },
             clip,
         );
@@ -944,6 +970,7 @@ fn render_border(
                     fg,
                     bg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -993,7 +1020,13 @@ fn render_plain_text(
                 &mut ctx.front_buffer,
                 x + col,
                 y + row,
-                Cell { ch, fg, bg, attrs },
+                Cell {
+                    ch,
+                    fg,
+                    bg,
+                    attrs,
+                    link: None,
+                },
                 clip,
             );
         }
@@ -1055,6 +1088,7 @@ fn render_styled_spans(
                         fg,
                         bg,
                         attrs: span.attrs,
+                        link: None,
                     },
                     clip,
                 );
@@ -1121,6 +1155,7 @@ fn render_input_cursor(
             fg: inv_fg,
             bg: inv_bg,
             attrs: CellAttrs::empty(),
+            link: None,
         },
         clip,
     );
@@ -1344,6 +1379,7 @@ fn render_select_options(
                         fg: row_fg,
                         bg: row_bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -1367,6 +1403,7 @@ fn render_select_options(
                     fg: row_fg,
                     bg: row_bg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1430,6 +1467,7 @@ fn render_table(
                         fg,
                         bg,
                         attrs: attrs | CellAttrs::BOLD,
+                        link: None,
                     },
                     clip,
                 );
@@ -1479,6 +1517,7 @@ fn render_table(
                         fg: row_fg,
                         bg: row_bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -1504,6 +1543,7 @@ fn render_table(
                         fg: row_fg,
                         bg: row_bg,
                         attrs,
+                        link: None,
                     },
                     clip,
                 );
@@ -1626,6 +1666,7 @@ fn render_list(
                         fg: row_fg,
                         bg: row_bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -1648,6 +1689,7 @@ fn render_list(
                     fg: row_fg,
                     bg: row_bg,
                     attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1702,6 +1744,7 @@ fn render_tabs(
                     fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
                 clip,
             );
@@ -1732,6 +1775,7 @@ fn render_tabs(
                         fg: tab_fg,
                         bg: tab_bg,
                         attrs: CellAttrs::empty(),
+                        link: None,
                     },
                     clip,
                 );
@@ -1752,6 +1796,7 @@ fn render_tabs(
                     fg: tab_fg,
                     bg: tab_bg,
                     attrs: tab_attrs,
+                    link: None,
                 },
                 clip,
             );
@@ -1866,6 +1911,7 @@ fn render_splitpane_divider(
                             fg: divider_fg,
                             bg,
                             attrs,
+                            link: None,
                         },
                         clip,
                     );
@@ -1886,6 +1932,7 @@ fn render_splitpane_divider(
                             fg: divider_fg,
                             bg,
                             attrs,
+                            link: None,
                         },
                         clip,
                     );
@@ -2062,6 +2109,7 @@ fn render_transcript(
                     fg: block_fg,
                     bg,
                     attrs,
+                    link: None,
                 };
                 clip_set(&mut ctx.front_buffer, sx, y, cell, clip);
             }
@@ -2075,6 +2123,7 @@ fn render_transcript(
                     fg: block_fg,
                     bg,
                     attrs,
+                    link: None,
                 };
                 clip_set(&mut ctx.front_buffer, content_x + dx, y, cell, clip);
             }
@@ -2218,6 +2267,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -2233,6 +2283,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
             clip,
         );
@@ -2310,6 +2361,7 @@ mod tests {
             attrs: CellAttrs::empty(),
             fg: 0, // default — should inherit node's blended fg
             bg: 0,
+            link: None,
         }];
 
         let clip = ClipRect::full(80, 24);

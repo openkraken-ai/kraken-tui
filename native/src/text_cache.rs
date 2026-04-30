@@ -105,6 +105,7 @@ mod tests {
             attrs: CellAttrs::empty(),
             fg: 0,
             bg: 0,
+            link: None,
         }]
     }
 

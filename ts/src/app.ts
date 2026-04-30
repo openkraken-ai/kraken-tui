@@ -31,6 +31,52 @@ export interface RunOptions {
 	disableJsxDispatch?: boolean;
 }
 
+const TERMINAL_CAPABILITY_FLAGS = {
+	truecolor: 1n << 0n,
+	color256: 1n << 1n,
+	color16: 1n << 2n,
+	mouse: 1n << 3n,
+	utf8: 1n << 4n,
+	alternateScreen: 1n << 5n,
+	osc52ClipboardWrite: 1n << 6n,
+	osc8Hyperlinks: 1n << 7n,
+	kittyKeyboardDisambiguate: 1n << 8n,
+	pixelSize: 1n << 9n,
+	colorDepthQuery: 1n << 10n,
+	multiplexerPresent: 1n << 11n,
+	synchronizedOutput: 1n << 12n,
+} as const;
+
+export interface TerminalCapabilities {
+	raw: bigint;
+	truecolor: boolean;
+	color256: boolean;
+	color16: boolean;
+	mouse: boolean;
+	utf8: boolean;
+	alternateScreen: boolean;
+	osc52ClipboardWrite: boolean;
+	osc8Hyperlinks: boolean;
+	kittyKeyboardDisambiguate: boolean;
+	pixelSize: boolean;
+	colorDepthQuery: boolean;
+	multiplexerPresent: boolean;
+	synchronizedOutput: boolean;
+}
+
+export interface TerminalInfo {
+	flags: number;
+	terminalName?: string;
+	terminalProgram?: string;
+	multiplexer: "none" | "tmux" | "screen" | "zellij" | "unknown";
+	cellWidthPx: number;
+	cellHeightPx: number;
+	screenWidthPx: number;
+	screenHeightPx: number;
+	colorDepthBits: number;
+	kittyKeyboardEnabled: boolean;
+}
+
 export class Kraken {
 	private idMap: Map<string, number> = new Map();
 	private _running = false;
@@ -101,6 +147,46 @@ export class Kraken {
 		const hBuf = new Int32Array(1);
 		checkResult(ffi.tui_get_terminal_size(wBuf, hBuf), "getTerminalSize");
 		return { width: wBuf[0]!, height: hBuf[0]! };
+	}
+
+	getCapabilities(): TerminalCapabilities {
+		const raw = ffi.tui_terminal_get_capabilities();
+		const has = (flag: bigint): boolean => (raw & flag) !== 0n;
+		return {
+			raw,
+			truecolor: has(TERMINAL_CAPABILITY_FLAGS.truecolor),
+			color256: has(TERMINAL_CAPABILITY_FLAGS.color256),
+			color16: has(TERMINAL_CAPABILITY_FLAGS.color16),
+			mouse: has(TERMINAL_CAPABILITY_FLAGS.mouse),
+			utf8: has(TERMINAL_CAPABILITY_FLAGS.utf8),
+			alternateScreen: has(TERMINAL_CAPABILITY_FLAGS.alternateScreen),
+			osc52ClipboardWrite: has(TERMINAL_CAPABILITY_FLAGS.osc52ClipboardWrite),
+			osc8Hyperlinks: has(TERMINAL_CAPABILITY_FLAGS.osc8Hyperlinks),
+			kittyKeyboardDisambiguate: has(TERMINAL_CAPABILITY_FLAGS.kittyKeyboardDisambiguate),
+			pixelSize: has(TERMINAL_CAPABILITY_FLAGS.pixelSize),
+			colorDepthQuery: has(TERMINAL_CAPABILITY_FLAGS.colorDepthQuery),
+			multiplexerPresent: has(TERMINAL_CAPABILITY_FLAGS.multiplexerPresent),
+			synchronizedOutput: has(TERMINAL_CAPABILITY_FLAGS.synchronizedOutput),
+		};
+	}
+
+	getTerminalInfo(): TerminalInfo {
+		const buf = Buffer.alloc(4096);
+		const written = ffi.tui_terminal_get_info(ptr(buf), buf.byteLength);
+		checkResult(written, "getTerminalInfo");
+		const parsed: unknown = JSON.parse(buf.toString("utf-8", 0, written));
+		if (typeof parsed !== "object" || parsed == null) {
+			throw new Error("Invalid terminal info payload");
+		}
+		return parsed as TerminalInfo;
+	}
+
+	writeClipboard(text: string, target: "clipboard" | "primary" = "clipboard"): boolean {
+		const encoded = new TextEncoder().encode(text);
+		const targetCode = target === "clipboard" ? 0 : 1;
+		const result = ffi.tui_terminal_clipboard_write(targetCode, ptr(encoded), encoded.byteLength);
+		checkResult(result, "writeClipboard");
+		return result > 0;
 	}
 
 	/**

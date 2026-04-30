@@ -1,6 +1,7 @@
 # Technical Specification
 
 ## 0. Version History & Changelog
+- v7.4.1 - Landed Epic O Brownfield updates: native terminal capability state, diagnostic query APIs, write-only OSC52, OSC8 text-buffer link spans, Kitty keyboard disambiguation negotiation, and conservative multiplexer degradation are now implemented.
 - v7.4.0 - Activated the Epic O terminal-capability contract: capability discovery becomes detection-first, OSC52 is write-only, OSC8 hyperlinks are range-scoped, Kitty keyboard support is negotiated, and multiplexer variance is an explicit implementation concern.
 - v7.3.2 - Closed the last Epic N contract drift: `EditBuffer` coalescing and substrate-backed text surfaces are now documented as shipped Brownfield reality rather than pending target state.
 - v7.3.1 - Completed the substrate authority cut for Epic N: transcript blocks now store substrate handles instead of mirrored mutable strings, the substrate benchmark suite is a first-class native gate, and the pre-public contract no longer preserves backward compatibility for its own sake.
@@ -137,7 +138,7 @@ The repo-owned release workflow currently publishes **versioned GitHub release a
 - The prior v6 TechSpec described transcript, devtools, split-pane, and flagship examples as future work. The current source tree implements them.
 - This v7 artifact is therefore intentionally present-tense and canonical rather than future-tense and phase-only.
 - ADR-T37 through ADR-T40 introduced forward-looking scope during the rebase wave. Sections 3.4 and 4.4 now describe Brownfield reality for `TextBuffer`, `TextView`, `EditBuffer`, and the rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks`) after Epic N shipped.
-- ADR-T41 introduces the next active target-state contract for Epic O. Existing source currently has a coarse `tui_get_capabilities()` bitmask and Crossterm-backed raw mode, alternate screen, mouse, resize, focus, synchronized output, and OSC11 background sync; Epic O replaces the coarse assumptions with explicit capability state and tested degraded behavior.
+- ADR-T41 is now shipped under Epic O. The source tree has explicit terminal capability state, diagnostic query APIs, conservative multiplexer degradation, write-only OSC52, OSC8 link metadata, Kitty keyboard disambiguation negotiation, and tested fallback behavior.
 
 ## 3. State & Data Modeling
 ### 3.1 Native UI State Model
@@ -391,7 +392,7 @@ pub struct TuiContext {
 ### 3.4 Native Text Substrate
 - **Purpose:** Own all substantial text content and its viewport projections inside the Native Core so widget code stops re-implementing measurement, wrapping, clipping, and Unicode handling.
 - **Storage Shape:**
-  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight changes today and link changes after CORE-O5), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, Epic O target `terminal_link_spans`, `dirty_ranges`, and a configurable `tab_width`. Each dirty-range entry records `start`, `old_end`, and `new_end` so shrinking and growing edits preserve both the replaced extent and the replacement extent. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
+  - `TextBuffer` — flat `String` content backing keyed by an opaque `u32` Handle, plus maintained metadata: monotonic `epoch` (bumped on byte mutations only), `style_fingerprint` (bumped on style/selection/highlight/link changes), `line_starts: Vec<usize>` index, cached per-line `line_widths`, `style_spans`, a single optional `selection`, `highlights`, `terminal_link_spans`, `dirty_ranges`, and a configurable `tab_width`. Each dirty-range entry records `start`, `old_end`, and `new_end` so shrinking and growing edits preserve both the replaced extent and the replacement extent. Rope or chunked storage remains a future option that can be adopted post-substrate without changing the public ABI; v1 ships flat storage to keep the contract surface and benchmarking baseline simple.
   - `TextView` — viewport projection over a `TextBuffer`, parameterized by wrap width, wrap mode, tab width, viewport rows, scroll row and column, and optional cursor position. Holds a soft-wrap visual-line cache keyed by content epoch and wrap parameters.
   - `EditBuffer` — wraps a `TextBuffer` with an operation history for `insert`, `delete`, and `replace`, plus explicit coalescing boundaries that keep ordinary single-edit operations grouped without forcing unrelated edits into the same undo unit.
 - **Constraints / Invariants:**
@@ -406,9 +407,9 @@ pub struct TuiContext {
   - `text_buffers: HashMap<u32, TextBuffer>` keyed by buffer Handle
   - `text_views: HashMap<u32, TextView>` keyed by view Handle, each referencing a buffer Handle
   - `edit_buffers: HashMap<u32, EditBuffer>` keyed by edit-buffer Handle, each referencing a buffer Handle
-  - Per-buffer `Vec<usize>` line-start index, Epic O target `Vec<TerminalLinkSpan>` range metadata, and `Vec<DirtyRange>` dirty-range list, where each entry carries both pre- and post-replacement extents
+  - Per-buffer `Vec<usize>` line-start index, `Vec<TerminalLinkSpan>` range metadata, and `Vec<DirtyRange>` dirty-range list, where each entry carries both pre- and post-replacement extents
   - Per-view `Vec<VisualLine>` wrap cache plus the cache key
-- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`). `EditBuffer` storage and the substrate-rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) landed under Epic N. `terminal_link_spans` is the active Epic O target extension and should not be treated as shipped Brownfield reality until CORE-O5 lands. Replay fixtures and example replay tests remain green across the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
+- **Migration Notes:** `TextBuffer`, `TextView`, and the unified text renderer landed under Epic M (`native/src/text_buffer.rs`, `native/src/text_view.rs`, `native/src/text_renderer.rs`). `EditBuffer` storage and the substrate-rebased substantial text surfaces (`Text`, `Markdown`, code spans, `TextArea`, transcript blocks) landed under Epic N. `terminal_link_spans`, OSC8 projection, and writer emission landed under Epic O. Replay fixtures and example replay tests remain green across the rebase. Public host APIs (`TranscriptView`, `TextArea`, `Text`, `Markdown`) preserve their current contracts.
 - **Known Limitations (Brownfield):** The shared `Cell` model (`types.rs`) stores a single `char` per cell. Multi-scalar grapheme clusters (ZWJ family emoji, flag sequences, keycaps, skin-tone sequences) are segmented and advance the column by their measured cell width, so layout, hit-testing, soft wrap, and selection are correct, but the visible glyph emitted into the cell grid is the cluster's first scalar rather than the composed cluster. Widening the cell model to carry full grapheme strings is post-Epic-N work and is not blocked by the substrate ABI.
 
 ```rust
@@ -421,7 +422,7 @@ pub struct TextBuffer {
     pub style_spans: Vec<StyleSpan>,
     pub selection: Option<SelectionRange>,
     pub highlights: Vec<HighlightRange>,
-    pub terminal_link_spans: Vec<TerminalLinkSpan>, // Epic O target extension
+    pub terminal_link_spans: Vec<TerminalLinkSpan>,
     pub dirty_ranges: Vec<DirtyRange>,
     pub tab_width: u8,
     // The content `String` itself is a private implementation detail; the
@@ -755,7 +756,7 @@ multiplexer_policy:
 │       ├── writer.rs
 │       ├── event.rs
 │       ├── scroll.rs
-│       ├── terminal_capabilities.rs # Epic O target module for capability flags, protocol payload validation, and diagnostics
+│       ├── terminal_capabilities.rs # Capability flags, protocol payload validation, and diagnostics
 │       ├── text.rs
 │       ├── text_cache.rs
 │       ├── text_buffer.rs

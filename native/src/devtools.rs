@@ -293,6 +293,7 @@ fn overlay_cell(ch: char, color: u32) -> Cell {
         fg: color,
         bg: 0,
         attrs: CellAttrs::empty(),
+        link: None,
     }
 }
 
@@ -333,6 +334,7 @@ pub(crate) fn render_overlay(ctx: &mut TuiContext) {
                     fg: OVERLAY_PERF_COLOR,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             );
         }

@@ -10,6 +10,7 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { dlopen, CString, type FFIType } from "bun:ffi";
+import { Kraken } from "./src/app";
 import { resolveSourceBuildPath } from "./src/resolver";
 
 // ── Load native library ─────────────────────────────────────────────────────
@@ -21,6 +22,9 @@ const lib = dlopen(LIB_PATH, {
 	tui_init_headless:   { args: ["u16", "u16"] as FFIType[],                    returns: "i32" as const },
 	tui_shutdown:        { args: [] as FFIType[],                               returns: "i32" as const },
 	tui_get_capabilities:{ args: [] as FFIType[],                               returns: "u32" as const },
+	tui_terminal_get_capabilities:{ args: [] as FFIType[],                      returns: "u64" as const },
+	tui_terminal_get_info:{ args: ["ptr", "u32"] as FFIType[],                  returns: "i32" as const },
+	tui_terminal_clipboard_write:{ args: ["u8", "ptr", "u32"] as FFIType[],     returns: "i32" as const },
 
 	// Node Lifecycle
 	tui_create_node:     { args: ["u8"] as FFIType[],                            returns: "u32" as const },
@@ -239,6 +243,8 @@ const lib = dlopen(LIB_PATH, {
 	tui_text_buffer_get_line_count:    { args: ["u32"] as FFIType[],                                returns: "u32" as const },
 	tui_text_buffer_set_style_span:    { args: ["u32", "u32", "u32", "u32", "u32", "u8"] as FFIType[], returns: "i32" as const },
 	tui_text_buffer_clear_style_spans: { args: ["u32"] as FFIType[],                                returns: "i32" as const },
+	tui_text_buffer_set_link:          { args: ["u32", "u32", "u32", "ptr", "u32", "ptr", "u32"] as FFIType[], returns: "i32" as const },
+	tui_text_buffer_clear_links:       { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_buffer_set_selection:     { args: ["u32", "u32", "u32"] as FFIType[],                  returns: "i32" as const },
 	tui_text_buffer_clear_selection:   { args: ["u32"] as FFIType[],                                returns: "i32" as const },
 	tui_text_buffer_set_highlight:     { args: ["u32", "u32", "u32", "u8"] as FFIType[],            returns: "i32" as const },
@@ -815,6 +821,36 @@ describe("FFI integration", () => {
 			expect(wBuf[0]).toBe(80);
 			expect(hBuf[0]).toBe(24);
 		});
+
+		test("terminal capability ABI returns headless diagnostics", () => {
+			const legacy = ffi.tui_get_capabilities();
+			const full = ffi.tui_terminal_get_capabilities();
+			expect(BigInt(legacy)).toBe(full & 0xffff_ffffn);
+			expect((full & (1n << 4n)) !== 0n).toBe(true);
+
+			const buf = Buffer.alloc(4096);
+			const written = ffi.tui_terminal_get_info(buf, buf.byteLength);
+			expect(written).toBeGreaterThan(0);
+			const info = JSON.parse(buf.toString("utf-8", 0, written));
+			expect(info.terminalName).toBe("headless");
+			expect(info.multiplexer).toBe("none");
+			expect(info.screenWidthPx).toBe(80);
+			expect(info.screenHeightPx).toBe(24);
+		});
+
+		test("terminal wrappers expose capabilities and unsupported clipboard no-op", () => {
+			const app = Object.create(Kraken.prototype) as Kraken;
+			const caps = app.getCapabilities();
+			expect(caps.utf8).toBe(true);
+			expect(caps.osc52ClipboardWrite).toBe(false);
+			expect(app.getTerminalInfo().terminalName).toBe("headless");
+			expect(app.writeClipboard("hello")).toBe(false);
+		});
+
+		test("clipboard write rejects malformed target", () => {
+			const payload = Buffer.from("hello");
+			expect(ffi.tui_terminal_clipboard_write(9, payload, payload.byteLength)).toBe(-1);
+		});
 	});
 
 	// ── Native Text Substrate (ADR-T37) ─────────────────────────────────────
@@ -877,6 +913,13 @@ describe("FFI integration", () => {
 				ffi.tui_text_buffer_set_style_span(buf, 0, 5, 0xff_00_00, 0, ATTR_BOLD),
 			).toBe(0);
 			expect(ffi.tui_text_buffer_clear_style_spans(buf)).toBe(0);
+
+			const uri = Buffer.from("https://example.com");
+			const id = Buffer.from("doc-1");
+			expect(
+				ffi.tui_text_buffer_set_link(buf, 0, 5, uri, uri.byteLength, id, id.byteLength),
+			).toBe(0);
+			expect(ffi.tui_text_buffer_clear_links(buf)).toBe(0);
 
 			// Selection: set then clear.
 			expect(ffi.tui_text_buffer_set_selection(buf, 6, 11)).toBe(0);

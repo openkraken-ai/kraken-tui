@@ -31,6 +31,7 @@ mod style;
 #[cfg(test)]
 mod substrate_gates;
 mod terminal;
+mod terminal_capabilities;
 mod text;
 mod text_buffer;
 pub mod text_cache;
@@ -261,18 +262,65 @@ pub extern "C" fn tui_get_terminal_size(width: *mut i32, height: *mut i32) -> i3
 #[no_mangle]
 pub extern "C" fn tui_get_capabilities() -> u32 {
     catch_unwind(AssertUnwindSafe(|| -> u32 {
-        // Detect capabilities (basic implementation)
-        let mut caps: u32 = 0;
-        // Most modern terminals support these
-        caps |= 0x01; // truecolor
-        caps |= 0x02; // 256-color
-        caps |= 0x04; // 16-color
-        caps |= 0x08; // mouse
-        caps |= 0x10; // UTF-8
-        caps |= 0x20; // alternate screen
-        caps
+        match context_read() {
+            Ok(ctx) => ctx.terminal_capabilities.flags as u32,
+            Err(_) => {
+                let fallback = terminal_capabilities::terminal_capability::TRUECOLOR
+                    | terminal_capabilities::terminal_capability::COLOR_256
+                    | terminal_capabilities::terminal_capability::COLOR_16
+                    | terminal_capabilities::terminal_capability::MOUSE
+                    | terminal_capabilities::terminal_capability::UTF8
+                    | terminal_capabilities::terminal_capability::ALTERNATE_SCREEN;
+                fallback as u32
+            }
+        }
     }))
     .unwrap_or_default()
+}
+
+#[no_mangle]
+pub extern "C" fn tui_terminal_get_capabilities() -> u64 {
+    ffi_wrap_u64(|| {
+        let ctx = context_read()?;
+        Ok(ctx.terminal_capabilities.flags)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_terminal_get_info(out_ptr: *mut u8, out_len: u32) -> i32 {
+    ffi_wrap(|| {
+        if out_len > 0 && out_ptr.is_null() {
+            return Err("Null terminal info output pointer".to_string());
+        }
+        let ctx = context_read()?;
+        let json = ctx.terminal_capabilities.to_json()?;
+        let bytes = json.as_bytes();
+        if bytes.len() > out_len as usize {
+            return Err(format!(
+                "terminal info buffer too small: need {}, got {}",
+                bytes.len(),
+                out_len
+            ));
+        }
+        if !bytes.is_empty() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_ptr, bytes.len());
+            }
+        }
+        Ok(bytes.len() as i32)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_terminal_clipboard_write(target: u8, ptr: *const u8, len: u32) -> i32 {
+    ffi_wrap(|| {
+        let payload = unsafe { read_utf8_payload(ptr, len) }?;
+        terminal_capabilities::validate_clipboard_text(payload)?;
+        let mut ctx = context_write()?;
+        let state = ctx.terminal_capabilities.clone();
+        let written = ctx.backend.write_clipboard(&state, target, payload)?;
+        Ok(if written { 1 } else { 0 })
+    })
 }
 
 // ============================================================================
@@ -3378,6 +3426,42 @@ pub extern "C" fn tui_text_buffer_clear_style_spans(handle: u32) -> i32 {
     ffi_wrap(|| {
         let mut ctx = context_write()?;
         text_buffer::clear_style_spans(&mut ctx, handle)?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_set_link(
+    handle: u32,
+    start_byte: u32,
+    end_byte: u32,
+    uri_ptr: *const u8,
+    uri_len: u32,
+    id_ptr: *const u8,
+    id_len: u32,
+) -> i32 {
+    ffi_wrap(|| {
+        let uri = unsafe { read_utf8_payload(uri_ptr, uri_len) }?;
+        let id = unsafe { read_utf8_payload(id_ptr, id_len) }?;
+        let id = if id_len == 0 { None } else { Some(id) };
+        let mut ctx = context_write()?;
+        text_buffer::set_link(
+            &mut ctx,
+            handle,
+            start_byte as usize,
+            end_byte as usize,
+            uri,
+            id,
+        )?;
+        Ok(0)
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn tui_text_buffer_clear_links(handle: u32) -> i32 {
+    ffi_wrap(|| {
+        let mut ctx = context_write()?;
+        text_buffer::clear_links(&mut ctx, handle)?;
         Ok(0)
     })
 }

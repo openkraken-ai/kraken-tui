@@ -16,7 +16,7 @@
 //! 5. **Run coalescing** — consecutive cells with identical style on the same
 //!    row are merged into a single `Print(string)` payload.
 
-use crate::types::{CellAttrs, CellUpdate};
+use crate::types::{CellAttrs, CellUpdate, TerminalLink};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 // ============================================================================
@@ -78,6 +78,7 @@ pub struct WriteRun {
     pub fg: u32,
     pub bg: u32,
     pub attrs: CellAttrs,
+    pub link: Option<TerminalLink>,
     pub chars: String,
 }
 
@@ -220,6 +221,7 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
         fg: first.cell.fg,
         bg: first.cell.bg,
         attrs: first.cell.attrs,
+        link: first.cell.link.clone(),
         chars: String::new(),
     };
     current.chars.push(first.cell.ch);
@@ -232,7 +234,8 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
         let contiguous = update.x == expected_x;
         let same_style = update.cell.fg == current.fg
             && update.cell.bg == current.bg
-            && update.cell.attrs == current.attrs;
+            && update.cell.attrs == current.attrs
+            && update.cell.link == current.link;
 
         if same_row && contiguous && same_style {
             current.chars.push(update.cell.ch);
@@ -245,6 +248,7 @@ pub fn compact_runs(updates: &[CellUpdate]) -> Vec<WriteRun> {
                 fg: update.cell.fg,
                 bg: update.cell.bg,
                 attrs: update.cell.attrs,
+                link: update.cell.link.clone(),
                 chars: String::new(),
             };
             current.chars.push(update.cell.ch);
@@ -268,6 +272,7 @@ pub fn emit_frame<W: std::io::Write>(
     state: &mut WriterState,
     runs: &[WriteRun],
     out: &mut W,
+    osc8_enabled: bool,
 ) -> Result<WriterMetrics, String> {
     use crossterm::{
         cursor::MoveTo,
@@ -276,7 +281,6 @@ pub fn emit_frame<W: std::io::Write>(
     };
 
     let mut metrics = WriterMetrics::new();
-
     for run in runs {
         metrics.run_count += 1;
 
@@ -319,12 +323,33 @@ pub fn emit_frame<W: std::io::Write>(
             metrics.bytes_estimated += bytes;
         }
 
-        // 5. Print the coalesced payload
+        // 5. OSC8 is opened immediately before printable text and closed
+        // immediately after it. This intentionally keeps cursor movement and
+        // SGR/style escape traffic outside the hyperlink payload so terminal
+        // emulators cannot interpret control sequences as linked content.
+        if osc8_enabled {
+            if let Some(link) = &run.link {
+                let open =
+                    crate::terminal_capabilities::build_osc8_open(&link.uri, link.id.as_deref())?;
+                metrics.bytes_estimated += open.len() as u64;
+                out.write_all(&open)
+                    .map_err(|e| format!("osc8 open: {e}"))?;
+            }
+        }
+
+        // 6. Print the coalesced payload
         out.queue(Print(&run.chars))
             .map_err(|e| format!("print: {e}"))?;
         let display_width = run.chars.width() as u16;
         state.cursor_x += display_width;
         metrics.bytes_estimated += run.chars.len() as u64;
+
+        if osc8_enabled && run.link.is_some() {
+            out.write_all(crate::terminal_capabilities::build_osc8_close())
+                .map_err(|e| format!("osc8 close: {e}"))?;
+            metrics.bytes_estimated +=
+                crate::terminal_capabilities::build_osc8_close().len() as u64;
+        }
     }
 
     // Frame-end reset (emission rule #4)
@@ -501,6 +526,7 @@ pub mod workloads {
                         fg,
                         bg,
                         attrs,
+                        link: None,
                     },
                 });
             }
@@ -529,6 +555,7 @@ pub mod workloads {
                             fg,
                             bg,
                             attrs,
+                            link: None,
                         },
                     });
                 }
@@ -559,6 +586,7 @@ pub mod workloads {
                         fg,
                         bg,
                         attrs,
+                        link: None,
                     },
                 });
             }
@@ -628,6 +656,7 @@ mod tests {
                 fg: 0,
                 bg: 0,
                 attrs: CellAttrs::empty(),
+                link: None,
             },
         }];
         let runs = compact_runs(&updates);
@@ -650,6 +679,7 @@ mod tests {
                     fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
             CellUpdate {
@@ -660,6 +690,7 @@ mod tests {
                     fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
             CellUpdate {
@@ -670,6 +701,7 @@ mod tests {
                     fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
         ];
@@ -691,6 +723,7 @@ mod tests {
                     fg: 0x01FF0000,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
             CellUpdate {
@@ -701,6 +734,7 @@ mod tests {
                     fg: 0x0100FF00,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
         ];
@@ -722,6 +756,7 @@ mod tests {
                     fg,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
             CellUpdate {
@@ -732,6 +767,7 @@ mod tests {
                     fg,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
         ];
@@ -751,6 +787,7 @@ mod tests {
                     fg,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
             CellUpdate {
@@ -761,6 +798,7 @@ mod tests {
                     fg,
                     bg: 0,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             },
         ];
@@ -781,6 +819,7 @@ mod tests {
                     fg,
                     bg,
                     attrs: CellAttrs::empty(),
+                    link: None,
                 },
             })
             .collect();
@@ -795,7 +834,7 @@ mod tests {
     fn emit_empty_frame() {
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &[], &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &[], &mut buf, false).unwrap();
         assert_eq!(metrics.run_count, 0);
         assert_eq!(metrics.cursor_move_count, 0);
         assert_eq!(metrics.style_delta_count, 0);
@@ -809,11 +848,12 @@ mod tests {
             fg: 0x01FF0000,
             bg: 0x01000000,
             attrs: CellAttrs::BOLD,
+            link: None,
             chars: "Hello".to_string(),
         }];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         assert_eq!(metrics.run_count, 1);
         // MoveTo(5,3) since state starts at (0,0)
         assert_eq!(metrics.cursor_move_count, 1);
@@ -836,6 +876,7 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
                 chars: "AAA".to_string(),
             },
             WriteRun {
@@ -844,12 +885,13 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::BOLD,
+                link: None,
                 chars: "BBB".to_string(),
             },
         ];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         assert_eq!(metrics.run_count, 2);
         // First run at (0,0): force_move causes unconditional MoveTo
         // Second run: cursor is at (3,0) after first Print, run is at (3,0) → no MoveTo
@@ -867,6 +909,7 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
                 chars: "A".to_string(),
             },
             WriteRun {
@@ -875,12 +918,13 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
                 chars: "B".to_string(),
             },
         ];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         // First run at (0,0): force_move causes unconditional MoveTo
         // Second run at (10,0): cursor was at (1,0), needs move
         assert_eq!(metrics.cursor_move_count, 2);
@@ -897,6 +941,7 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
                 chars: "AA".to_string(),
             },
             WriteRun {
@@ -905,12 +950,13 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::empty(),
+                link: None,
                 chars: "BB".to_string(),
             },
         ];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         // First run: fg + bg = 2 style deltas (from sentinel)
         // Second run: same fg/bg/attrs → 0 style deltas
         assert_eq!(metrics.style_delta_count, 2);
@@ -927,6 +973,7 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::BOLD | CellAttrs::ITALIC,
+                link: None,
                 chars: "A".to_string(),
             },
             WriteRun {
@@ -935,12 +982,13 @@ mod tests {
                 fg,
                 bg,
                 attrs: CellAttrs::UNDERLINE,
+                link: None,
                 chars: "B".to_string(),
             },
         ];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let metrics = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let metrics = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         // Run 1: fg(1) + bg(1) + BOLD added(1) + ITALIC added(1) = 4
         // Run 2: same fg/bg → 0 + BOLD removed(1) + ITALIC removed(1) + UNDERLINE added(1) = 3
         assert_eq!(metrics.style_delta_count, 7);
@@ -959,19 +1007,20 @@ mod tests {
             fg: 0x01FF0000,
             bg: 0x01000000,
             attrs: CellAttrs::empty(),
+            link: None,
             chars: "Hello".to_string(),
         }];
 
         // First frame — force_move is true on fresh state
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let m1 = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let m1 = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         assert_eq!(m1.cursor_move_count, 1, "first frame must MoveTo(0,0)");
 
         // Simulate second frame: reset state (as render.rs does)
         state.reset();
         buf.clear();
-        let m2 = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let m2 = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         assert_eq!(
             m2.cursor_move_count, 1,
             "after reset, must MoveTo(0,0) again"
@@ -1006,12 +1055,14 @@ mod tests {
             fg,
             bg,
             attrs,
+            link: None,
         };
         let cell_b = crate::types::Cell {
             ch: 'b',
             fg,
             bg,
             attrs,
+            link: None,
         };
 
         // '😀' at col 0 (width 2), 'b' at col 2 (width 1) — contiguous
@@ -1063,16 +1114,62 @@ mod tests {
             fg: 0x01FF0000,
             bg: 0x01000000,
             attrs: CellAttrs::empty(),
+            link: None,
             chars: "😀b".to_string(), // display width: 2 + 1 = 3
         }];
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        emit_frame(&mut state, &runs, &mut buf).unwrap();
+        emit_frame(&mut state, &runs, &mut buf, false).unwrap();
         // Cursor should advance by display width (3), not char count (2)
         assert_eq!(
             state.cursor_x, 3,
             "cursor must advance by display width, not char count"
         );
+    }
+
+    #[test]
+    fn emit_frame_balances_osc8_when_enabled() {
+        let runs = vec![WriteRun {
+            x: 0,
+            y: 0,
+            fg: 0,
+            bg: 0,
+            attrs: CellAttrs::empty(),
+            link: Some(crate::types::TerminalLink {
+                uri: "https://example.com".to_string(),
+                id: Some("doc-1".to_string()),
+            }),
+            chars: "link".to_string(),
+        }];
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+        emit_frame(&mut state, &runs, &mut buf, true).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("\x1b]8;id=doc-1;https://example.com\x1b\\"));
+        assert!(output.contains("link"));
+        assert!(output.contains("\x1b]8;;\x1b\\"));
+    }
+
+    #[test]
+    fn emit_frame_suppresses_osc8_when_disabled() {
+        let runs = vec![WriteRun {
+            x: 0,
+            y: 0,
+            fg: 0,
+            bg: 0,
+            attrs: CellAttrs::empty(),
+            link: Some(crate::types::TerminalLink {
+                uri: "https://example.com".to_string(),
+                id: None,
+            }),
+            chars: "link".to_string(),
+        }];
+        let mut state = WriterState::new();
+        let mut buf = Vec::new();
+        emit_frame(&mut state, &runs, &mut buf, false).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(!output.contains("\x1b]8;"));
+        assert!(output.contains("link"));
     }
 
     /// CJK character (width 2) followed by ASCII at correct column.
@@ -1091,6 +1188,7 @@ mod tests {
                     fg,
                     bg,
                     attrs,
+                    link: None,
                 },
             },
             CellUpdate {
@@ -1101,6 +1199,7 @@ mod tests {
                     fg,
                     bg,
                     attrs,
+                    link: None,
                 },
             },
         ];
@@ -1118,7 +1217,7 @@ mod tests {
         let runs = compact_runs(&diff);
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let actual = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let actual = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
 
         // Baseline: 1920 cursor moves, 1920 runs, many style deltas
         // Writer: full rows with same style → 24 runs (one per row), fewer moves, fewer deltas
@@ -1141,7 +1240,7 @@ mod tests {
         let runs = compact_runs(&diff);
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let actual = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let actual = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
 
         let baseline_ops = baseline.style_delta_count + baseline.cursor_move_count;
         let actual_ops = actual.style_delta_count + actual.cursor_move_count;
@@ -1162,7 +1261,7 @@ mod tests {
         let runs = compact_runs(&diff);
         let mut state = WriterState::new();
         let mut buf = Vec::new();
-        let actual = emit_frame(&mut state, &runs, &mut buf).unwrap();
+        let actual = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
 
         let baseline_ops = baseline.style_delta_count + baseline.cursor_move_count;
         let actual_ops = actual.style_delta_count + actual.cursor_move_count;
@@ -1216,7 +1315,7 @@ mod tests {
             let run_count = runs.len();
             let mut state = WriterState::new();
             let mut buf = Vec::new();
-            let actual = emit_frame(&mut state, &runs, &mut buf).unwrap();
+            let actual = emit_frame(&mut state, &runs, &mut buf, false).unwrap();
 
             let baseline_ops = baseline.style_delta_count + baseline.cursor_move_count;
             let actual_ops = actual.style_delta_count + actual.cursor_move_count;

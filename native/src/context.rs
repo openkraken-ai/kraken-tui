@@ -13,6 +13,7 @@ use std::time::Instant;
 use crate::animation::{Animation, ChoreographyGroup};
 use crate::edit_buffer::EditBuffer;
 use crate::terminal::TerminalBackend;
+use crate::terminal_capabilities::TerminalCapabilityState;
 use crate::text_buffer::TextBuffer;
 use crate::text_view::TextView;
 use crate::theme::Theme;
@@ -34,6 +35,7 @@ pub struct TuiContext {
     pub front_buffer: Buffer,
     pub back_buffer: Buffer,
     pub backend: Box<dyn TerminalBackend>,
+    pub terminal_capabilities: TerminalCapabilityState,
 
     // Writer Module (v3, ADR-T24)
     pub writer_state: WriterState,
@@ -94,8 +96,9 @@ unsafe impl Send for TuiContext {}
 unsafe impl Sync for TuiContext {}
 
 impl TuiContext {
-    pub fn new(backend: Box<dyn TerminalBackend>) -> Self {
+    pub fn new(mut backend: Box<dyn TerminalBackend>) -> Self {
         let (w, h) = backend.size();
+        let terminal_capabilities = backend.capabilities();
         Self {
             tree: taffy::TaffyTree::new(),
             nodes: HashMap::new(),
@@ -108,6 +111,7 @@ impl TuiContext {
             front_buffer: Buffer::new(w, h),
             back_buffer: Buffer::new(w, h),
             backend,
+            terminal_capabilities,
 
             writer_state: WriterState::new(),
 
