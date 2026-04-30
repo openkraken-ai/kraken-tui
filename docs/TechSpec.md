@@ -507,6 +507,7 @@ conventions:
 ```ts
 interface TerminalCapabilities {
   flags: bigint;
+  raw: bigint; // compatibility alias for early Epic O callers
   truecolor: boolean;
   color256: boolean;
   mouse: boolean;

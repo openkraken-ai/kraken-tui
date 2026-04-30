@@ -842,6 +842,7 @@ describe("FFI integration", () => {
 		test("terminal wrappers expose capabilities and unsupported clipboard no-op", () => {
 			const app = Object.create(Kraken.prototype) as Kraken;
 			const caps = app.getCapabilities();
+			expect(caps.flags).toBe(caps.raw);
 			expect(caps.utf8).toBe(true);
 			expect(caps.osc52ClipboardWrite).toBe(false);
 			const info = app.getTerminalInfo();

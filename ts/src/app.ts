@@ -48,6 +48,7 @@ const TERMINAL_CAPABILITY_FLAGS = {
 } as const;
 
 export interface TerminalCapabilities {
+	flags: bigint;
 	raw: bigint;
 	truecolor: boolean;
 	color256: boolean;
@@ -226,6 +227,9 @@ export class Kraken {
 		const raw = ffi.tui_terminal_get_capabilities();
 		const has = (flag: bigint): boolean => (raw & flag) !== 0n;
 		return {
+			flags: raw,
+			// Keep `raw` as a compatibility alias for early Epic O callers while
+			// the documented public contract uses the clearer `flags` name.
 			raw,
 			truecolor: has(TERMINAL_CAPABILITY_FLAGS.truecolor),
 			color256: has(TERMINAL_CAPABILITY_FLAGS.color256),

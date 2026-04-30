@@ -135,7 +135,9 @@ impl TerminalCapabilityState {
         // Risky protocol emission is direct-terminal only in Epic O. Multiplexer
         // passthrough wrappers are deliberately deferred until validated per mux.
         let direct_terminal = multiplexer == TerminalMultiplexer::None;
-        if direct_terminal {
+        let direct_protocols_allowed = direct_terminal
+            && allows_direct_risky_protocols(terminal_name.as_deref(), terminal_program.as_deref());
+        if direct_protocols_allowed {
             flags |=
                 terminal_capability::OSC52_CLIPBOARD_WRITE | terminal_capability::OSC8_HYPERLINKS;
         } else if multiplexer == TerminalMultiplexer::Tmux {
@@ -145,14 +147,17 @@ impl TerminalCapabilityState {
             flags |= terminal_capability::OSC8_HYPERLINKS;
         }
 
-        if direct_terminal && kitty_keyboard_enabled {
+        if direct_protocols_allowed && kitty_keyboard_enabled {
             flags |= terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE;
         }
 
         let (cell_width_px, cell_height_px) =
             derive_cell_pixels(columns, rows, pixel_width, pixel_height);
         let has_pixels = pixel_width > 0 && pixel_height > 0;
-        if has_pixels {
+        // Pixel dimensions from mux sessions are often the pane geometry rather
+        // than the host emulator's cell metrics. Keep the Epic O flag direct-only
+        // until a mux-specific probe proves those values are trustworthy.
+        if direct_terminal && has_pixels {
             flags |= terminal_capability::PIXEL_SIZE;
         }
 
@@ -166,7 +171,7 @@ impl TerminalCapabilityState {
             screen_width_px: pixel_width,
             screen_height_px: pixel_height,
             color_depth_bits,
-            kitty_keyboard_enabled: direct_terminal && kitty_keyboard_enabled,
+            kitty_keyboard_enabled: direct_protocols_allowed && kitty_keyboard_enabled,
         }
     }
 
@@ -177,6 +182,45 @@ impl TerminalCapabilityState {
     pub fn to_json(&self) -> Result<String, String> {
         serde_json::to_string(self).map_err(|e| format!("terminal info json: {e}"))
     }
+}
+
+fn allows_direct_risky_protocols(term: Option<&str>, term_program: Option<&str>) -> bool {
+    let term = term.map(str::to_ascii_lowercase).unwrap_or_default();
+    let program = term_program
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+
+    if term.is_empty() || matches!(term.as_str(), "dumb" | "unknown" | "linux" | "vt100") {
+        return false;
+    }
+
+    // OSC52/OSC8 are write-side escape protocols, so direct-terminal support is
+    // an allowlist rather than "not inside a mux". Unknown terminals degrade to
+    // unsupported no-op until we add an explicit probe or policy entry.
+    let known_term = [
+        "xterm",
+        "kitty",
+        "wezterm",
+        "alacritty",
+        "foot",
+        "vte",
+        "ghostty",
+    ]
+    .iter()
+    .any(|needle| term.contains(needle));
+    let known_program = [
+        "iterm",
+        "apple_terminal",
+        "wezterm",
+        "kitty",
+        "alacritty",
+        "foot",
+        "ghostty",
+    ]
+    .iter()
+    .any(|needle| program.contains(needle));
+
+    known_term || known_program
 }
 
 fn get_env(env: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -380,6 +424,37 @@ mod tests {
         assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
         assert!(!caps.supports(terminal_capability::OSC8_HYPERLINKS));
         assert!(!caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+    }
+
+    #[test]
+    fn unknown_direct_terminal_disables_risky_protocols() {
+        let caps = TerminalCapabilityState::from_env_map(
+            &env(&[("TERM", "dumb")]),
+            80,
+            24,
+            1600,
+            720,
+            true,
+        );
+        assert_eq!(caps.multiplexer, TerminalMultiplexer::None);
+        assert!(!caps.supports(terminal_capability::OSC52_CLIPBOARD_WRITE));
+        assert!(!caps.supports(terminal_capability::OSC8_HYPERLINKS));
+        assert!(!caps.supports(terminal_capability::KITTY_KEYBOARD_DISAMBIGUATE));
+        assert!(caps.supports(terminal_capability::PIXEL_SIZE));
+    }
+
+    #[test]
+    fn mux_pixel_values_do_not_enable_pixel_reporting() {
+        let caps = TerminalCapabilityState::from_env_map(
+            &env(&[("TERM", "screen-256color"), ("ZELLIJ", "1")]),
+            80,
+            24,
+            1600,
+            720,
+            false,
+        );
+        assert_eq!(caps.multiplexer, TerminalMultiplexer::Zellij);
+        assert!(!caps.supports(terminal_capability::PIXEL_SIZE));
     }
 
     #[test]

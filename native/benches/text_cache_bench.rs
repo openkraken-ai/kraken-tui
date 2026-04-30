@@ -12,6 +12,7 @@ fn make_spans(text: &str) -> Vec<StyledSpan> {
         attrs: CellAttrs::empty(),
         fg: 0,
         bg: 0,
+        link: None,
     }]
 }
 
